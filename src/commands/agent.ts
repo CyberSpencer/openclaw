@@ -58,6 +58,7 @@ import { applyVerboseOverride } from "../sessions/level-overrides.js";
 import { applyModelOverrideToSessionEntry } from "../sessions/model-overrides.js";
 import { resolveSendPolicy } from "../sessions/send-policy.js";
 import { resolveMessageChannel } from "../utils/message-channel.js";
+import { getDefaultRedactPatterns, redactSensitiveText } from "../logging/redact.js";
 import { deliverAgentCommandResult } from "./agent/delivery.js";
 import { resolveAgentRunContext } from "./agent/run-context.js";
 import { updateSessionStoreAfterAgentRun } from "./agent/session-store.js";
@@ -399,7 +400,8 @@ export async function agentCommand(
         opts.replyChannel ?? opts.channel,
       );
       const spawnedBy = opts.spawnedBy ?? sessionEntry?.spawnedBy;
-      // Layer 3: Failover guard — disable cloud fallbacks when prompt contains secrets.
+      // Safety: if the prompt appears to contain secrets, disable model fallback so we never
+      // accidentally spill to cloud providers during failover attempts.
       // (promptHasSecrets was computed earlier in the pre-flight check.)
       let fallbacksOverride = resolveAgentModelFallbacksOverride(cfg, sessionAgentId);
       if (promptHasSecrets) {
@@ -461,6 +463,7 @@ export async function agentCommand(
             clientTools: opts.clientTools,
             provider: providerOverride,
             model: modelOverride,
+            disableModelRouter: providerOverride !== provider || modelOverride !== model,
             authProfileId,
             authProfileIdSource: authProfileId
               ? sessionEntry?.authProfileOverrideSource

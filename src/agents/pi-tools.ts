@@ -5,6 +5,7 @@ import {
   createWriteTool,
   readTool,
 } from "@mariozechner/pi-coding-agent";
+import type { AgentToolResult } from "@mariozechner/pi-agent-core";
 import type { OpenClawConfig } from "../config/config.js";
 import type { ModelAuthMode } from "./model-auth.js";
 import type { AnyAgentTool } from "./pi-tools.types.js";
@@ -52,10 +53,98 @@ import {
   resolveToolProfilePolicy,
   stripPluginOnlyAllowlist,
 } from "./tool-policy.js";
+import { getGlobalHookRunner } from "../plugins/hook-runner-global.js";
 
 function isOpenAIProvider(provider?: string) {
   const normalized = provider?.trim().toLowerCase();
   return normalized === "openai" || normalized === "openai-codex";
+}
+
+function toRecordParams(value: unknown): Record<string, unknown> {
+  if (value && typeof value === "object" && !Array.isArray(value)) {
+    return value as Record<string, unknown>;
+  }
+  return { __raw: value };
+}
+
+function makeBlockedToolResult(toolName: string, message: string): AgentToolResult<unknown> {
+  const payload = {
+    status: "error",
+    error: "router_guard_blocked",
+    toolName,
+    message,
+  };
+  return {
+    content: [
+      {
+        type: "text",
+        text: JSON.stringify(payload, null, 2),
+      },
+    ],
+    details: payload,
+  };
+}
+
+function wrapToolWithPluginHooks(
+  tool: AnyAgentTool,
+  ctx: { agentId?: string; sessionKey?: string },
+): AnyAgentTool {
+  return {
+    ...tool,
+    execute: async (toolCallId, params, signal, onUpdate) => {
+      const hookRunner = getGlobalHookRunner();
+      const toolName = String(tool.name);
+      let effectiveParams = params;
+      let effectiveParamsRecord = toRecordParams(params);
+
+      if (hookRunner?.hasHooks("before_tool_call")) {
+        const hookResult = await hookRunner.runBeforeToolCall(
+          { toolName, params: effectiveParamsRecord },
+          { agentId: ctx.agentId, sessionKey: ctx.sessionKey, toolName },
+        );
+        if (hookResult?.params) {
+          effectiveParams = hookResult.params;
+          effectiveParamsRecord = hookResult.params;
+        }
+        if (hookResult?.block) {
+          const reason =
+            hookResult.blockReason ??
+            `router-guard blocked tool '${toolName}' due to sensitive content.`;
+          return makeBlockedToolResult(toolName, reason);
+        }
+      }
+
+      const startedAt = Date.now();
+      try {
+        const result = await tool.execute(toolCallId, effectiveParams, signal, onUpdate);
+        if (hookRunner?.hasHooks("after_tool_call")) {
+          void hookRunner.runAfterToolCall(
+            {
+              toolName,
+              params: effectiveParamsRecord,
+              result,
+              durationMs: Date.now() - startedAt,
+            },
+            { agentId: ctx.agentId, sessionKey: ctx.sessionKey, toolName },
+          );
+        }
+        return result;
+      } catch (err) {
+        if (hookRunner?.hasHooks("after_tool_call")) {
+          void hookRunner.runAfterToolCall(
+            {
+              toolName,
+              params: effectiveParamsRecord,
+              error: String(err),
+              durationMs: Date.now() - startedAt,
+            },
+            { agentId: ctx.agentId, sessionKey: ctx.sessionKey, toolName },
+          );
+        }
+        throw err;
+      }
+    },
+  };
 }
 
 function isApplyPatchAllowedForModel(params: {
@@ -449,5 +538,10 @@ export function createOpenClawCodingTools(options?: {
   // NOTE: Keep canonical (lowercase) tool names here.
   // pi-ai's Anthropic OAuth transport remaps tool names to Claude Code-style names
   // on the wire and maps them back for tool dispatch.
-  return withAbort;
+  return withAbort.map((tool) =>
+    wrapToolWithPluginHooks(tool, {
+      agentId,
+      sessionKey: options?.sessionKey,
+    }),
+  );
 }
