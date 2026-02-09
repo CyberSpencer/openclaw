@@ -1,6 +1,10 @@
+import { randomUUID } from "node:crypto";
+
 import { loadConfig } from "../config/config.js";
+import type { TaskPlan, TaskPlanStatus, TaskPlanTask } from "../config/sessions/types.js";
 import { callGateway } from "../gateway/call.js";
-import { onAgentEvent } from "../infra/agent-events.js";
+import { emitAgentEvent, onAgentEvent } from "../infra/agent-events.js";
+import { loadSessionEntry } from "../gateway/session-utils.js";
 import { type DeliveryContext, normalizeDeliveryContext } from "../utils/delivery-context.js";
 import { runSubagentAnnounceFlow, type SubagentRunOutcome } from "./subagent-announce.js";
 import {
@@ -39,6 +43,101 @@ function persistSubagentRuns() {
     saveSubagentRegistryToDisk(subagentRuns);
   } catch {
     // ignore persistence failures
+  }
+}
+
+function normalizeTaskStatus(value: unknown): TaskPlanStatus {
+  const normalized = typeof value === "string" ? value.trim().toLowerCase() : "";
+  if (
+    normalized === "todo" ||
+    normalized === "running" ||
+    normalized === "done" ||
+    normalized === "blocked" ||
+    normalized === "skipped"
+  ) {
+    return normalized;
+  }
+  return "todo";
+}
+
+function shouldUpdateTaskStatus(current: unknown, next: TaskPlanStatus): boolean {
+  const cur = normalizeTaskStatus(current);
+  if (cur === next) {
+    return false;
+  }
+  // Don't flip completed work back into motion.
+  if (next === "running" && (cur === "done" || cur === "skipped")) {
+    return false;
+  }
+  return true;
+}
+
+async function patchRequesterTaskPlan(params: {
+  requesterSessionKey: string;
+  childSessionKey: string;
+  childRunId: string;
+  status: TaskPlanStatus;
+}) {
+  const requesterSessionKey = params.requesterSessionKey.trim();
+  if (!requesterSessionKey) {
+    return;
+  }
+
+  try {
+    const { entry } = loadSessionEntry(requesterSessionKey);
+    const plan = (entry?.taskPlan as TaskPlan | undefined) ?? undefined;
+    if (!plan || !Array.isArray(plan.tasks) || plan.tasks.length === 0) {
+      return;
+    }
+
+    let changed = false;
+    const tasks: TaskPlanTask[] = plan.tasks.map((task) => ({ ...task }));
+    for (const task of tasks) {
+      const assignedRunId = typeof task.assignedRunId === "string" ? task.assignedRunId : "";
+      const assignedSessionKey =
+        typeof task.assignedSessionKey === "string" ? task.assignedSessionKey : "";
+      const matches =
+        (assignedRunId && assignedRunId === params.childRunId) ||
+        (assignedSessionKey && assignedSessionKey === params.childSessionKey);
+      if (!matches) {
+        continue;
+      }
+      if (!shouldUpdateTaskStatus(task.status, params.status)) {
+        continue;
+      }
+      task.status = params.status;
+      // Ensure we keep the linkage for UI navigation even if only one field was set.
+      if (!task.assignedSessionKey) {
+        task.assignedSessionKey = params.childSessionKey;
+      }
+      if (!task.assignedRunId) {
+        task.assignedRunId = params.childRunId;
+      }
+      changed = true;
+    }
+
+    if (!changed) {
+      return;
+    }
+
+    const nextPlan: TaskPlan = { ...plan, tasks };
+
+    await callGateway({
+      method: "sessions.patch",
+      params: { key: requesterSessionKey, taskPlan: nextPlan },
+      timeoutMs: 10_000,
+    });
+
+    // Broadcast a best-effort orchestration update so the Control UI refreshes immediately.
+    // We use a synthetic runId so server-chat doesn't override sessionKey based on a known runContext.
+    emitAgentEvent({
+      runId: `orchestration:${randomUUID()}`,
+      stream: "orchestration",
+      sessionKey: requesterSessionKey,
+      data: { type: "task_plan", plan: nextPlan },
+    });
+  } catch {
+    // ignore failures (best effort)
   }
 }
 
@@ -203,6 +302,12 @@ function ensureListener() {
         entry.startedAt = startedAt;
         persistSubagentRuns();
       }
+      void patchRequesterTaskPlan({
+        requesterSessionKey: entry.requesterSessionKey,
+        childSessionKey: entry.childSessionKey,
+        childRunId: entry.runId,
+        status: "running",
+      });
       return;
     }
     if (phase !== "end" && phase !== "error") {
@@ -217,6 +322,13 @@ function ensureListener() {
       entry.outcome = { status: "ok" };
     }
     persistSubagentRuns();
+
+    void patchRequesterTaskPlan({
+      requesterSessionKey: entry.requesterSessionKey,
+      childSessionKey: entry.childSessionKey,
+      childRunId: entry.runId,
+      status: phase === "error" ? "blocked" : "done",
+    });
 
     if (!beginSubagentCleanup(evt.runId)) {
       return;

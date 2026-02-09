@@ -385,16 +385,39 @@ function buildTerminalItems(props: ChatProps): TerminalItem[] {
     const role = normalizeRoleForGrouping(normalized.role);
 
     if (role === "tool") {
-      const toolCall = normalized.content.find(
-        (c) => String(c.type ?? "").toLowerCase() === "toolcall",
-      );
+      const raw = entry.message as Record<string, unknown>;
+      const rawToolName =
+        typeof raw.toolName === "string"
+          ? raw.toolName
+          : typeof raw.tool_name === "string"
+            ? raw.tool_name
+            : undefined;
+      const rawArgs =
+        (raw as { args?: unknown }).args ?? (raw as { arguments?: unknown }).arguments;
+
+      const toolCall = normalized.content.find((c) => {
+        const t = String(c.type ?? "").toLowerCase();
+        return t === "toolcall" || t === "tool_call";
+      });
       const toolResult = normalized.content.find((c) => {
         const t = String(c.type ?? "").toLowerCase();
         return t === "toolresult" || t === "tool_result";
       });
-      const toolName = toolCall?.name ?? toolResult?.name ?? "tool";
-      const args = toolCall?.args ?? {};
-      const output = typeof toolResult?.text === "string" ? toolResult.text : null;
+      const toolName = (toolCall?.name ?? toolResult?.name ?? rawToolName ?? "tool").trim();
+      const args = toolCall?.args ?? rawArgs ?? {};
+      const output =
+        typeof toolResult?.text === "string"
+          ? toolResult.text
+          : (() => {
+              const parts = normalized.content
+                .map((c) =>
+                  String(c.type ?? "").toLowerCase() === "text" && typeof c.text === "string"
+                    ? c.text.trim()
+                    : "",
+                )
+                .filter(Boolean);
+              return parts.length > 0 ? parts.join("\n") : null;
+            })();
 
       items.push({
         kind: "tool",

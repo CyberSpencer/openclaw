@@ -161,6 +161,45 @@ function resolveMemorySearchEnabled(config: Record<string, unknown> | null | und
   return typeof enabled === "boolean" ? enabled : true;
 }
 
+function normalizeTaskStatus(value: unknown): string {
+  if (typeof value !== "string") return "todo";
+  const normalized = value.trim().toLowerCase();
+  if (
+    normalized === "todo" ||
+    normalized === "running" ||
+    normalized === "done" ||
+    normalized === "blocked" ||
+    normalized === "skipped"
+  ) {
+    return normalized;
+  }
+  return "todo";
+}
+
+function isTaskPlanIncomplete(plan: TaskPlan | null | undefined): boolean {
+  const tasks = plan?.tasks ?? [];
+  if (!Array.isArray(tasks) || tasks.length === 0) return false;
+  const done = tasks.filter((task) => {
+    const status = normalizeTaskStatus((task as { status?: unknown }).status);
+    return status === "done" || status === "skipped";
+  }).length;
+  return done < tasks.length;
+}
+
+const SUBAGENT_RECENT_WINDOW_MS = 5 * 60_000;
+
+function hasRecentSubagentActivity(result: SessionsListResult | null | undefined): boolean {
+  const sessions = result?.sessions ?? [];
+  if (!Array.isArray(sessions) || sessions.length === 0) return false;
+  let maxUpdatedAt = 0;
+  for (const row of sessions) {
+    const ts = typeof row.updatedAt === "number" ? row.updatedAt : 0;
+    if (ts > maxUpdatedAt) maxUpdatedAt = ts;
+  }
+  if (maxUpdatedAt <= 0) return false;
+  return Date.now() - maxUpdatedAt < SUBAGENT_RECENT_WINDOW_MS;
+}
+
 @customElement("openclaw-app")
 export class OpenClawApp extends LitElement {
   @state() settings: UiSettings = loadSettings();
@@ -210,6 +249,7 @@ export class OpenClawApp extends LitElement {
   @state() subagentMonitorResult: SessionsListResult | null = null;
   @state() subagentMonitorError: string | null = null;
   private subagentMonitorPollTimer: number | null = null;
+  private subagentMonitorPollMs: number | null = null;
   // Sidebar state for tool output viewing
   @state() sidebarOpen = false;
   @state() sidebarContent: string | null = null;
@@ -445,17 +485,22 @@ export class OpenClawApp extends LitElement {
     this.handleSubagentMonitorUpdated(changed);
   }
 
-  private startSubagentMonitorPolling() {
-    if (this.subagentMonitorPollTimer != null) return;
+  private startSubagentMonitorPolling(intervalMs: number) {
+    if (this.subagentMonitorPollTimer != null && this.subagentMonitorPollMs === intervalMs) {
+      return;
+    }
+    this.stopSubagentMonitorPolling();
+    this.subagentMonitorPollMs = intervalMs;
     this.subagentMonitorPollTimer = window.setInterval(() => {
       void loadSubagentMonitor(this, { quiet: true });
-    }, 1500);
+    }, intervalMs);
   }
 
   private stopSubagentMonitorPolling() {
     if (this.subagentMonitorPollTimer == null) return;
     window.clearInterval(this.subagentMonitorPollTimer);
     this.subagentMonitorPollTimer = null;
+    this.subagentMonitorPollMs = null;
   }
 
   private handleSubagentMonitorUpdated(changed: Map<PropertyKey, unknown>) {
@@ -468,14 +513,27 @@ export class OpenClawApp extends LitElement {
     const didEnterChat = changed.has("tab") && this.tab === "chat";
     const didChangeSession = changed.has("sessionKey");
     const didConnect = changed.has("connected") && this.connected;
+    const didChangePlan = changed.has("chatTaskPlan");
+    const didChangeRun = changed.has("chatRunId");
 
-    if (this.connected && (didEnterChat || didChangeSession || didConnect)) {
+    if (
+      this.connected &&
+      (didEnterChat || didChangeSession || didConnect || didChangePlan || didChangeRun)
+    ) {
       void loadSubagentMonitor(this, { quiet: true });
     }
 
     const runActive = Boolean(this.chatRunId) || this.chatStream !== null;
-    if (this.connected && runActive) this.startSubagentMonitorPolling();
-    else this.stopSubagentMonitorPolling();
+    const planActive = isTaskPlanIncomplete(this.chatTaskPlan);
+    const recentSubagent = hasRecentSubagentActivity(this.subagentMonitorResult);
+    const shouldPoll = this.connected && (runActive || planActive || recentSubagent);
+
+    if (shouldPoll) {
+      const intervalMs = runActive ? 1500 : 3000;
+      this.startSubagentMonitorPolling(intervalMs);
+    } else {
+      this.stopSubagentMonitorPolling();
+    }
   }
 
   connect() {
