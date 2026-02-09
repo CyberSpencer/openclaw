@@ -767,7 +767,6 @@ export function createExecTool(
       : 1800;
   const defaultPathPrepend = normalizePathPrepend(defaults?.pathPrepend);
   const safeBins = resolveSafeBins(defaults?.safeBins);
-  const trustedPaths = resolveTrustedPathEntries(process.env);
   const notifyOnExit = defaults?.notifyOnExit !== false;
   const notifySessionKey = defaults?.sessionKey?.trim() || undefined;
   const approvalRunningNoticeMs = resolveApprovalRunningNoticeMs(defaults?.approvalRunningNoticeMs);
@@ -936,6 +935,7 @@ export function createExecTool(
         applyShellPath(env, shellPath);
       }
       applyPathPrepend(env, defaultPathPrepend);
+      const trustedPaths = resolveTrustedPathEntries(env);
 
       if (host === "node") {
         const approvals = resolveExecApprovals(agentId, { security, ask });

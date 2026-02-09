@@ -50,29 +50,60 @@ async function handleMessage(raw: unknown) {
   if (!raw || typeof raw !== "object") {
     return;
   }
-  const msg = raw as WorkerRequest;
-  if (!msg.id || !msg.type) {
+
+  const record = raw as Record<string, unknown>;
+  const id = typeof record.id === "string" ? record.id : "";
+  if (!id) {
     return;
   }
+
+  const type = record.type;
+  if (typeof type !== "string") {
+    send({ id, ok: false, error: "Invalid embedding worker message: type is required" });
+    return;
+  }
+
+  if (type !== "embedQuery" && type !== "embedBatch") {
+    send({ id, ok: false, error: `Unsupported embedding worker message type: ${type}` });
+    return;
+  }
+
+  if (type === "embedQuery") {
+    const text = record.text;
+    if (typeof text !== "string") {
+      send({ id, ok: false, error: "Invalid embedQuery payload: text must be a string" });
+      return;
+    }
+
+    try {
+      const ctx = await ensureContext();
+      const embedding = await ctx.getEmbeddingFor(text);
+      send({ id, ok: true, embeddings: [Array.from(embedding.vector)] });
+      return;
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      send({ id, ok: false, error: message });
+      return;
+    }
+  }
+
+  const texts = record.texts;
+  if (!Array.isArray(texts) || texts.some((entry) => typeof entry !== "string")) {
+    send({ id, ok: false, error: "Invalid embedBatch payload: texts must be a string[]" });
+    return;
+  }
+
   try {
     const ctx = await ensureContext();
-    if (msg.type === "embedQuery") {
-      const embedding = await ctx.getEmbeddingFor(msg.text);
-      send({ id: msg.id, ok: true, embeddings: [Array.from(embedding.vector)] });
-      return;
+    const embeddings: number[][] = [];
+    for (const text of texts) {
+      const embedding = await ctx.getEmbeddingFor(text);
+      embeddings.push(Array.from(embedding.vector));
     }
-    if (msg.type === "embedBatch") {
-      const embeddings: number[][] = [];
-      for (const text of msg.texts) {
-        const embedding = await ctx.getEmbeddingFor(text);
-        embeddings.push(Array.from(embedding.vector));
-      }
-      send({ id: msg.id, ok: true, embeddings });
-      return;
-    }
+    send({ id, ok: true, embeddings });
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
-    send({ id: msg.id, ok: false, error: message });
+    send({ id, ok: false, error: message });
   }
 }
 

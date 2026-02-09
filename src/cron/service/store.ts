@@ -46,10 +46,10 @@ export async function ensureLoaded(state: CronServiceState) {
       }
       const modelAfter =
         typeof payloadRecord.model === "string" ? payloadRecord.model.trim() : undefined;
-      const state = raw.state;
-      if (state && typeof state === "object" && !Array.isArray(state)) {
-        const lastError = (state as { lastError?: unknown }).lastError;
-        const lastStatus = (state as { lastStatus?: unknown }).lastStatus;
+      const rawState = raw.state;
+      if (rawState && typeof rawState === "object" && !Array.isArray(rawState)) {
+        const lastError = (rawState as { lastError?: unknown }).lastError;
+        const lastStatus = (rawState as { lastStatus?: unknown }).lastStatus;
 
         if (
           modelBefore &&
@@ -61,8 +61,8 @@ export async function ensureLoaded(state: CronServiceState) {
         ) {
           // If we migrated an invalid/stale model id, clear the stored error so the UI doesn't
           // keep showing an obsolete failure after upgrade.
-          delete (state as { lastError?: string }).lastError;
-          delete (state as { lastStatus?: string }).lastStatus;
+          delete (rawState as { lastError?: string }).lastError;
+          delete (rawState as { lastStatus?: string }).lastStatus;
           mutated = true;
         }
 
@@ -77,8 +77,8 @@ export async function ensureLoaded(state: CronServiceState) {
             modelAfter &&
             modelAfter !== denied
           ) {
-            delete (state as { lastError?: string }).lastError;
-            delete (state as { lastStatus?: string }).lastStatus;
+            delete (rawState as { lastError?: string }).lastError;
+            delete (rawState as { lastStatus?: string }).lastStatus;
             mutated = true;
           }
         }

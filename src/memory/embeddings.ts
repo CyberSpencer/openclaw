@@ -137,22 +137,21 @@ function resolveWorkerPath(): string | null {
 
 async function withContextLock<T>(key: string, fn: () => Promise<T>): Promise<T> {
   const prev = contextLocks.get(key) ?? Promise.resolve();
+
   let releaseCurrent: (() => void) | undefined;
   const current = new Promise<void>((resolve) => {
     releaseCurrent = () => resolve();
   });
-  contextLocks.set(
-    key,
-    prev.then(() => current),
-  );
+
+  const chained = prev.then(() => current);
+  contextLocks.set(key, chained);
+
   await prev;
   try {
     return await fn();
   } finally {
-    if (releaseCurrent) {
-      releaseCurrent();
-    }
-    if (contextLocks.get(key) === current) {
+    releaseCurrent?.();
+    if (contextLocks.get(key) === chained) {
       contextLocks.delete(key);
     }
   }
