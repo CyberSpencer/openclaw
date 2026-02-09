@@ -236,6 +236,23 @@ async function runModelRouter(params: {
     return null;
   }
 
+  let resolvedScriptPath = scriptPath;
+  try {
+    const [realWorkspaceDir, realScriptPath] = await Promise.all([
+      fs.realpath(params.workspaceDir),
+      fs.realpath(scriptPath),
+    ]);
+    const rel = path.relative(realWorkspaceDir, realScriptPath);
+    if (rel === ".." || rel.startsWith(`..${path.sep}`) || path.isAbsolute(rel)) {
+      log.warn("router script is not contained within workspaceDir; refusing to execute");
+      return null;
+    }
+    resolvedScriptPath = realScriptPath;
+  } catch (err) {
+    log.warn(`router script realpath failed; refusing to execute: ${String(err).slice(0, 200)}`);
+    return null;
+  }
+
   const timeoutMs = params.timeoutMs ?? 2500;
   return new Promise((resolve) => {
     const child = spawn(resolvedScriptPath, ["--json", "--mode", params.mode], {
