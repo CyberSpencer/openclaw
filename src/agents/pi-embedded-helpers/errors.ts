@@ -404,8 +404,8 @@ export function sanitizeUserFacingText(text: string): string {
     if (isOverloadedErrorMessage(trimmed) || isRateLimitErrorMessage(trimmed)) {
       return "The AI service is temporarily overloaded. Please try again in a moment.";
     }
-    if (isTimeoutErrorMessage(trimmed)) {
-      return "LLM request timed out.";
+    if (isTransientNetworkErrorMessage(trimmed)) {
+      return "LLM request failed due to a transient network error.";
     }
     return formatRawAssistantErrorForUi(trimmed);
   }
@@ -432,7 +432,7 @@ const ERROR_PATTERNS = {
     "usage limit",
   ],
   overloaded: [/overloaded_error|"type"\s*:\s*"overloaded_error"/i, "overloaded"],
-  timeout: [
+  network: [
     "timeout",
     "timed out",
     "deadline exceeded",
@@ -503,8 +503,8 @@ export function isRateLimitErrorMessage(raw: string): boolean {
   return matchesErrorPatterns(raw, ERROR_PATTERNS.rateLimit);
 }
 
-export function isTimeoutErrorMessage(raw: string): boolean {
-  return matchesErrorPatterns(raw, ERROR_PATTERNS.timeout);
+export function isTransientNetworkErrorMessage(raw: string): boolean {
+  return matchesErrorPatterns(raw, ERROR_PATTERNS.network);
 }
 
 export function isBillingErrorMessage(raw: string): boolean {
@@ -621,8 +621,8 @@ export function classifyFailoverReason(raw: string): FailoverReason | null {
   if (isBillingErrorMessage(raw)) {
     return "billing";
   }
-  if (isTimeoutErrorMessage(raw)) {
-    return "timeout";
+  if (isTransientNetworkErrorMessage(raw)) {
+    return "network";
   }
   if (isAuthErrorMessage(raw)) {
     return "auth";

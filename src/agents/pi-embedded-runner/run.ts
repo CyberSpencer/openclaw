@@ -43,7 +43,7 @@ import {
   parseImageSizeError,
   parseImageDimensionError,
   isRateLimitAssistantError,
-  isTimeoutErrorMessage,
+  isTransientNetworkErrorMessage,
   pickFallbackThinkingLevel,
   type FailoverReason,
 } from "../pi-embedded-helpers.js";
@@ -784,7 +784,7 @@ export async function runEmbeddedPiAgent(
               };
             }
             const promptFailoverReason = classifyFailoverReason(errorText);
-            if (promptFailoverReason && promptFailoverReason !== "timeout" && lastProfileId) {
+            if (promptFailoverReason && promptFailoverReason !== "network" && lastProfileId) {
               await markAuthProfileFailure({
                 store: authStore,
                 profileId: lastProfileId,
@@ -795,7 +795,7 @@ export async function runEmbeddedPiAgent(
             }
             if (
               isFailoverErrorMessage(errorText) &&
-              promptFailoverReason !== "timeout" &&
+              promptFailoverReason !== "network" &&
               (await advanceAuthProfile())
             ) {
               continue;
@@ -869,7 +869,7 @@ export async function runEmbeddedPiAgent(
           if (shouldRotate) {
             if (lastProfileId) {
               const reason =
-                timedOut || assistantFailoverReason === "timeout"
+                timedOut || assistantFailoverReason === "network"
                   ? "timeout"
                   : (assistantFailoverReason ?? "unknown");
               await markAuthProfileFailure({
@@ -915,7 +915,7 @@ export async function runEmbeddedPiAgent(
                       : "LLM request failed.");
               const status =
                 resolveFailoverStatus(assistantFailoverReason ?? "unknown") ??
-                (isTimeoutErrorMessage(message) ? 408 : undefined);
+                (isTransientNetworkErrorMessage(message) ? 408 : undefined);
               throw new FailoverError(message, {
                 reason: assistantFailoverReason ?? "unknown",
                 provider,

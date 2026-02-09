@@ -456,7 +456,8 @@ export async function agentCommand(
             clientTools: opts.clientTools,
             provider: providerOverride,
             model: modelOverride,
-            disableModelRouter: providerOverride !== provider || modelOverride !== model,
+            disableModelRouter:
+              promptHasSecrets || providerOverride !== provider || modelOverride !== model,
             authProfileId,
             authProfileIdSource: authProfileId
               ? sessionEntry?.authProfileOverrideSource
