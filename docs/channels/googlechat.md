@@ -31,7 +31,7 @@ Status: ready for DMs + spaces via Google Chat API webhooks (HTTP only).
    - Under **Functionality**, check **Join spaces and group conversations**.
    - Under **Connection settings**, select **HTTP endpoint URL**.
    - Under **Triggers**, select **Use a common HTTP endpoint URL for all triggers** and set it to your gateway's public URL followed by `/googlechat`.
-     - *Tip: Run `openclaw status` to find your gateway's public URL.*
+     - Use your public HTTPS gateway URL (for example from Tailscale Funnel or your reverse proxy) followed by `/googlechat`.
    - Under **Visibility**, check **Make this Chat app available to specific people and groups in &lt;Your Domain&gt;**.
    - Enter your email address (e.g. `user@example.com`) in the text box.
    - Click **Save** at the bottom.
