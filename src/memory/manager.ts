@@ -33,6 +33,7 @@ import {
   buildFileEntry,
   chunkMarkdown,
   ensureDir,
+  hashToDeterministicUuid,
   hashText,
   isMemoryPath,
   listMemoryFiles,
@@ -69,6 +70,15 @@ type MemoryIndexMeta = {
 
 type QdrantConfig = {
   url: string;
+  endpoints?: Array<{
+    url: string;
+    apiKey?: string;
+    timeoutMs?: number;
+    priority?: number;
+    healthUrl?: string;
+    healthTimeoutMs?: number;
+    healthCacheTtlMs?: number;
+  }>;
   collection: string;
   apiKey?: string;
   timeoutMs: number;
@@ -122,8 +132,117 @@ const log = createSubsystemLogger("memory");
 
 const INDEX_CACHE = new Map<string, MemoryIndexManager>();
 
+const QDRANT_HEALTH_TTL_MS = 10_000;
+const QDRANT_HEALTH_TIMEOUT_MS = 1500;
+const qdrantHealthCache = new Map<string, { ok: boolean; checkedAt: number }>();
+
+type QdrantEndpointConfig = {
+  url: string;
+  apiKey?: string;
+  timeoutMs?: number;
+  priority?: number;
+  healthUrl?: string;
+  healthTimeoutMs?: number;
+  healthCacheTtlMs?: number;
+};
+
 const vectorToBlob = (embedding: number[]): Buffer =>
   Buffer.from(new Float32Array(embedding).buffer);
+
+function normalizeQdrantUrl(url: string): string {
+  return url.replace(/\/+$/, "");
+}
+
+async function checkQdrantEndpoint(
+  endpoint: QdrantEndpointConfig,
+  fallbackApiKey?: string,
+): Promise<boolean> {
+  const url = endpoint.healthUrl?.trim() || `${normalizeQdrantUrl(endpoint.url)}/collections`;
+  const timeoutMs = endpoint.healthTimeoutMs ?? QDRANT_HEALTH_TIMEOUT_MS;
+  const ttlMs = endpoint.healthCacheTtlMs ?? QDRANT_HEALTH_TTL_MS;
+  const cacheKey = endpoint.url;
+  const now = Date.now();
+  const cached = qdrantHealthCache.get(cacheKey);
+  if (cached && now - cached.checkedAt < ttlMs) {
+    return cached.ok;
+  }
+  let ok = false;
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    const apiKey = endpoint.apiKey ?? fallbackApiKey;
+    const headers = apiKey ? { "api-key": apiKey } : undefined;
+    const res = await fetch(url, { method: "GET", headers, signal: controller.signal });
+    ok = res.status === 200;
+  } catch (err) {
+    ok = false;
+    log.debug(`qdrant health check failed for ${endpoint.url}: ${String(err)}`);
+  } finally {
+    clearTimeout(timer);
+  }
+  qdrantHealthCache.set(cacheKey, { ok, checkedAt: now });
+  return ok;
+}
+
+function sortQdrantEndpoints(endpoints: QdrantEndpointConfig[]): QdrantEndpointConfig[] {
+  return [...endpoints].toSorted((a, b) => {
+    const aPriority = a.priority ?? 0;
+    const bPriority = b.priority ?? 0;
+    if (aPriority !== bPriority) {
+      return aPriority - bPriority;
+    }
+    return a.url.localeCompare(b.url);
+  });
+}
+
+async function resolveQdrantEndpoint(config: QdrantConfig): Promise<QdrantConfig | null> {
+  const endpoints = (config.endpoints ?? []).filter((entry) => entry.url?.trim());
+  if (endpoints.length === 0) {
+    return config;
+  }
+  const ordered = sortQdrantEndpoints(endpoints);
+  for (const endpoint of ordered) {
+    if (await checkQdrantEndpoint(endpoint, config.apiKey)) {
+      return {
+        ...config,
+        url: endpoint.url,
+        apiKey: endpoint.apiKey ?? config.apiKey,
+        timeoutMs: endpoint.timeoutMs ?? config.timeoutMs,
+      };
+    }
+  }
+  return null;
+}
+
+async function resolveStoreSettings(
+  settings: ResolvedMemorySearchConfig,
+): Promise<ResolvedMemorySearchConfig> {
+  if (settings.store.driver !== "auto" && settings.store.driver !== "qdrant") {
+    return settings;
+  }
+  const resolvedQdrant = await resolveQdrantEndpoint(settings.store.qdrant);
+  if (resolvedQdrant) {
+    return {
+      ...settings,
+      store: {
+        ...settings.store,
+        driver: "qdrant",
+        qdrant: resolvedQdrant,
+      },
+    };
+  }
+  if (settings.store.driver === "auto") {
+    log.warn("qdrant unavailable, falling back to sqlite memory store");
+    return {
+      ...settings,
+      store: {
+        ...settings.store,
+        driver: "sqlite",
+      },
+    };
+  }
+  return settings;
+}
 
 export class MemoryIndexManager {
   private readonly cacheKey: string;
@@ -191,26 +310,31 @@ export class MemoryIndexManager {
   }): Promise<MemoryIndexManager | null> {
     const { cfg, agentId } = params;
     const settings = resolveMemorySearchConfig(cfg, agentId);
-    if (!settings) return null;
+    if (!settings) {
+      return null;
+    }
+    const resolvedSettings = await resolveStoreSettings(settings);
     const workspaceDir = resolveAgentWorkspaceDir(cfg, agentId);
-    const key = `${agentId}:${workspaceDir}:${JSON.stringify(settings)}`;
+    const key = `${agentId}:${workspaceDir}:${JSON.stringify(resolvedSettings)}`;
     const existing = INDEX_CACHE.get(key);
-    if (existing) return existing;
+    if (existing) {
+      return existing;
+    }
     const providerResult = await createEmbeddingProvider({
       config: cfg,
       agentDir: resolveAgentDir(cfg, agentId),
-      provider: settings.provider,
-      remote: settings.remote,
-      model: settings.model,
-      fallback: settings.fallback,
-      local: settings.local,
+      provider: resolvedSettings.provider,
+      remote: resolvedSettings.remote,
+      model: resolvedSettings.model,
+      fallback: resolvedSettings.fallback,
+      local: resolvedSettings.local,
     });
     const manager = new MemoryIndexManager({
       cacheKey: key,
       cfg,
       agentId,
       workspaceDir,
-      settings,
+      settings: resolvedSettings,
       providerResult,
     });
     INDEX_CACHE.set(key, manager);
@@ -230,7 +354,8 @@ export class MemoryIndexManager {
     this.agentId = params.agentId;
     this.workspaceDir = params.workspaceDir;
     this.settings = params.settings;
-    this.storeDriver = params.settings.store.driver;
+    this.storeDriver =
+      params.settings.store.driver === "auto" ? "sqlite" : params.settings.store.driver;
     this.qdrant =
       params.settings.store.driver === "qdrant" ? params.settings.store.qdrant : undefined;
     this.provider = params.providerResult.provider;
@@ -268,13 +393,19 @@ export class MemoryIndexManager {
   }
 
   async warmSession(sessionKey?: string): Promise<void> {
-    if (!this.settings.sync.onSessionStart) return;
+    if (!this.settings.sync.onSessionStart) {
+      return;
+    }
     const key = sessionKey?.trim() || "";
-    if (key && this.sessionWarm.has(key)) return;
+    if (key && this.sessionWarm.has(key)) {
+      return;
+    }
     void this.sync({ reason: "session-start" }).catch((err) => {
       log.warn(`memory sync failed (session-start): ${String(err)}`);
     });
-    if (key) this.sessionWarm.add(key);
+    if (key) {
+      this.sessionWarm.add(key);
+    }
   }
 
   async search(
@@ -292,7 +423,9 @@ export class MemoryIndexManager {
       });
     }
     const cleaned = query.trim();
-    if (!cleaned) return [];
+    if (!cleaned) {
+      return [];
+    }
     const minScore = opts?.minScore ?? this.settings.query.minScore;
     const maxResults = opts?.maxResults ?? this.settings.query.maxResults;
     const hybrid = this.settings.query.hybrid;
@@ -373,7 +506,9 @@ export class MemoryIndexManager {
     query: string,
     limit: number,
   ): Promise<Array<MemorySearchResult & { id: string; textScore: number }>> {
-    if (!this.fts.enabled || !this.fts.available) return [];
+    if (!this.fts.enabled || !this.fts.available) {
+      return [];
+    }
     const sourceFilter = this.buildSourceFilter();
     const results = await searchKeyword({
       db: this.db,
@@ -425,7 +560,9 @@ export class MemoryIndexManager {
     force?: boolean;
     progress?: (update: MemorySyncProgressUpdate) => void;
   }): Promise<void> {
-    if (this.syncing) return this.syncing;
+    if (this.syncing) {
+      return this.syncing;
+    }
     this.syncing = this.runSync(params).finally(() => {
       this.syncing = null;
     });
@@ -457,7 +594,9 @@ export class MemoryIndexManager {
       for (const additionalPath of additionalPaths) {
         try {
           const stat = await fs.lstat(additionalPath);
-          if (stat.isSymbolicLink()) continue;
+          if (stat.isSymbolicLink()) {
+            continue;
+          }
           if (stat.isDirectory()) {
             if (absPath === additionalPath || absPath.startsWith(`${additionalPath}${path.sep}`)) {
               allowedAdditional = true;
@@ -542,7 +681,9 @@ export class MemoryIndexManager {
     };
     const sourceCounts = (() => {
       const sources = Array.from(this.sources);
-      if (sources.length === 0) return [];
+      if (sources.length === 0) {
+        return [];
+      }
       const bySource = new Map<MemorySource, { files: number; chunks: number }>();
       for (const source of sources) {
         bySource.set(source, { files: 0, chunks: 0 });
@@ -626,7 +767,9 @@ export class MemoryIndexManager {
   }
 
   async probeVectorAvailability(): Promise<boolean> {
-    if (!this.vector.enabled) return false;
+    if (!this.vector.enabled) {
+      return false;
+    }
     return this.ensureVectorReady();
   }
 
@@ -641,7 +784,9 @@ export class MemoryIndexManager {
   }
 
   async close(): Promise<void> {
-    if (this.closed) return;
+    if (this.closed) {
+      return;
+    }
     this.closed = true;
     if (this.watchTimer) {
       clearTimeout(this.watchTimer);
@@ -668,7 +813,9 @@ export class MemoryIndexManager {
   }
 
   private async ensureVectorReady(dimensions?: number): Promise<boolean> {
-    if (!this.vector.enabled) return false;
+    if (!this.vector.enabled) {
+      return false;
+    }
     if (this.storeDriver === "qdrant") {
       if (typeof dimensions === "number" && dimensions > 0) {
         return await this.ensureQdrantCollection(dimensions);
@@ -700,7 +847,9 @@ export class MemoryIndexManager {
   }
 
   private async loadVectorExtension(): Promise<boolean> {
-    if (this.vector.available !== null) return this.vector.available;
+    if (this.vector.available !== null) {
+      return this.vector.available;
+    }
     if (!this.vector.enabled) {
       this.vector.available = false;
       return false;
@@ -710,7 +859,9 @@ export class MemoryIndexManager {
         ? resolveUserPath(this.vector.extensionPath)
         : undefined;
       const loaded = await loadSqliteVecExtension({ db: this.db, extensionPath: resolvedPath });
-      if (!loaded.ok) throw new Error(loaded.error ?? "unknown sqlite-vec load error");
+      if (!loaded.ok) {
+        throw new Error(loaded.error ?? "unknown sqlite-vec load error");
+      }
       this.vector.extensionPath = loaded.extensionPath;
       this.vector.available = true;
       return true;
@@ -724,7 +875,9 @@ export class MemoryIndexManager {
   }
 
   private ensureVectorTable(dimensions: number): void {
-    if (this.vector.dims === dimensions) return;
+    if (this.vector.dims === dimensions) {
+      return;
+    }
     if (this.vector.dims && this.vector.dims !== dimensions) {
       this.dropVectorTable();
     }
@@ -748,7 +901,9 @@ export class MemoryIndexManager {
 
   private buildSourceFilter(alias?: string): { sql: string; params: MemorySource[] } {
     const sources = Array.from(this.sources);
-    if (sources.length === 0) return { sql: "", params: [] };
+    if (sources.length === 0) {
+      return { sql: "", params: [] };
+    }
     const column = alias ? `${alias}.source` : "source";
     const placeholders = sources.map(() => "?").join(", ");
     return { sql: ` AND ${column} IN (${placeholders})`, params: sources };
@@ -761,20 +916,25 @@ export class MemoryIndexManager {
     return this.qdrant;
   }
 
-  private qdrantUrl(pathname: string): string {
-    const cfg = this.getQdrantConfig();
-    const base = cfg.url.trim().replace(/\/+$/, "");
+  private qdrantUrlFor(baseUrl: string, pathname: string): string {
+    const base = baseUrl.trim().replace(/\/+$/, "");
     const suffix = pathname.startsWith("/") ? pathname : `/${pathname}`;
     return `${base}${suffix}`;
   }
 
-  private qdrantHeaders(): Record<string, string> {
-    const cfg = this.getQdrantConfig();
+  private qdrantHeadersFor(apiKey?: string): Record<string, string> {
     const headers: Record<string, string> = { "Content-Type": "application/json" };
-    if (cfg.apiKey) {
-      headers["api-key"] = cfg.apiKey;
+    if (apiKey) {
+      headers["api-key"] = apiKey;
     }
     return headers;
+  }
+
+  private shouldFailoverQdrantStatus(status: number): boolean {
+    if (status >= 500 && status <= 599) {
+      return true;
+    }
+    return status === 408 || status === 429;
   }
 
   private async qdrantRequest<T>(
@@ -787,32 +947,77 @@ export class MemoryIndexManager {
     },
   ): Promise<T | null> {
     const cfg = this.getQdrantConfig();
-    const controller = new AbortController();
-    const timeoutMs = options?.timeoutMs ?? cfg.timeoutMs;
-    const timeout = setTimeout(() => controller.abort(), timeoutMs);
-    try {
-      const res = await fetch(this.qdrantUrl(pathname), {
-        method: options?.method ?? "GET",
-        headers: this.qdrantHeaders(),
-        body: options?.body ? JSON.stringify(options.body) : undefined,
-        signal: controller.signal,
-      });
-      if (res.status === 404 && options?.allowNotFound) {
-        return null;
+    const hasExplicitEndpoints = (cfg.endpoints ?? []).length > 0;
+    const endpoints: QdrantEndpointConfig[] = hasExplicitEndpoints
+      ? sortQdrantEndpoints((cfg.endpoints ?? []).filter((entry) => entry.url?.trim()))
+      : [{ url: cfg.url, apiKey: cfg.apiKey, timeoutMs: cfg.timeoutMs }];
+
+    const errors: string[] = [];
+    for (const endpoint of endpoints) {
+      // Prefer Spark whenever it is healthy (priority order + health cache TTL).
+      if (hasExplicitEndpoints) {
+        const ok = await checkQdrantEndpoint(endpoint, cfg.apiKey);
+        if (!ok) {
+          errors.push(`${endpoint.url}: unhealthy`);
+          continue;
+        }
       }
-      if (!res.ok) {
-        const text = await res.text();
-        throw new Error(`Qdrant ${res.status}: ${text.slice(0, 200)}`);
+
+      const controller = new AbortController();
+      const timeoutMs = options?.timeoutMs ?? endpoint.timeoutMs ?? cfg.timeoutMs;
+      const timeout = setTimeout(() => controller.abort(), timeoutMs);
+      try {
+        const res = await fetch(this.qdrantUrlFor(endpoint.url, pathname), {
+          method: options?.method ?? "GET",
+          headers: this.qdrantHeadersFor(endpoint.apiKey ?? cfg.apiKey),
+          body: options?.body ? JSON.stringify(options.body) : undefined,
+          signal: controller.signal,
+        });
+
+        if (res.status === 404 && options?.allowNotFound) {
+          // 404 is a valid response, do not hide it by failing over.
+          return null;
+        }
+
+        if (!res.ok) {
+          const text = await res.text().catch(() => "");
+          const detail = `Qdrant ${res.status}: ${text.slice(0, 200)}`;
+          if (this.shouldFailoverQdrantStatus(res.status)) {
+            errors.push(`${endpoint.url}: ${detail}`);
+            continue;
+          }
+          throw new Error(detail);
+        }
+
+        // Update status to reflect the active endpoint.
+        if (cfg.url !== endpoint.url) {
+          cfg.url = endpoint.url;
+        }
+        if (endpoint.apiKey !== undefined && endpoint.apiKey !== cfg.apiKey) {
+          cfg.apiKey = endpoint.apiKey;
+        }
+        if (endpoint.timeoutMs !== undefined && endpoint.timeoutMs !== cfg.timeoutMs) {
+          cfg.timeoutMs = endpoint.timeoutMs;
+        }
+
+        const data = (await res.json()) as T;
+        return data;
+      } catch (err) {
+        const message = err instanceof Error ? err.message : String(err);
+        errors.push(`${endpoint.url}: ${message}`);
+      } finally {
+        clearTimeout(timeout);
       }
-      const data = (await res.json()) as T;
-      return data;
-    } finally {
-      clearTimeout(timeout);
     }
+
+    const summary = errors.slice(-3).join("; ");
+    throw new Error(`Qdrant request failed for all endpoints: ${summary}`);
   }
 
   private async ensureQdrantCollection(dimensions: number): Promise<boolean> {
-    if (!this.vector.enabled) return false;
+    if (!this.vector.enabled) {
+      return false;
+    }
     const cfg = this.getQdrantConfig();
     const collectionPath = `/collections/${encodeURIComponent(cfg.collection)}`;
     try {
@@ -861,7 +1066,9 @@ export class MemoryIndexManager {
 
   private buildQdrantSourceFilter(): Record<string, unknown> | undefined {
     const sources = Array.from(this.sources);
-    if (sources.length === 0) return undefined;
+    if (sources.length === 0) {
+      return undefined;
+    }
     if (sources.length === 1) {
       return {
         must: [
@@ -884,7 +1091,9 @@ export class MemoryIndexManager {
     queryVec: number[],
     limit: number,
   ): Promise<Array<MemorySearchResult & { id: string }>> {
-    if (queryVec.length === 0 || limit <= 0) return [];
+    if (queryVec.length === 0 || limit <= 0) {
+      return [];
+    }
     const cfg = this.getQdrantConfig();
     const filter = this.buildQdrantSourceFilter();
     const response = await this.qdrantRequest<{
@@ -916,7 +1125,7 @@ export class MemoryIndexManager {
         ? (response.result.points ?? [])
         : [];
     return raw.map((point) => {
-      const payload = (point.payload ?? {}) as Record<string, unknown>;
+      const payload = point.payload ?? {};
       const text = typeof payload.text === "string" ? payload.text : "";
       const path = typeof payload.path === "string" ? payload.path : "";
       const source = typeof payload.source === "string" ? payload.source : "memory";
@@ -941,7 +1150,9 @@ export class MemoryIndexManager {
   }
 
   private warnSqliteFallback(reason?: string): void {
-    if (this.sqliteFallbackWarned) return;
+    if (this.sqliteFallbackWarned) {
+      return;
+    }
     this.sqliteFallbackWarned = true;
     const expired = Number.isFinite(SQLITE_FALLBACK_DEPRECATION_TS)
       ? Date.now() >= SQLITE_FALLBACK_DEPRECATION_TS
@@ -953,6 +1164,15 @@ export class MemoryIndexManager {
     );
   }
 
+  private qdrantPathFilter(pathname: string, source: MemorySource) {
+    return {
+      must: [
+        { key: "path", match: { value: pathname } },
+        { key: "source", match: { value: source } },
+      ],
+    };
+  }
+
   private async qdrantDeleteByPath(pathname: string, source: MemorySource): Promise<void> {
     const cfg = this.getQdrantConfig();
     await this.qdrantRequest(
@@ -960,21 +1180,82 @@ export class MemoryIndexManager {
       {
         method: "POST",
         body: {
-          filter: {
-            must: [
-              { key: "path", match: { value: pathname } },
-              { key: "source", match: { value: source } },
-            ],
-          },
+          filter: this.qdrantPathFilter(pathname, source),
         },
       },
     );
   }
 
+  private async qdrantListPointIds(pathname: string, source: MemorySource): Promise<string[]> {
+    const cfg = this.getQdrantConfig();
+    const ids: string[] = [];
+    let offset: unknown = undefined;
+    while (true) {
+      const response = await this.qdrantRequest<{
+        result?: {
+          points?: Array<{ id: string | number }>;
+          next_page_offset?: unknown;
+        };
+      }>(`/collections/${encodeURIComponent(cfg.collection)}/points/scroll`, {
+        method: "POST",
+        body: {
+          filter: this.qdrantPathFilter(pathname, source),
+          limit: 256,
+          offset,
+          with_payload: false,
+          with_vectors: false,
+        },
+      });
+      const points = response?.result?.points ?? [];
+      for (const point of points) {
+        ids.push(String(point.id));
+      }
+      const next = response?.result?.next_page_offset;
+      if (next === null || next === undefined || points.length === 0) {
+        break;
+      }
+      offset = next;
+    }
+    return ids;
+  }
+
+  private async qdrantDeleteStalePoints(params: {
+    pathname: string;
+    source: MemorySource;
+    keepIds: Set<string>;
+    deleteAllIfEmpty: boolean;
+  }): Promise<void> {
+    const existingIds = await this.qdrantListPointIds(params.pathname, params.source);
+    if (existingIds.length === 0) {
+      return;
+    }
+    if (!params.deleteAllIfEmpty && params.keepIds.size === 0) {
+      return;
+    }
+    const staleIds = existingIds.filter((id) => !params.keepIds.has(id));
+    if (staleIds.length === 0) {
+      return;
+    }
+    const cfg = this.getQdrantConfig();
+    const batchSize = 256;
+    for (let i = 0; i < staleIds.length; i += batchSize) {
+      const batch = staleIds.slice(i, i + batchSize);
+      await this.qdrantRequest(
+        `/collections/${encodeURIComponent(cfg.collection)}/points/delete?wait=true`,
+        {
+          method: "POST",
+          body: { points: batch },
+        },
+      );
+    }
+  }
+
   private async qdrantUpsert(
     points: Array<{ id: string; vector: number[]; payload: Record<string, unknown> }>,
   ): Promise<void> {
-    if (points.length === 0) return;
+    if (points.length === 0) {
+      return;
+    }
     const cfg = this.getQdrantConfig();
     const batchSize = 64;
     for (let i = 0; i < points.length; i += batchSize) {
@@ -990,7 +1271,9 @@ export class MemoryIndexManager {
   }
 
   private async probeQdrantAvailability(): Promise<boolean> {
-    if (!this.vector.enabled) return false;
+    if (!this.vector.enabled) {
+      return false;
+    }
     const cfg = this.getQdrantConfig();
     try {
       const info = await this.qdrantRequest<{
@@ -1029,7 +1312,9 @@ export class MemoryIndexManager {
   }
 
   private seedEmbeddingCache(sourceDb: DatabaseSync): void {
-    if (!this.cache.enabled) return;
+    if (!this.cache.enabled) {
+      return;
+    }
     try {
       const rows = sourceDb
         .prepare(
@@ -1044,7 +1329,9 @@ export class MemoryIndexManager {
         dims: number | null;
         updated_at: number;
       }>;
-      if (!rows.length) return;
+      if (!rows.length) {
+        return;
+      }
       const insert = this.db.prepare(
         `INSERT INTO ${EMBEDDING_CACHE_TABLE} (provider, model, provider_key, hash, embedding, dims, updated_at)
          VALUES (?, ?, ?, ?, ?, ?, ?)
@@ -1121,7 +1408,9 @@ export class MemoryIndexManager {
   }
 
   private ensureWatcher() {
-    if (!this.sources.has("memory") || !this.settings.sync.watch || this.watcher) return;
+    if (!this.sources.has("memory") || !this.settings.sync.watch || this.watcher) {
+      return;
+    }
     const additionalPaths = normalizeExtraMemoryPaths(this.workspaceDir, this.settings.extraPaths)
       .map((entry) => {
         try {
@@ -1155,18 +1444,26 @@ export class MemoryIndexManager {
   }
 
   private ensureSessionListener() {
-    if (!this.sources.has("sessions") || this.sessionUnsubscribe) return;
+    if (!this.sources.has("sessions") || this.sessionUnsubscribe) {
+      return;
+    }
     this.sessionUnsubscribe = onSessionTranscriptUpdate((update) => {
-      if (this.closed) return;
+      if (this.closed) {
+        return;
+      }
       const sessionFile = update.sessionFile;
-      if (!this.isSessionFileForAgent(sessionFile)) return;
+      if (!this.isSessionFileForAgent(sessionFile)) {
+        return;
+      }
       this.scheduleSessionDirty(sessionFile);
     });
   }
 
   private scheduleSessionDirty(sessionFile: string) {
     this.sessionPendingFiles.add(sessionFile);
-    if (this.sessionWatchTimer) return;
+    if (this.sessionWatchTimer) {
+      return;
+    }
     this.sessionWatchTimer = setTimeout(() => {
       this.sessionWatchTimer = null;
       void this.processSessionDeltaBatch().catch((err) => {
@@ -1176,13 +1473,17 @@ export class MemoryIndexManager {
   }
 
   private async processSessionDeltaBatch(): Promise<void> {
-    if (this.sessionPendingFiles.size === 0) return;
+    if (this.sessionPendingFiles.size === 0) {
+      return;
+    }
     const pending = Array.from(this.sessionPendingFiles);
     this.sessionPendingFiles.clear();
     let shouldSync = false;
     for (const sessionFile of pending) {
       const delta = await this.updateSessionDelta(sessionFile);
-      if (!delta) continue;
+      if (!delta) {
+        continue;
+      }
       const bytesThreshold = delta.deltaBytes;
       const messagesThreshold = delta.deltaMessages;
       const bytesHit =
@@ -1191,7 +1492,9 @@ export class MemoryIndexManager {
         messagesThreshold <= 0
           ? delta.pendingMessages > 0
           : delta.pendingMessages >= messagesThreshold;
-      if (!bytesHit && !messagesHit) continue;
+      if (!bytesHit && !messagesHit) {
+        continue;
+      }
       this.sessionsDirtyFiles.add(sessionFile);
       this.sessionsDirty = true;
       delta.pendingBytes =
@@ -1214,7 +1517,9 @@ export class MemoryIndexManager {
     pendingMessages: number;
   } | null> {
     const thresholds = this.settings.sync.sessions;
-    if (!thresholds) return null;
+    if (!thresholds) {
+      return null;
+    }
     let stat: { size: number };
     try {
       stat = await fs.stat(sessionFile);
@@ -1265,7 +1570,9 @@ export class MemoryIndexManager {
   }
 
   private async countNewlines(absPath: string, start: number, end: number): Promise<number> {
-    if (end <= start) return 0;
+    if (end <= start) {
+      return 0;
+    }
     const handle = await fs.open(absPath, "r");
     try {
       let offset = start;
@@ -1274,9 +1581,13 @@ export class MemoryIndexManager {
       while (offset < end) {
         const toRead = Math.min(buffer.length, end - offset);
         const { bytesRead } = await handle.read(buffer, 0, toRead, offset);
-        if (bytesRead <= 0) break;
+        if (bytesRead <= 0) {
+          break;
+        }
         for (let i = 0; i < bytesRead; i += 1) {
-          if (buffer[i] === 10) count += 1;
+          if (buffer[i] === 10) {
+            count += 1;
+          }
         }
         offset += bytesRead;
       }
@@ -1288,14 +1599,18 @@ export class MemoryIndexManager {
 
   private resetSessionDelta(absPath: string, size: number): void {
     const state = this.sessionDeltas.get(absPath);
-    if (!state) return;
+    if (!state) {
+      return;
+    }
     state.lastSize = size;
     state.pendingBytes = 0;
     state.pendingMessages = 0;
   }
 
   private isSessionFileForAgent(sessionFile: string): boolean {
-    if (!sessionFile) return false;
+    if (!sessionFile) {
+      return false;
+    }
     const sessionsDir = resolveSessionTranscriptsDirForAgent(this.agentId);
     const resolvedFile = path.resolve(sessionFile);
     const resolvedDir = path.resolve(sessionsDir);
@@ -1304,7 +1619,9 @@ export class MemoryIndexManager {
 
   private ensureIntervalSync() {
     const minutes = this.settings.sync.intervalMinutes;
-    if (!minutes || minutes <= 0 || this.intervalTimer) return;
+    if (!minutes || minutes <= 0 || this.intervalTimer) {
+      return;
+    }
     const ms = minutes * 60 * 1000;
     this.intervalTimer = setInterval(() => {
       void this.sync({ reason: "interval" }).catch((err) => {
@@ -1314,8 +1631,12 @@ export class MemoryIndexManager {
   }
 
   private scheduleWatchSync() {
-    if (!this.sources.has("memory") || !this.settings.sync.watch) return;
-    if (this.watchTimer) clearTimeout(this.watchTimer);
+    if (!this.sources.has("memory") || !this.settings.sync.watch) {
+      return;
+    }
+    if (this.watchTimer) {
+      clearTimeout(this.watchTimer);
+    }
     this.watchTimer = setTimeout(() => {
       this.watchTimer = null;
       void this.sync({ reason: "watch" }).catch((err) => {
@@ -1328,11 +1649,19 @@ export class MemoryIndexManager {
     params?: { reason?: string; force?: boolean },
     needsFullReindex = false,
   ) {
-    if (!this.sources.has("sessions")) return false;
-    if (params?.force) return true;
+    if (!this.sources.has("sessions")) {
+      return false;
+    }
+    if (params?.force) {
+      return true;
+    }
     const reason = params?.reason;
-    if (reason === "session-start" || reason === "watch") return false;
-    if (needsFullReindex) return true;
+    if (reason === "session-start" || reason === "watch") {
+      return false;
+    }
+    if (needsFullReindex) {
+      return true;
+    }
     return this.sessionsDirty && this.sessionsDirtyFiles.size > 0;
   }
 
@@ -1389,7 +1718,9 @@ export class MemoryIndexManager {
       .prepare(`SELECT path FROM files WHERE source = ?`)
       .all("memory") as Array<{ path: string }>;
     for (const stale of staleRows) {
-      if (activePaths.has(stale.path)) continue;
+      if (activePaths.has(stale.path)) {
+        continue;
+      }
       this.db.prepare(`DELETE FROM files WHERE path = ? AND source = ?`).run(stale.path, "memory");
       if (this.storeDriver === "qdrant") {
         try {
@@ -1492,7 +1823,9 @@ export class MemoryIndexManager {
       .prepare(`SELECT path FROM files WHERE source = ?`)
       .all("sessions") as Array<{ path: string }>;
     for (const stale of staleRows) {
-      if (activePaths.has(stale.path)) continue;
+      if (activePaths.has(stale.path)) {
+        continue;
+      }
       this.db
         .prepare(`DELETE FROM files WHERE path = ? AND source = ?`)
         .run(stale.path, "sessions");
@@ -1532,7 +1865,9 @@ export class MemoryIndexManager {
       total: 0,
       label: undefined,
       report: (update) => {
-        if (update.label) state.label = update.label;
+        if (update.label) {
+          state.label = update.label;
+        }
         const label =
           update.total > 0 && state.label
             ? `${state.label} ${update.completed}/${update.total}`
@@ -1644,8 +1979,12 @@ export class MemoryIndexManager {
 
   private async activateFallbackProvider(reason: string): Promise<boolean> {
     const fallback = this.settings.fallback;
-    if (!fallback || fallback === "none" || fallback === this.provider.id) return false;
-    if (this.fallbackFrom) return false;
+    if (!fallback || fallback === "none" || fallback === this.provider.id) {
+      return false;
+    }
+    if (this.fallbackFrom) {
+      return false;
+    }
     const fallbackFrom = this.provider.id as "openai" | "gemini" | "local";
 
     const fallbackModel =
@@ -1797,7 +2136,9 @@ export class MemoryIndexManager {
     const row = this.db.prepare(`SELECT value FROM meta WHERE key = ?`).get(META_KEY) as
       | { value: string }
       | undefined;
-    if (!row?.value) return null;
+    if (!row?.value) {
+      return null;
+    }
     try {
       return JSON.parse(row.value) as MemoryIndexMeta;
     } catch {
@@ -1844,16 +2185,26 @@ export class MemoryIndexManager {
       const normalized = this.normalizeSessionText(content);
       return normalized ? normalized : null;
     }
-    if (!Array.isArray(content)) return null;
+    if (!Array.isArray(content)) {
+      return null;
+    }
     const parts: string[] = [];
     for (const block of content) {
-      if (!block || typeof block !== "object") continue;
+      if (!block || typeof block !== "object") {
+        continue;
+      }
       const record = block as { type?: unknown; text?: unknown };
-      if (record.type !== "text" || typeof record.text !== "string") continue;
+      if (record.type !== "text" || typeof record.text !== "string") {
+        continue;
+      }
       const normalized = this.normalizeSessionText(record.text);
-      if (normalized) parts.push(normalized);
+      if (normalized) {
+        parts.push(normalized);
+      }
     }
-    if (parts.length === 0) return null;
+    if (parts.length === 0) {
+      return null;
+    }
     return parts.join(" ");
   }
 
@@ -1864,7 +2215,9 @@ export class MemoryIndexManager {
       const lines = raw.split("\n");
       const collected: string[] = [];
       for (const line of lines) {
-        if (!line.trim()) continue;
+        if (!line.trim()) {
+          continue;
+        }
         let record: unknown;
         try {
           record = JSON.parse(line);
@@ -1881,10 +2234,16 @@ export class MemoryIndexManager {
         const message = (record as { message?: unknown }).message as
           | { role?: unknown; content?: unknown }
           | undefined;
-        if (!message || typeof message.role !== "string") continue;
-        if (message.role !== "user" && message.role !== "assistant") continue;
+        if (!message || typeof message.role !== "string") {
+          continue;
+        }
+        if (message.role !== "user" && message.role !== "assistant") {
+          continue;
+        }
         const text = this.extractSessionText(message.content);
-        if (!text) continue;
+        if (!text) {
+          continue;
+        }
         const label = message.role === "user" ? "User" : "Assistant";
         collected.push(`${label}: ${text}`);
       }
@@ -1904,7 +2263,9 @@ export class MemoryIndexManager {
   }
 
   private estimateEmbeddingTokens(text: string): number {
-    if (!text) return 0;
+    if (!text) {
+      return 0;
+    }
     return Math.ceil(text.length / EMBEDDING_APPROX_CHARS_PER_TOKEN);
   }
 
@@ -1937,17 +2298,27 @@ export class MemoryIndexManager {
   }
 
   private loadEmbeddingCache(hashes: string[]): Map<string, number[]> {
-    if (!this.cache.enabled) return new Map();
-    if (hashes.length === 0) return new Map();
+    if (!this.cache.enabled) {
+      return new Map();
+    }
+    if (hashes.length === 0) {
+      return new Map();
+    }
     const unique: string[] = [];
     const seen = new Set<string>();
     for (const hash of hashes) {
-      if (!hash) continue;
-      if (seen.has(hash)) continue;
+      if (!hash) {
+        continue;
+      }
+      if (seen.has(hash)) {
+        continue;
+      }
       seen.add(hash);
       unique.push(hash);
     }
-    if (unique.length === 0) return new Map();
+    if (unique.length === 0) {
+      return new Map();
+    }
 
     const out = new Map<string, number[]>();
     const baseParams = [this.provider.id, this.provider.model, this.providerKey];
@@ -1969,8 +2340,12 @@ export class MemoryIndexManager {
   }
 
   private upsertEmbeddingCache(entries: Array<{ hash: string; embedding: number[] }>): void {
-    if (!this.cache.enabled) return;
-    if (entries.length === 0) return;
+    if (!this.cache.enabled) {
+      return;
+    }
+    if (entries.length === 0) {
+      return;
+    }
     const now = Date.now();
     const stmt = this.db.prepare(
       `INSERT INTO ${EMBEDDING_CACHE_TABLE} (provider, model, provider_key, hash, embedding, dims, updated_at)\n` +
@@ -1995,14 +2370,20 @@ export class MemoryIndexManager {
   }
 
   private pruneEmbeddingCacheIfNeeded(): void {
-    if (!this.cache.enabled) return;
+    if (!this.cache.enabled) {
+      return;
+    }
     const max = this.cache.maxEntries;
-    if (!max || max <= 0) return;
+    if (!max || max <= 0) {
+      return;
+    }
     const row = this.db.prepare(`SELECT COUNT(*) as c FROM ${EMBEDDING_CACHE_TABLE}`).get() as
       | { c: number }
       | undefined;
     const count = row?.c ?? 0;
-    if (count <= max) return;
+    if (count <= max) {
+      return;
+    }
     const excess = count - max;
     this.db
       .prepare(
@@ -2017,7 +2398,9 @@ export class MemoryIndexManager {
   }
 
   private async embedChunksInBatches(chunks: MemoryChunk[]): Promise<number[][]> {
-    if (chunks.length === 0) return [];
+    if (chunks.length === 0) {
+      return [];
+    }
     const cached = this.loadEmbeddingCache(chunks.map((chunk) => chunk.hash));
     const embeddings: number[][] = Array.from({ length: chunks.length }, () => []);
     const missing: Array<{ index: number; chunk: MemoryChunk }> = [];
@@ -2032,7 +2415,9 @@ export class MemoryIndexManager {
       }
     }
 
-    if (missing.length === 0) return embeddings;
+    if (missing.length === 0) {
+      return embeddings;
+    }
 
     const missingChunks = missing.map((m) => m.chunk);
     const batches = this.buildEmbeddingBatches(missingChunks);
@@ -2058,7 +2443,7 @@ export class MemoryIndexManager {
     if (this.provider.id === "openai" && this.openAi) {
       const entries = Object.entries(this.openAi.headers)
         .filter(([key]) => key.toLowerCase() !== "authorization")
-        .sort(([a], [b]) => a.localeCompare(b))
+        .toSorted(([a], [b]) => a.localeCompare(b))
         .map(([key, value]) => [key, value]);
       return hashText(
         JSON.stringify({
@@ -2075,7 +2460,7 @@ export class MemoryIndexManager {
           const lower = key.toLowerCase();
           return lower !== "authorization" && lower !== "x-goog-api-key";
         })
-        .sort(([a], [b]) => a.localeCompare(b))
+        .toSorted(([a], [b]) => a.localeCompare(b))
         .map(([key, value]) => [key, value]);
       return hashText(
         JSON.stringify({
@@ -2112,7 +2497,9 @@ export class MemoryIndexManager {
     if (!openAi) {
       return this.embedChunksInBatches(chunks);
     }
-    if (chunks.length === 0) return [];
+    if (chunks.length === 0) {
+      return [];
+    }
     const cached = this.loadEmbeddingCache(chunks.map((chunk) => chunk.hash));
     const embeddings: number[][] = Array.from({ length: chunks.length }, () => []);
     const missing: Array<{ index: number; chunk: MemoryChunk }> = [];
@@ -2127,7 +2514,9 @@ export class MemoryIndexManager {
       }
     }
 
-    if (missing.length === 0) return embeddings;
+    if (missing.length === 0) {
+      return embeddings;
+    }
 
     const requests: OpenAiBatchRequest[] = [];
     const mapping = new Map<string, { index: number; hash: string }>();
@@ -2162,13 +2551,17 @@ export class MemoryIndexManager {
         }),
       fallback: async () => await this.embedChunksInBatches(chunks),
     });
-    if (Array.isArray(batchResult)) return batchResult;
+    if (Array.isArray(batchResult)) {
+      return batchResult;
+    }
     const byCustomId = batchResult;
 
     const toCache: Array<{ hash: string; embedding: number[] }> = [];
     for (const [customId, embedding] of byCustomId.entries()) {
       const mapped = mapping.get(customId);
-      if (!mapped) continue;
+      if (!mapped) {
+        continue;
+      }
       embeddings[mapped.index] = embedding;
       toCache.push({ hash: mapped.hash, embedding });
     }
@@ -2185,7 +2578,9 @@ export class MemoryIndexManager {
     if (!gemini) {
       return this.embedChunksInBatches(chunks);
     }
-    if (chunks.length === 0) return [];
+    if (chunks.length === 0) {
+      return [];
+    }
     const cached = this.loadEmbeddingCache(chunks.map((chunk) => chunk.hash));
     const embeddings: number[][] = Array.from({ length: chunks.length }, () => []);
     const missing: Array<{ index: number; chunk: MemoryChunk }> = [];
@@ -2200,7 +2595,9 @@ export class MemoryIndexManager {
       }
     }
 
-    if (missing.length === 0) return embeddings;
+    if (missing.length === 0) {
+      return embeddings;
+    }
 
     const requests: GeminiBatchRequest[] = [];
     const mapping = new Map<string, { index: number; hash: string }>();
@@ -2232,13 +2629,17 @@ export class MemoryIndexManager {
         }),
       fallback: async () => await this.embedChunksInBatches(chunks),
     });
-    if (Array.isArray(batchResult)) return batchResult;
+    if (Array.isArray(batchResult)) {
+      return batchResult;
+    }
     const byCustomId = batchResult;
 
     const toCache: Array<{ hash: string; embedding: number[] }> = [];
     for (const [customId, embedding] of byCustomId.entries()) {
       const mapped = mapping.get(customId);
-      if (!mapped) continue;
+      if (!mapped) {
+        continue;
+      }
       embeddings[mapped.index] = embedding;
       toCache.push({ hash: mapped.hash, embedding });
     }
@@ -2247,7 +2648,9 @@ export class MemoryIndexManager {
   }
 
   private async embedBatchWithRetry(texts: string[]): Promise<number[][]> {
-    if (texts.length === 0) return [];
+    if (texts.length === 0) {
+      return [];
+    }
     let attempt = 0;
     let delayMs = EMBEDDING_RETRY_BASE_DELAY_MS;
     while (true) {
@@ -2309,7 +2712,9 @@ export class MemoryIndexManager {
     timeoutMs: number,
     message: string,
   ): Promise<T> {
-    if (!Number.isFinite(timeoutMs) || timeoutMs <= 0) return await promise;
+    if (!Number.isFinite(timeoutMs) || timeoutMs <= 0) {
+      return await promise;
+    }
     let timer: NodeJS.Timeout | null = null;
     const timeoutPromise = new Promise<never>((_, reject) => {
       timer = setTimeout(() => reject(new Error(message)), timeoutMs);
@@ -2317,12 +2722,16 @@ export class MemoryIndexManager {
     try {
       return (await Promise.race([promise, timeoutPromise])) as T;
     } finally {
-      if (timer) clearTimeout(timer);
+      if (timer) {
+        clearTimeout(timer);
+      }
     }
   }
 
   private async runWithConcurrency<T>(tasks: Array<() => Promise<T>>, limit: number): Promise<T[]> {
-    if (tasks.length === 0) return [];
+    if (tasks.length === 0) {
+      return [];
+    }
     const resolvedLimit = Math.max(1, Math.min(limit, tasks.length));
     const results: T[] = Array.from({ length: tasks.length });
     let next = 0;
@@ -2330,10 +2739,14 @@ export class MemoryIndexManager {
 
     const workers = Array.from({ length: resolvedLimit }, async () => {
       while (true) {
-        if (firstError) return;
+        if (firstError) {
+          return;
+        }
         const index = next;
         next += 1;
-        if (index >= tasks.length) return;
+        if (index >= tasks.length) {
+          return;
+        }
         try {
           results[index] = await tasks[index]();
         } catch (err) {
@@ -2344,7 +2757,9 @@ export class MemoryIndexManager {
     });
 
     await Promise.allSettled(workers);
-    if (firstError) throw firstError;
+    if (firstError) {
+      throw firstError;
+    }
     return results;
   }
 
@@ -2475,16 +2890,6 @@ export class MemoryIndexManager {
     const useSqliteVector = this.storeDriver === "sqlite" && vectorReady;
     const useQdrant = this.storeDriver === "qdrant" && vectorReady;
     const now = Date.now();
-    if (useQdrant) {
-      try {
-        await this.qdrantDeleteByPath(entry.path, options.source);
-      } catch (err) {
-        const message = err instanceof Error ? err.message : String(err);
-        this.vector.available = false;
-        this.vector.loadError = message;
-        log.warn(`qdrant delete failed for ${entry.path}: ${message}`);
-      }
-    }
     if (useSqliteVector) {
       try {
         this.db
@@ -2504,6 +2909,7 @@ export class MemoryIndexManager {
     this.db
       .prepare(`DELETE FROM chunks WHERE path = ? AND source = ?`)
       .run(entry.path, options.source);
+    const qdrantKeepIds = new Set<string>();
     const qdrantPoints: Array<{
       id: string;
       vector: number[];
@@ -2547,6 +2953,7 @@ export class MemoryIndexManager {
           .run(id, vectorToBlob(embedding));
       }
       if (useQdrant && embedding.length > 0) {
+        const qdrantId = hashToDeterministicUuid(id);
         const payload: Record<string, unknown> = {
           text: chunk.text,
           path: entry.path,
@@ -2561,8 +2968,9 @@ export class MemoryIndexManager {
         if (options.source === "sessions") {
           payload.agent_id = this.agentId;
         }
+        qdrantKeepIds.add(qdrantId);
         qdrantPoints.push({
-          id,
+          id: qdrantId,
           vector: embedding,
           payload,
         });
@@ -2584,16 +2992,39 @@ export class MemoryIndexManager {
           );
       }
     }
-    if (useQdrant && qdrantPoints.length > 0) {
+    let qdrantUpsertOk = false;
+    if (useQdrant) {
+      if (qdrantPoints.length > 0) {
+        try {
+          await this.qdrantUpsert(qdrantPoints);
+          this.vector.available = true;
+          this.vector.loadError = undefined;
+          qdrantUpsertOk = true;
+        } catch (err) {
+          const message = err instanceof Error ? err.message : String(err);
+          this.vector.available = false;
+          this.vector.loadError = message;
+          log.warn(`qdrant upsert failed for ${entry.path}: ${message}`);
+        }
+      } else if (chunks.length === 0) {
+        // Empty file, allow stale deletion without any new upsert.
+        qdrantUpsertOk = true;
+      }
+    }
+
+    if (useQdrant && qdrantUpsertOk) {
       try {
-        await this.qdrantUpsert(qdrantPoints);
-        this.vector.available = true;
-        this.vector.loadError = undefined;
+        await this.qdrantDeleteStalePoints({
+          pathname: entry.path,
+          source: options.source,
+          keepIds: qdrantKeepIds,
+          deleteAllIfEmpty: chunks.length === 0,
+        });
       } catch (err) {
         const message = err instanceof Error ? err.message : String(err);
         this.vector.available = false;
         this.vector.loadError = message;
-        log.warn(`qdrant upsert failed for ${entry.path}: ${message}`);
+        log.warn(`qdrant stale delete failed for ${entry.path}: ${message}`);
       }
     }
     this.db

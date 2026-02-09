@@ -94,6 +94,15 @@
     display: none;
   }
 
+  .topbar-status .topbar-action-btn {
+    min-width: 32px;
+    padding: 0 8px;
+  }
+
+  .topbar-status .topbar-action-btn__label {
+    display: none;
+  }
+
   /* Nav */
   .nav {
     padding: 8px 10px;

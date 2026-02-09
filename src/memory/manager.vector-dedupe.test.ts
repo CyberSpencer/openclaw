@@ -49,7 +49,7 @@ describe("memory vector dedupe", () => {
           memorySearch: {
             provider: "openai",
             model: "mock-embed",
-            store: { path: indexPath, vector: { enabled: true } },
+            store: { driver: "sqlite", path: indexPath, vector: { enabled: true } },
             sync: { watch: false, onSessionStart: false, onSearch: false },
             cache: { enabled: false },
           },

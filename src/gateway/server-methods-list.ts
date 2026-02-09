@@ -2,6 +2,8 @@ import { listChannelPlugins } from "../channels/plugins/index.js";
 
 const BASE_METHODS = [
   "health",
+  "gateway.restart",
+  "doctor.run",
   "logs.tail",
   "channels.status",
   "channels.logout",
@@ -32,6 +34,9 @@ const BASE_METHODS = [
   "talk.mode",
   "models.list",
   "agents.list",
+  "orchestrator.get",
+  "orchestrator.set",
+  "orchestrator.reset",
   "skills.status",
   "skills.bins",
   "skills.install",
@@ -45,6 +50,7 @@ const BASE_METHODS = [
   "sessions.reset",
   "sessions.delete",
   "sessions.compact",
+  "sessions.spawn",
   "last-heartbeat",
   "set-heartbeats",
   "wake",
@@ -82,6 +88,10 @@ const BASE_METHODS = [
   "chat.history",
   "chat.abort",
   "chat.send",
+  "chat.steer",
+  "router.status",
+  "router.setEnabled",
+  "spark.status",
 ];
 
 export function listGatewayMethods(): string[] {
@@ -93,6 +103,7 @@ export const GATEWAY_EVENTS = [
   "connect.challenge",
   "agent",
   "chat",
+  "orchestrator",
   "presence",
   "tick",
   "talk.mode",

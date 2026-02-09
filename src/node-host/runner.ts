@@ -11,6 +11,7 @@ import {
   evaluateShellAllowlist,
   requiresExecApproval,
   normalizeExecApprovals,
+  resolveTrustedPathEntries,
   recordAllowlistUse,
   resolveExecApprovals,
   resolveSafeBins,
@@ -894,6 +895,7 @@ async function handleInvoke(
   const runId = params.runId?.trim() || crypto.randomUUID();
   const env = sanitizeEnv(params.env ?? undefined);
   const safeBins = resolveSafeBins(agentExec?.safeBins ?? cfg.tools?.exec?.safeBins);
+  const trustedPaths = resolveTrustedPathEntries(process.env);
   const bins = autoAllowSkills ? await skillBins.current() : new Set<string>();
   let analysisOk = false;
   let allowlistMatches: ExecAllowlistEntry[] = [];
@@ -904,6 +906,7 @@ async function handleInvoke(
       command: rawCommand,
       allowlist: approvals.allowlist,
       safeBins,
+      trustedPaths,
       cwd: params.cwd ?? undefined,
       env,
       skillBins: bins,
@@ -920,6 +923,7 @@ async function handleInvoke(
       analysis,
       allowlist: approvals.allowlist,
       safeBins,
+      trustedPaths,
       cwd: params.cwd ?? undefined,
       skillBins: bins,
       autoAllowSkills,

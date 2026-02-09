@@ -248,11 +248,11 @@ export async function finalizeOnboardingWizard(options: FinalizeOnboardingOption
     customBindHost: settings.customBindHost,
     basePath: controlUiBasePath,
   });
-  const tokenParam =
+  const tokenFragment =
     settings.authMode === "token" && settings.gatewayToken
-      ? `?token=${encodeURIComponent(settings.gatewayToken)}`
+      ? `#token=${encodeURIComponent(settings.gatewayToken)}`
       : "";
-  const authedUrl = `${links.httpUrl}${tokenParam}`;
+  const authedUrl = `${links.httpUrl}${tokenFragment}`;
   const gatewayProbe = await probeGatewayReachable({
     url: links.wsUrl,
     token: settings.authMode === "token" ? settings.gatewayToken : undefined,
@@ -273,7 +273,7 @@ export async function finalizeOnboardingWizard(options: FinalizeOnboardingOption
   await prompter.note(
     [
       `Web UI: ${links.httpUrl}`,
-      tokenParam ? `Web UI (with token): ${authedUrl}` : undefined,
+      tokenFragment ? `Web UI (with token): ${authedUrl}` : undefined,
       `Gateway WS: ${links.wsUrl}`,
       gatewayStatusLine,
       "Docs: https://docs.openclaw.ai/web/control-ui",

@@ -106,9 +106,50 @@ struct MenuContent: View {
                 self.voiceWakeMicMenu
             }
             Divider()
-            Button {
-                Task { @MainActor in
-                    await self.openDashboard()
+            Menu {
+                Button {
+                    Task { @MainActor in
+                        await self.openDashboard(path: "/overview")
+                    }
+                } label: {
+                    Label("Overview", systemImage: "bar.chart")
+                }
+                Button {
+                    Task { @MainActor in
+                        await self.openDashboard(path: "/orchestrator")
+                    }
+                } label: {
+                    Label("Orchestrator", systemImage: "puzzlepiece.extension")
+                }
+                Button {
+                    Task { @MainActor in
+                        await self.openDashboard(path: "/sessions")
+                    }
+                } label: {
+                    Label("Sessions", systemImage: "doc.text")
+                }
+                Button {
+                    Task { @MainActor in
+                        await self.openDashboard(path: "/cron")
+                    }
+                } label: {
+                    Label("Cron", systemImage: "clock")
+                }
+                Button {
+                    Task { @MainActor in
+                        await self.openDashboard(path: "/logs")
+                    }
+                } label: {
+                    Label("Logs", systemImage: "scroll")
+                }
+                Divider()
+                Button {
+                    Task { @MainActor in
+                        let sessionKey = await WebChatManager.shared.preferredSessionKey()
+                        await self.openDashboard(path: "/chat", session: sessionKey)
+                    }
+                } label: {
+                    Label("Chat (Control UI)", systemImage: "bubble.left.and.bubble.right")
                 }
             } label: {
                 Label("Open Dashboard", systemImage: "gauge")
@@ -334,10 +375,10 @@ struct MenuContent: View {
     }
 
     @MainActor
-    private func openDashboard() async {
+    private func openDashboard(path: String = "/overview", session: String? = nil) async {
         do {
             let config = try await GatewayEndpointStore.shared.requireConfig()
-            let url = try GatewayEndpointStore.dashboardURL(for: config)
+            let url = try GatewayEndpointStore.dashboardURL(for: config, path: path, session: session)
             NSWorkspace.shared.open(url)
         } catch {
             let alert = NSAlert()

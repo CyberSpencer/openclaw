@@ -1,6 +1,7 @@
 import { html, nothing } from "lit";
 
 import { formatAgo } from "../format";
+import { icons } from "../icons";
 import type {
   ChannelAccountSnapshot,
   ChannelUiMetaEntry,
@@ -27,6 +28,73 @@ import { renderSlackCard } from "./channels.slack";
 import { renderTelegramCard } from "./channels.telegram";
 import { renderWhatsAppCard } from "./channels.whatsapp";
 
+const COPY_LABEL = "Copy JSON";
+const COPIED_LABEL = "Copied";
+const ERROR_LABEL = "Copy failed";
+const RESET_LABEL_AFTER_MS = 1500;
+const RESET_ERROR_AFTER_MS = 2000;
+
+async function copyTextToClipboard(text: string): Promise<boolean> {
+  if (!text) return false;
+
+  try {
+    await navigator.clipboard.writeText(text);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function setCopyButtonLabel(button: HTMLButtonElement, label: string) {
+  button.title = label;
+  button.setAttribute("aria-label", label);
+}
+
+function renderCopySnapshotButton(text: string) {
+  return html`
+    <button
+      class="btn btn--sm"
+      type="button"
+      title=${COPY_LABEL}
+      aria-label=${COPY_LABEL}
+      @click=${async (event: Event) => {
+        event.preventDefault();
+        event.stopPropagation();
+
+        const button = event.currentTarget as HTMLButtonElement | null;
+        if (!button || button.dataset.copying === "1") return;
+
+        button.dataset.copying = "1";
+        button.disabled = true;
+
+        const copied = await copyTextToClipboard(text);
+        if (!button.isConnected) return;
+
+        delete button.dataset.copying;
+        button.disabled = false;
+
+        if (!copied) {
+          setCopyButtonLabel(button, ERROR_LABEL);
+          window.setTimeout(() => {
+            if (!button.isConnected) return;
+            setCopyButtonLabel(button, COPY_LABEL);
+          }, RESET_ERROR_AFTER_MS);
+          return;
+        }
+
+        setCopyButtonLabel(button, COPIED_LABEL);
+        window.setTimeout(() => {
+          if (!button.isConnected) return;
+          setCopyButtonLabel(button, COPY_LABEL);
+        }, RESET_LABEL_AFTER_MS);
+      }}
+    >
+      <span aria-hidden="true">${icons.copy}</span>
+      Copy
+    </button>
+  `;
+}
+
 export function renderChannels(props: ChannelsProps) {
   const channels = props.snapshot?.channels as Record<string, unknown> | null;
   const whatsapp = (channels?.whatsapp ?? undefined) as WhatsAppStatus | undefined;
@@ -48,6 +116,7 @@ export function renderChannels(props: ChannelsProps) {
       if (a.enabled !== b.enabled) return a.enabled ? -1 : 1;
       return a.order - b.order;
     });
+  const snapshotText = props.snapshot ? JSON.stringify(props.snapshot, null, 2) : "No snapshot yet.";
 
   return html`
     <section class="grid grid-cols-2">
@@ -67,23 +136,28 @@ export function renderChannels(props: ChannelsProps) {
     </section>
 
     <section class="card" style="margin-top: 18px;">
-      <div class="row" style="justify-content: space-between;">
-        <div>
-          <div class="card-title">Channel health</div>
-          <div class="card-sub">Channel status snapshots from the gateway.</div>
-        </div>
-        <div class="muted">${props.lastSuccessAt ? formatAgo(props.lastSuccessAt) : "n/a"}</div>
-      </div>
-      ${
-        props.lastError
-          ? html`<div class="callout danger" style="margin-top: 12px;">
-            ${props.lastError}
-          </div>`
-          : nothing
-      }
-      <pre class="code-block" style="margin-top: 12px;">
-${props.snapshot ? JSON.stringify(props.snapshot, null, 2) : "No snapshot yet."}
-      </pre>
+      <details>
+        <summary class="row" style="justify-content: space-between; cursor: pointer;">
+          <div>
+            <div class="card-title">Channel health</div>
+            <div class="card-sub">Channel status snapshots from the gateway.</div>
+          </div>
+          <div class="row" style="gap: 10px;">
+            <span class="muted">${props.lastSuccessAt ? formatAgo(props.lastSuccessAt) : "n/a"}</span>
+            ${renderCopySnapshotButton(snapshotText)}
+          </div>
+        </summary>
+        ${
+          props.lastError
+            ? html`<div class="callout danger" style="margin-top: 12px;">
+              ${props.lastError}
+            </div>`
+            : nothing
+        }
+        <pre class="code-block" style="margin-top: 12px;">
+${snapshotText}
+        </pre>
+      </details>
     </section>
   `;
 }

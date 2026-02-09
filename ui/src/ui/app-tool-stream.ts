@@ -13,6 +13,15 @@ export type AgentEventPayload = {
   data: Record<string, unknown>;
 };
 
+export type ModelSelectionInfo = {
+  runId: string;
+  sessionKey?: string;
+  provider: string;
+  model: string;
+  thinkLevel?: string;
+  updatedAt: number;
+};
+
 export type ToolStreamEntry = {
   toolCallId: string;
   runId: string;
@@ -28,6 +37,7 @@ export type ToolStreamEntry = {
 type ToolStreamHost = {
   sessionKey: string;
   chatRunId: string | null;
+  chatModelSelection?: ModelSelectionInfo | null;
   toolStreamById: Map<string, ToolStreamEntry>;
   toolStreamOrder: string[];
   chatToolMessages: Record<string, unknown>[];
@@ -190,9 +200,35 @@ export function handleAgentEvent(host: ToolStreamHost, payload?: AgentEventPaylo
     return;
   }
 
+  if (payload.stream === "model") {
+    const sessionKey = typeof payload.sessionKey === "string" ? payload.sessionKey : undefined;
+    const accept =
+      sessionKey ? sessionKey === host.sessionKey : host.chatRunId ? payload.runId === host.chatRunId : false;
+    if (!accept) return;
+
+    const data = payload.data ?? {};
+    const provider = typeof data.provider === "string" ? data.provider : "";
+    const model = typeof data.model === "string" ? data.model : "";
+    if (!provider || !model) return;
+    const thinkLevel = typeof data.thinkLevel === "string" ? data.thinkLevel : undefined;
+
+    host.chatModelSelection = {
+      runId: payload.runId,
+      sessionKey,
+      provider,
+      model,
+      thinkLevel,
+      updatedAt: typeof payload.ts === "number" ? payload.ts : Date.now(),
+    };
+    return;
+  }
+
   if (payload.stream !== "tool") return;
   const sessionKey = typeof payload.sessionKey === "string" ? payload.sessionKey : undefined;
   if (sessionKey && sessionKey !== host.sessionKey) return;
+  if (sessionKey && !host.chatRunId) {
+    host.chatRunId = payload.runId;
+  }
   // Fallback: only accept session-less events for the active run.
   if (!sessionKey && host.chatRunId && payload.runId !== host.chatRunId) return;
   if (host.chatRunId && payload.runId !== host.chatRunId) return;

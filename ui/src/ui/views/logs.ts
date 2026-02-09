@@ -37,6 +37,8 @@ function matchesFilter(entry: LogEntry, needle: string) {
   return haystack.includes(needle);
 }
 
+const RENDER_LIMIT = 500;
+
 export function renderLogs(props: LogsProps) {
   const needle = props.filterText.trim().toLowerCase();
   const levelFiltered = LEVELS.some((level) => !props.levelFilters[level]);
@@ -45,6 +47,10 @@ export function renderLogs(props: LogsProps) {
     return matchesFilter(entry, needle);
   });
   const exportLabel = needle || levelFiltered ? "filtered" : "visible";
+
+  // Rendering thousands of rows can freeze the UI. We cap DOM output to keep things snappy.
+  const renderEntries = filtered.length > RENDER_LIMIT ? filtered.slice(-RENDER_LIMIT) : filtered;
+  const hiddenCount = filtered.length - renderEntries.length;
 
   return html`
     <section class="card">
@@ -125,13 +131,24 @@ export function renderLogs(props: LogsProps) {
           : nothing
       }
 
+      ${
+        hiddenCount > 0
+          ? html`
+              <div class="callout" style="margin-top: 10px">
+                Rendering last ${renderEntries.length} of ${filtered.length} matching entries.
+                (Use filters to narrow, or Export to grab the full selection.)
+              </div>
+            `
+          : nothing
+      }
+
       <div class="log-stream" style="margin-top: 12px;" @scroll=${props.onScroll}>
         ${
           filtered.length === 0
             ? html`
                 <div class="muted" style="padding: 12px">No log entries.</div>
               `
-            : filtered.map(
+            : renderEntries.map(
                 (entry) => html`
                 <div class="log-row">
                   <div class="log-time mono">${formatTime(entry.time)}</div>

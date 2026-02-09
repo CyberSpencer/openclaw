@@ -27,23 +27,25 @@ describe("iconForTab", () => {
   });
 
   it("returns stable icons for known tabs", () => {
-    expect(iconForTab("chat")).toBe("💬");
-    expect(iconForTab("overview")).toBe("📊");
-    expect(iconForTab("channels")).toBe("🔗");
-    expect(iconForTab("instances")).toBe("📡");
-    expect(iconForTab("sessions")).toBe("📄");
-    expect(iconForTab("cron")).toBe("⏰");
-    expect(iconForTab("skills")).toBe("⚡️");
-    expect(iconForTab("nodes")).toBe("🖥️");
-    expect(iconForTab("config")).toBe("⚙️");
-    expect(iconForTab("debug")).toBe("🐞");
-    expect(iconForTab("logs")).toBe("🧾");
+    expect(iconForTab("chat")).toBe("messageSquare");
+    expect(iconForTab("orchestrator")).toBe("puzzle");
+    expect(iconForTab("overview")).toBe("barChart");
+    expect(iconForTab("channels")).toBe("link");
+    expect(iconForTab("instances")).toBe("radio");
+    expect(iconForTab("sessions")).toBe("fileText");
+    expect(iconForTab("cron")).toBe("loader");
+    expect(iconForTab("skills")).toBe("zap");
+    expect(iconForTab("nodes")).toBe("monitor");
+    expect(iconForTab("settings")).toBe("sliders");
+    expect(iconForTab("config")).toBe("settings");
+    expect(iconForTab("debug")).toBe("bug");
+    expect(iconForTab("logs")).toBe("scrollText");
   });
 
   it("returns a fallback icon for unknown tab", () => {
     // TypeScript won't allow this normally, but runtime could receive unexpected values
     const unknownTab = "unknown" as Tab;
-    expect(iconForTab(unknownTab)).toBe("📁");
+    expect(iconForTab(unknownTab)).toBe("folder");
   });
 });
 
@@ -58,6 +60,7 @@ describe("titleForTab", () => {
 
   it("returns expected titles", () => {
     expect(titleForTab("chat")).toBe("Chat");
+    expect(titleForTab("orchestrator")).toBe("Orchestrator");
     expect(titleForTab("overview")).toBe("Overview");
     expect(titleForTab("cron")).toBe("Cron Jobs");
   });

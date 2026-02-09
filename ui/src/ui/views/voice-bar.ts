@@ -17,6 +17,7 @@ export type VoiceBarProps = {
   visible: boolean;
   expanded: boolean;
   onToggleExpanded: () => void;
+  onDriveOpenClawChange: (enabled: boolean) => void;
   onStartConversation: () => void;
   onStopConversation: () => void;
   onClose: () => void;
@@ -207,6 +208,7 @@ export function renderVoiceBar(props: VoiceBarProps) {
     state,
     expanded,
     onToggleExpanded,
+    onDriveOpenClawChange,
     onStartConversation,
     onStopConversation,
     onClose,
@@ -215,6 +217,7 @@ export function renderVoiceBar(props: VoiceBarProps) {
 
   const canStart = state.connected && state.enabled && !state.conversationActive;
   const isActive = state.conversationActive;
+  const isRecording = isActive && state.phase === "listening";
   
   // Simple toggle: start or stop conversation
   const mainButtonLabel = isActive ? "End Conversation" : "Start Conversation";
@@ -239,7 +242,7 @@ export function renderVoiceBar(props: VoiceBarProps) {
           ${expanded ? icons.chevronDown || "▼" : icons.chevronUp || "▲"}
         </button>
         <span class="voice-bar__title">Voice Conversation</span>
-        <span class="voice-bar__mode">${state.mode === "personaplex" ? "S2S" : state.mode}</span>
+        <span class="voice-bar__mode">${state.driveOpenClaw ? "Tools" : state.mode === "personaplex" ? "S2S" : state.mode}</span>
         <button
           class="voice-bar__close"
           type="button"
@@ -252,29 +255,47 @@ export function renderVoiceBar(props: VoiceBarProps) {
 
       <div class="voice-bar__main">
         <button
-          class="voice-bar__conversation-btn ${isActive ? "voice-bar__conversation-btn--active" : ""}"
+          class="voice-bar__mic ${isRecording ? "voice-bar__mic--recording" : ""}"
           type="button"
           ?disabled=${!canStart && !isActive}
           @click=${handleMainClick}
           title=${mainButtonLabel}
           aria-label=${mainButtonLabel}
         >
-          ${isActive 
-            ? html`<span class="voice-bar__waves">
-                <span></span><span></span><span></span><span></span>
-              </span>` 
-            : icons.mic || "🎤"}
+          ${icons.mic || "🎤"}
         </button>
         
-        ${renderConversationStatus(state)}
+        <div class="voice-bar__status">
+          ${state.conversationActive && state.phase === "listening"
+            ? renderRecordingIndicator(true)
+            : nothing}
+          ${state.conversationActive && state.phase === "processing"
+            ? renderProcessingIndicator(true)
+            : nothing}
+          ${state.conversationActive && state.phase === "speaking"
+            ? html`<div class="voice-bar__processing">${icons.loader}<span>Speaking...</span></div>`
+            : nothing}
+        </div>
       </div>
 
       ${expanded
         ? html`
             <div class="voice-bar__details">
+              <label class="field checkbox voice-bar__parity-toggle">
+                <input
+                  type="checkbox"
+                  .checked=${state.driveOpenClaw}
+                  @change=${(e: Event) =>
+                    onDriveOpenClawChange((e.target as HTMLInputElement).checked)}
+                />
+                <span title="When enabled, voice uses the normal chat agent pipeline (tools, memory, routing).">
+                  Drive OpenClaw (tools)
+                </span>
+              </label>
               ${renderCapabilityIndicator(state.capabilities)}
               ${renderTimings(state.timings)}
               ${renderTranscription(state.transcription)}
+              ${renderResponse(state.response)}
               ${renderError(state.error, onRetry)}
             </div>
           `

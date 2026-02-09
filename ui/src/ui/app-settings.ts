@@ -8,6 +8,7 @@ import { loadNodes } from "./controllers/nodes";
 import { loadExecApprovals } from "./controllers/exec-approvals";
 import { loadPresence } from "./controllers/presence";
 import { loadSessions } from "./controllers/sessions";
+import { loadAgents } from "./controllers/agents";
 import { loadSkills } from "./controllers/skills";
 import {
   inferBasePathFromPathname,
@@ -46,6 +47,7 @@ type SettingsHost = {
   themeMedia: MediaQueryList | null;
   themeMediaHandler: ((event: MediaQueryListEvent) => void) | null;
   pendingGatewayUrl?: string | null;
+  refreshTopbarControls?: () => Promise<void> | void;
 };
 
 export function applySettings(host: SettingsHost, next: UiSettings) {
@@ -70,12 +72,17 @@ export function setLastActiveSessionKey(host: SettingsHost, next: string) {
 }
 
 export function applySettingsFromUrl(host: SettingsHost) {
-  if (!window.location.search) return;
   const params = new URLSearchParams(window.location.search);
-  const tokenRaw = params.get("token");
-  const passwordRaw = params.get("password");
-  const sessionRaw = params.get("session");
-  const gatewayUrlRaw = params.get("gatewayUrl");
+  const hashRaw = window.location.hash ? window.location.hash.replace(/^#/, "") : "";
+  const hashParams =
+    hashRaw && /[=&]/.test(hashRaw) && !hashRaw.startsWith("/")
+      ? new URLSearchParams(hashRaw)
+      : null;
+
+  const tokenRaw = params.get("token") ?? hashParams?.get("token") ?? null;
+  const passwordRaw = params.get("password") ?? hashParams?.get("password") ?? null;
+  const sessionRaw = params.get("session") ?? hashParams?.get("session") ?? null;
+  const gatewayUrlRaw = params.get("gatewayUrl") ?? hashParams?.get("gatewayUrl") ?? null;
   let shouldCleanUrl = false;
 
   if (tokenRaw != null) {
@@ -84,6 +91,7 @@ export function applySettingsFromUrl(host: SettingsHost) {
       applySettings(host, { ...host.settings, token });
     }
     params.delete("token");
+    hashParams?.delete("token");
     shouldCleanUrl = true;
   }
 
@@ -93,6 +101,7 @@ export function applySettingsFromUrl(host: SettingsHost) {
       (host as { password: string }).password = password;
     }
     params.delete("password");
+    hashParams?.delete("password");
     shouldCleanUrl = true;
   }
 
@@ -114,12 +123,17 @@ export function applySettingsFromUrl(host: SettingsHost) {
       host.pendingGatewayUrl = gatewayUrl;
     }
     params.delete("gatewayUrl");
+    hashParams?.delete("gatewayUrl");
     shouldCleanUrl = true;
   }
 
   if (!shouldCleanUrl) return;
   const url = new URL(window.location.href);
   url.search = params.toString();
+  if (hashParams) {
+    const nextHash = hashParams.toString();
+    url.hash = nextHash ? `#${nextHash}` : "";
+  }
   window.history.replaceState({}, "", url.toString());
 }
 
@@ -151,6 +165,12 @@ export function setTheme(host: SettingsHost, next: ThemeMode, context?: ThemeTra
 
 export async function refreshActiveTab(host: SettingsHost) {
   if (host.tab === "overview") await loadOverview(host);
+  if (host.tab === "orchestrator") {
+    await loadAgents(host as unknown as OpenClawApp);
+  }
+  if (host.tab === "settings") {
+    await host.refreshTopbarControls?.();
+  }
   if (host.tab === "channels") await loadChannelsTab(host);
   if (host.tab === "instances") await loadPresence(host as unknown as OpenClawApp);
   if (host.tab === "sessions") await loadSessions(host as unknown as OpenClawApp);
@@ -204,6 +224,9 @@ export function applyResolvedTheme(host: SettingsHost, resolved: ResolvedTheme) 
   const root = document.documentElement;
   root.dataset.theme = resolved;
   root.style.colorScheme = resolved;
+  // Keep a `.dark` class in sync so utility ecosystems (including shadcn presets)
+  // can key off it without changing our existing `[data-theme]` selectors.
+  root.classList.toggle("dark", resolved === "dark");
 }
 
 export function attachThemeListener(host: SettingsHost) {

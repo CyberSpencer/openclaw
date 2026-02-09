@@ -1,16 +1,15 @@
-import { html, nothing } from "lit";
+import { html, nothing, type TemplateResult } from "lit";
 import { ref } from "lit/directives/ref.js";
 import { repeat } from "lit/directives/repeat.js";
+import { unsafeHTML } from "lit/directives/unsafe-html.js";
+
 import type { SessionsListResult } from "../types";
 import type { ChatAttachment, ChatQueueItem } from "../ui-types";
-import type { ChatItem, MessageGroup } from "../types/chat-types";
+import type { ModelSelectionInfo } from "../app-tool-stream";
 import { icons } from "../icons";
 import { normalizeMessage, normalizeRoleForGrouping } from "../chat/message-normalizer";
-import {
-  renderMessageGroup,
-  renderReadingIndicatorGroup,
-  renderStreamingGroup,
-} from "../chat/grouped-render";
+import { extractTextCached } from "../chat/message-extract";
+import { toSanitizedMarkdownHtml } from "../markdown";
 import { renderMarkdownSidebar } from "./markdown-sidebar";
 import "../components/resizable-divider";
 
@@ -33,6 +32,7 @@ export type ChatProps = {
   toolMessages: unknown[];
   stream: string | null;
   streamStartedAt: number | null;
+  modelSelection?: ModelSelectionInfo | null;
   assistantAvatarUrl?: string | null;
   draft: string;
   queue: ChatQueueItem[];
@@ -41,6 +41,11 @@ export type ChatProps = {
   disabledReason: string | null;
   error: string | null;
   sessions: SessionsListResult | null;
+  // Subagent monitoring (spawnedBy=sessionKey)
+  subagentMonitorLoading?: boolean;
+  subagentMonitorResult?: SessionsListResult | null;
+  subagentMonitorError?: string | null;
+  onSubagentRefresh?: () => void;
   // Focus mode
   focusMode: boolean;
   // Sidebar state
@@ -58,9 +63,10 @@ export type ChatProps = {
   onToggleFocusMode: () => void;
   onDraftChange: (next: string) => void;
   onSend: () => void;
+  onQueue?: () => void;
   onAbort?: () => void;
   onQueueRemove: (id: string) => void;
-  onNewSession: () => void;
+  onNewChat: () => void;
   onOpenSidebar?: (content: string) => void;
   onCloseSidebar?: () => void;
   onSplitRatioChange?: (ratio: number) => void;
@@ -69,30 +75,129 @@ export type ChatProps = {
 
 const COMPACTION_TOAST_DURATION_MS = 5000;
 
+type ImageBlock = {
+  url: string;
+  alt?: string;
+};
+
+type TerminalItem =
+  | {
+      kind: "message";
+      key: string;
+      role: string;
+      who: string;
+      ts: number | null;
+      text: string;
+      images: ImageBlock[];
+    }
+  | {
+      kind: "tool";
+      key: string;
+      ts: number | null;
+      toolName: string;
+      args: unknown;
+      output: string | null;
+    }
+  | {
+      kind: "stream";
+      key: string;
+      ts: number | null;
+      who: string;
+      text: string | null;
+      empty: boolean;
+    };
+
 function adjustTextareaHeight(el: HTMLTextAreaElement) {
   el.style.height = "auto";
   el.style.height = `${el.scrollHeight}px`;
 }
 
+function formatClock(ts: number | null) {
+  if (!ts) return "";
+  return new Date(ts).toLocaleTimeString([], {
+    hour: "2-digit",
+    minute: "2-digit",
+    second: "2-digit",
+  });
+}
+
+function formatAge(ts: number | null): string {
+  if (!ts) return "";
+  const deltaMs = Date.now() - ts;
+  if (deltaMs < 0) return "0s";
+  const sec = Math.floor(deltaMs / 1000);
+  if (sec < 60) return `${Math.max(1, sec)}s`;
+  const min = Math.floor(sec / 60);
+  if (min < 60) return `${min}m`;
+  const hr = Math.floor(min / 60);
+  if (hr < 24) return `${hr}h`;
+  const day = Math.floor(hr / 24);
+  return `${day}d`;
+}
+
+function truncate(text: string, maxChars: number) {
+  const raw = text ?? "";
+  if (raw.length <= maxChars) return raw;
+  const suffix = "...";
+  const sliceTo = Math.max(0, maxChars - suffix.length);
+  return `${raw.slice(0, sliceTo)}${suffix}`;
+}
+
+function extractImages(message: unknown): ImageBlock[] {
+  const m = message as Record<string, unknown>;
+  const content = m.content;
+  const images: ImageBlock[] = [];
+
+  if (Array.isArray(content)) {
+    for (const block of content) {
+      if (typeof block !== "object" || block === null) continue;
+      const b = block as Record<string, unknown>;
+
+      if (b.type === "image") {
+        // Gateway + UI format: { type:"image", source:{ type:"base64", media_type, data } }
+        const source = b.source as Record<string, unknown> | undefined;
+        if (source?.type === "base64" && typeof source.data === "string") {
+          const data = source.data as string;
+          const mediaType = (source.media_type as string) || "image/png";
+          const url = data.startsWith("data:") ? data : `data:${mediaType};base64,${data}`;
+          images.push({ url });
+        } else if (typeof b.url === "string") {
+          images.push({ url: b.url });
+        }
+      } else if (b.type === "image_url") {
+        // OpenAI format
+        const imageUrl = b.image_url as Record<string, unknown> | undefined;
+        if (typeof imageUrl?.url === "string") {
+          images.push({ url: imageUrl.url });
+        }
+      }
+    }
+  }
+
+  return images;
+}
+
 function renderCompactionIndicator(status: CompactionIndicatorStatus | null | undefined) {
   if (!status) return nothing;
 
-  // Show "compacting..." while active
   if (status.active) {
     return html`
-      <div class="callout info compaction-indicator compaction-indicator--active">
-        ${icons.loader} Compacting context...
+      <div class="callout info agent-compaction-indicator agent-compaction-indicator--active">
+        <span class="agent-compaction-indicator__icon agent-compaction-indicator__icon--spin">
+          ${icons.loader}
+        </span>
+        <span>Compacting context...</span>
       </div>
     `;
   }
 
-  // Show "compaction complete" briefly after completion
   if (status.completedAt) {
     const elapsed = Date.now() - status.completedAt;
     if (elapsed < COMPACTION_TOAST_DURATION_MS) {
       return html`
-        <div class="callout success compaction-indicator compaction-indicator--complete">
-          ${icons.check} Context compacted
+        <div class="callout success agent-compaction-indicator agent-compaction-indicator--complete">
+          ${icons.check}
+          <span>Context compacted</span>
         </div>
       `;
     }
@@ -172,100 +277,515 @@ function renderAttachmentPreview(props: ChatProps) {
   `;
 }
 
-export function renderChat(props: ChatProps) {
-  const canCompose = props.connected;
-  const isBusy = props.sending || props.stream !== null;
-  const canAbort = Boolean(props.canAbort && props.onAbort);
+function renderModelAttribution(selection: ModelSelectionInfo | null | undefined) {
+  if (!selection) return nothing;
+  const modelFull = `${selection.provider}/${selection.model}`;
+  const think =
+    selection.thinkLevel && selection.thinkLevel !== "off" ? selection.thinkLevel : null;
+  return html`
+    <div class="agent-meta-row" role="status" aria-live="polite">
+      <span class="agent-meta-row__label">Model</span>
+      <span class="mono agent-meta-row__value">${modelFull}</span>
+      ${think ? html`<span class="agent-meta-row__muted">(thinking: ${think})</span>` : nothing}
+    </div>
+  `;
+}
+
+function readMessageTimestamp(message: unknown): number | null {
+  const m = message as Record<string, unknown>;
+  if (typeof m.timestamp === "number") return m.timestamp;
+  if (typeof m.ts === "number") return m.ts;
+  return null;
+}
+
+function buildTerminalItems(props: ChatProps): TerminalItem[] {
+  const history = Array.isArray(props.messages) ? props.messages : [];
+  const tools = props.showThinking && Array.isArray(props.toolMessages) ? props.toolMessages : [];
+
+  const merged: Array<{ message: unknown; key: string; ts: number | null; order: number }> = [];
+  for (let i = 0; i < history.length; i++) {
+    const msg = history[i];
+    merged.push({
+      message: msg,
+      key: messageKey(msg, i),
+      ts: readMessageTimestamp(msg),
+      order: i,
+    });
+  }
+  for (let i = 0; i < tools.length; i++) {
+    const msg = tools[i];
+    merged.push({
+      message: msg,
+      key: messageKey(msg, i + history.length),
+      ts: readMessageTimestamp(msg),
+      order: i + history.length,
+    });
+  }
+
+  merged.sort((a, b) => {
+    if (a.ts != null && b.ts != null) return a.ts - b.ts;
+    if (a.ts != null) return -1;
+    if (b.ts != null) return 1;
+    return a.order - b.order;
+  });
+
+  const items: TerminalItem[] = [];
+  for (const entry of merged) {
+    const normalized = normalizeMessage(entry.message);
+    const role = normalizeRoleForGrouping(normalized.role);
+
+    if (role === "tool") {
+      const toolCall = normalized.content.find(
+        (c) => String(c.type ?? "").toLowerCase() === "toolcall",
+      );
+      const toolResult = normalized.content.find((c) => {
+        const t = String(c.type ?? "").toLowerCase();
+        return t === "toolresult" || t === "tool_result";
+      });
+      const toolName = toolCall?.name ?? toolResult?.name ?? "tool";
+      const args = toolCall?.args ?? {};
+      const output = typeof toolResult?.text === "string" ? toolResult.text : null;
+
+      items.push({
+        kind: "tool",
+        key: entry.key,
+        ts: entry.ts ?? null,
+        toolName,
+        args,
+        output,
+      });
+      continue;
+    }
+
+    const rawText = extractTextCached(entry.message);
+    const text = typeof rawText === "string" ? rawText.trim() : "";
+    const images = extractImages(entry.message);
+    if (!text && images.length === 0) continue;
+
+    const who =
+      role === "user"
+        ? "YOU"
+        : role === "assistant"
+          ? "AGENT"
+          : role === "system"
+            ? "SYS"
+            : String(role || "OTHER").toUpperCase();
+
+    items.push({
+      kind: "message",
+      key: entry.key,
+      role,
+      who,
+      ts: entry.ts ?? null,
+      text,
+      images,
+    });
+  }
+
+  if (props.stream !== null) {
+    const key = `stream:${props.sessionKey}:${props.streamStartedAt ?? "live"}`;
+    const trimmed = props.stream.trim();
+    const empty = trimmed.length === 0;
+    items.push({
+      kind: "stream",
+      key,
+      ts: props.streamStartedAt ?? null,
+      who: "AGENT",
+      text: empty ? null : props.stream,
+      empty,
+    });
+  }
+
+  return items;
+}
+
+function renderTerminalEntry(props: ChatProps, item: TerminalItem): TemplateResult {
+  if (item.kind === "stream") {
+    return html`
+      <div class="terminal-entry terminal-entry--assistant terminal-entry--streaming">
+        <div class="terminal-entry__meta">
+          <span class="terminal-entry__role">${item.who}</span>
+          <span class="terminal-entry__time">${formatClock(item.ts)}</span>
+          <span class="terminal-entry__badge">LIVE</span>
+        </div>
+        <div class="terminal-entry__body">
+          ${
+            item.empty
+              ? html`
+                  <div class="terminal-reading" aria-label="Agent is thinking">
+                    <span class="terminal-reading__dots"><span></span><span></span><span></span></span>
+                  </div>
+                `
+              : html`
+                  <pre class="terminal-pre terminal-pre--stream">
+${item.text}<span class="terminal-cursor" aria-hidden="true"></span></pre>
+                `
+          }
+        </div>
+      </div>
+    `;
+  }
+
+  if (item.kind === "tool") {
+    const argsText = (() => {
+      try {
+        return JSON.stringify(item.args ?? {}, null, 2);
+      } catch {
+        return String(item.args ?? "");
+      }
+    })();
+    const output = item.output ?? "";
+    const outputPreview = output ? truncate(output, 2400) : "";
+    const canOpen = Boolean(props.onOpenSidebar && output);
+    return html`
+      <div class="terminal-entry terminal-entry--tool">
+        <div class="terminal-entry__meta">
+          <span class="terminal-entry__role">TOOL</span>
+          <span class="terminal-entry__time">${formatClock(item.ts)}</span>
+          <span class="terminal-entry__toolName mono">${item.toolName}</span>
+          ${canOpen
+            ? html`
+                <button
+                  class="btn btn--sm terminal-entry__open"
+                  type="button"
+                  @click=${() => {
+                    if (!props.onOpenSidebar || !item.output) return;
+                    props.onOpenSidebar(`\`\`\`\n${item.output}\n\`\`\``);
+                  }}
+                >
+                  View
+                </button>
+              `
+            : nothing}
+        </div>
+        <div class="terminal-entry__body">
+          <details class="terminal-details" open>
+            <summary class="terminal-details__summary">Arguments</summary>
+            <pre class="terminal-pre terminal-pre--code">${argsText}</pre>
+          </details>
+          ${
+            output
+              ? html`
+                  <details class="terminal-details">
+                    <summary class="terminal-details__summary">
+                      Output ${outputPreview !== output ? html`<span class="muted">(truncated)</span>` : nothing}
+                    </summary>
+                    <pre class="terminal-pre terminal-pre--code">${outputPreview}</pre>
+                  </details>
+                `
+              : html`<div class="muted terminal-entry__muted">No output yet.</div>`
+          }
+        </div>
+      </div>
+    `;
+  }
+
+  const roleClass =
+    item.role === "assistant"
+      ? "assistant"
+      : item.role === "user"
+        ? "user"
+        : item.role === "system"
+          ? "system"
+          : "other";
+
+  const body =
+    item.role === "assistant"
+      ? html`<div class="chat-text terminal-md">${unsafeHTML(toSanitizedMarkdownHtml(item.text))}</div>`
+      : html`<pre class="terminal-pre">${item.text}</pre>`;
+
+  return html`
+    <div class="terminal-entry terminal-entry--${roleClass}">
+      <div class="terminal-entry__meta">
+        <span class="terminal-entry__role">${item.who}</span>
+        <span class="terminal-entry__time">${formatClock(item.ts)}</span>
+      </div>
+      <div class="terminal-entry__body">
+        ${
+          item.images.length
+            ? html`
+                <div class="terminal-images">
+                  ${item.images.map(
+                    (img) => html`
+                      <img
+                        src=${img.url}
+                        alt=${img.alt ?? "Attached image"}
+                        class="terminal-images__img"
+                        @click=${() => window.open(img.url, "_blank")}
+                      />
+                    `,
+                  )}
+                </div>
+              `
+            : nothing
+        }
+        ${body}
+      </div>
+    </div>
+  `;
+}
+
+function renderOrchestrationCard(props: ChatProps) {
   const activeSession = props.sessions?.sessions?.find((row) => row.key === props.sessionKey);
-  const reasoningLevel = activeSession?.reasoningLevel ?? "off";
-  const showReasoning = props.showThinking && reasoningLevel !== "off";
-  const assistantIdentity = {
-    name: props.assistantName,
-    avatar: props.assistantAvatar ?? props.assistantAvatarUrl ?? null,
-  };
+  const title =
+    activeSession?.label?.trim() ||
+    activeSession?.derivedTitle?.trim() ||
+    activeSession?.displayName?.trim() ||
+    props.sessionKey;
+
+  const isStreaming = props.stream !== null;
+  const isCompacting = Boolean(props.compactionStatus?.active);
+  const statusLabel = isCompacting ? "Compacting" : isStreaming ? "Running" : "Idle";
+  const statusDotClass = isStreaming ? "ok" : isCompacting ? "" : "neutral";
+
+  const subagents = props.subagentMonitorResult?.sessions ?? [];
+  const subagentError = props.subagentMonitorError ?? null;
+  const subagentLoading = Boolean(props.subagentMonitorLoading);
+  const canRefresh = Boolean(props.onSubagentRefresh);
+
+  return html`
+    <section class="card agent-orchestration" aria-label="Agent orchestration">
+      <div class="agent-orchestration__header">
+        <div class="agent-orchestration__titleBlock">
+          <div class="card-title">Agent Orchestration</div>
+          <div class="agent-orchestration__subtitle">
+            <span class="mono">${title}</span>
+          </div>
+        </div>
+
+        <div class="agent-orchestration__actions">
+          <div class="pill agent-orchestration__statusPill" title=${statusLabel}>
+            <span class="statusDot ${statusDotClass}"></span>
+            <span>Status</span>
+            <span class="mono">${statusLabel}</span>
+          </div>
+          ${
+            canRefresh
+              ? html`
+                  <button
+                    class="btn btn--sm agent-orchestration__refresh"
+                    type="button"
+                    ?disabled=${!props.connected || subagentLoading}
+                    @click=${() => props.onSubagentRefresh?.()}
+                    title="Refresh subagents"
+                  >
+                    <span class="${subagentLoading ? "agent-spin" : ""}">${icons.loader}</span>
+                    Refresh
+                  </button>
+                `
+              : nothing
+          }
+        </div>
+      </div>
+
+      <div class="agent-progress" aria-hidden="true">
+        <div
+          class="agent-progress__bar ${isStreaming || isCompacting ? "agent-progress__bar--active" : ""}"
+        ></div>
+      </div>
+
+      <div class="agent-orchestration__meta">
+        ${renderModelAttribution(props.modelSelection)}
+        <div class="agent-meta-row">
+          <span class="agent-meta-row__label">Session</span>
+          <span class="mono agent-meta-row__value">${props.sessionKey}</span>
+        </div>
+        ${
+          props.queue.length
+            ? html`
+                <div class="agent-meta-row">
+                  <span class="agent-meta-row__label">Queued</span>
+                  <span class="mono agent-meta-row__value">${props.queue.length}</span>
+                </div>
+              `
+            : nothing
+        }
+      </div>
+
+      ${renderCompactionIndicator(props.compactionStatus)}
+
+      ${
+        props.queue.length
+          ? html`
+              <div class="agent-queue">
+                <div class="agent-queue__title">Queued Messages</div>
+                <div class="agent-queue__list">
+                  ${props.queue.map(
+                    (item) => html`
+                      <div class="agent-queue__item">
+                        <div class="agent-queue__text">
+                          ${item.text ||
+                          (item.attachments?.length
+                            ? `Image (${item.attachments.length})`
+                            : "")}
+                        </div>
+                        <button
+                          class="btn btn--sm agent-queue__remove"
+                          type="button"
+                          aria-label="Remove queued message"
+                          @click=${() => props.onQueueRemove(item.id)}
+                        >
+                          ${icons.x}
+                        </button>
+                      </div>
+                    `,
+                  )}
+                </div>
+              </div>
+            `
+          : nothing
+      }
+
+      <div class="agent-subagents">
+        <div class="agent-subagents__header">
+          <div class="agent-subagents__title">
+            Subagents
+            <span class="agent-subagents__count mono">${subagents.length}</span>
+          </div>
+          <div class="agent-subagents__hint muted">spawned by this thread</div>
+        </div>
+
+        ${subagentError ? html`<div class="callout danger">${subagentError}</div>` : nothing}
+
+        ${
+          !props.connected
+            ? html`<div class="muted">Connect to see subagents.</div>`
+            : subagentLoading && subagents.length === 0
+              ? html`<div class="muted">Loading subagents...</div>`
+              : subagents.length === 0
+                ? html`<div class="muted">No subagents yet.</div>`
+                : html`
+                    <div class="agent-subagents__list">
+                      ${subagents.map((s) => {
+                        const label =
+                          s.label?.trim() ||
+                          s.derivedTitle?.trim() ||
+                          s.displayName?.trim() ||
+                          s.key;
+                        const updatedAt = typeof s.updatedAt === "number" ? s.updatedAt : null;
+                        const preview = (s.lastMessagePreview ?? "").trim();
+                        const hasPreview = Boolean(preview);
+                        return html`
+                          <button
+                            class="agent-subagent"
+                            type="button"
+                            @click=${() => props.onSessionKeyChange(s.key)}
+                            title="Open subagent session"
+                          >
+                            <div class="agent-subagent__main">
+                              <div class="agent-subagent__title">${label}</div>
+                              <div class="agent-subagent__sub">
+                                <div
+                                  class="agent-subagent__preview ${hasPreview ? "" : "agent-subagent__preview--empty"}"
+                                >
+                                  ${hasPreview ? preview : "No messages yet"}
+                                </div>
+                              </div>
+                            </div>
+                            <div class="agent-subagent__meta">
+                              <div class="agent-subagent__time mono">
+                                ${formatAge(updatedAt)}
+                              </div>
+                            </div>
+                          </button>
+                        `;
+                      })}
+                    </div>
+                  `
+        }
+      </div>
+    </section>
+  `;
+}
+
+function renderTerminalCard(props: ChatProps) {
+  const canCompose = props.connected;
+  const isRunning = props.stream !== null;
+  const canAbort = Boolean(props.canAbort && props.onAbort);
+  const canQueue = Boolean(props.onQueue) && (props.draft.trim().length > 0 || (props.attachments?.length ?? 0) > 0);
 
   const hasAttachments = (props.attachments?.length ?? 0) > 0;
   const composePlaceholder = props.connected
-    ? hasAttachments
-      ? "Add a message or paste more images..."
-      : "Message (↩ to send, Shift+↩ for line breaks, paste images)"
-    : "Connect to the gateway to start chatting…";
+    ? isRunning
+      ? hasAttachments
+        ? "Agent is running (attachments will be queued)..."
+        : "Steer the agent (↩ to inject, Shift+↩ for line breaks)"
+      : hasAttachments
+        ? "Add a message or paste more images..."
+        : "Message (↩ to send, Shift+↩ for line breaks, paste images)"
+    : "Connect to the gateway to start chatting...";
 
   const splitRatio = props.splitRatio ?? 0.6;
   const sidebarOpen = Boolean(props.sidebarOpen && props.onCloseSidebar);
+
   const thread = html`
     <div
-      class="chat-thread"
+      class="chat-thread terminal-thread"
       role="log"
       aria-live="polite"
       @scroll=${props.onChatScroll}
     >
-      ${
-        props.loading
-          ? html`
-              <div class="muted">Loading chat…</div>
-            `
-          : nothing
-      }
+      ${props.loading ? html`<div class="muted">Loading chat...</div>` : nothing}
       ${repeat(
-        buildChatItems(props),
+        buildTerminalItems(props),
         (item) => item.key,
-        (item) => {
-          if (item.kind === "reading-indicator") {
-            return renderReadingIndicatorGroup(assistantIdentity);
-          }
-
-          if (item.kind === "stream") {
-            return renderStreamingGroup(
-              item.text,
-              item.startedAt,
-              props.onOpenSidebar,
-              assistantIdentity,
-            );
-          }
-
-          if (item.kind === "group") {
-            return renderMessageGroup(item, {
-              onOpenSidebar: props.onOpenSidebar,
-              showReasoning,
-              assistantName: props.assistantName,
-              assistantAvatar: assistantIdentity.avatar,
-            });
-          }
-
-          return nothing;
-        },
+        (item) => renderTerminalEntry(props, item),
       )}
     </div>
   `;
 
   return html`
-    <section class="card chat">
+    <section class="card agent-terminal" aria-label="Agent terminal">
       ${props.disabledReason ? html`<div class="callout">${props.disabledReason}</div>` : nothing}
 
       ${props.error ? html`<div class="callout danger">${props.error}</div>` : nothing}
 
-      ${renderCompactionIndicator(props.compactionStatus)}
-
       ${
         props.focusMode
           ? html`
-            <button
-              class="chat-focus-exit"
-              type="button"
-              @click=${props.onToggleFocusMode}
-              aria-label="Exit focus mode"
-              title="Exit focus mode"
-            >
-              ${icons.x}
-            </button>
-          `
+              <button
+                class="chat-focus-exit"
+                type="button"
+                @click=${props.onToggleFocusMode}
+                aria-label="Exit focus mode"
+                title="Exit focus mode"
+              >
+                ${icons.x}
+              </button>
+            `
           : nothing
       }
 
-      <div
-        class="chat-split-container ${sidebarOpen ? "chat-split-container--open" : ""}"
-      >
+      <div class="agent-terminal__header">
+        <div class="agent-terminal__title">
+          <div class="card-title">Agent Terminal</div>
+          <div class="agent-terminal__subtitle muted">
+            ${isRunning ? "Streaming" : "Ready"} · <span class="mono">${props.sessionKey}</span>
+          </div>
+        </div>
+        <div class="agent-terminal__actions">
+          <button
+            class="btn btn--sm"
+            type="button"
+            ?disabled=${!props.connected || (!canAbort && props.sending)}
+            @click=${canAbort ? props.onAbort : props.onNewChat}
+          >
+            ${canAbort ? "Stop" : "New chat"}
+          </button>
+          <button
+            class="btn btn--sm"
+            type="button"
+            ?disabled=${!props.connected}
+            @click=${props.onRefresh}
+            title="Refresh"
+          >
+            ${icons.loader}
+            Refresh
+          </button>
+        </div>
+      </div>
+
+      <div class="chat-split-container ${sidebarOpen ? "chat-split-container--open" : ""}">
         <div
           class="chat-main"
           style="flex: ${sidebarOpen ? `0 0 ${splitRatio * 100}%` : "1 1 100%"}"
@@ -276,63 +796,31 @@ export function renderChat(props: ChatProps) {
         ${
           sidebarOpen
             ? html`
-              <resizable-divider
-                .splitRatio=${splitRatio}
-                @resize=${(e: CustomEvent) => props.onSplitRatioChange?.(e.detail.splitRatio)}
-              ></resizable-divider>
-              <div class="chat-sidebar">
-                ${renderMarkdownSidebar({
-                  content: props.sidebarContent ?? null,
-                  error: props.sidebarError ?? null,
-                  onClose: props.onCloseSidebar!,
-                  onViewRawText: () => {
-                    if (!props.sidebarContent || !props.onOpenSidebar) return;
-                    props.onOpenSidebar(`\`\`\`\n${props.sidebarContent}\n\`\`\``);
-                  },
-                })}
-              </div>
-            `
+                <resizable-divider
+                  .splitRatio=${splitRatio}
+                  @resize=${(e: CustomEvent) => props.onSplitRatioChange?.(e.detail.splitRatio)}
+                ></resizable-divider>
+                <div class="chat-sidebar">
+                  ${renderMarkdownSidebar({
+                    content: props.sidebarContent ?? null,
+                    error: props.sidebarError ?? null,
+                    onClose: props.onCloseSidebar!,
+                    onViewRawText: () => {
+                      if (!props.sidebarContent || !props.onOpenSidebar) return;
+                      props.onOpenSidebar(`\`\`\`\n${props.sidebarContent}\n\`\`\``);
+                    },
+                  })}
+                </div>
+              `
             : nothing
         }
       </div>
 
-      ${
-        props.queue.length
-          ? html`
-            <div class="chat-queue" role="status" aria-live="polite">
-              <div class="chat-queue__title">Queued (${props.queue.length})</div>
-              <div class="chat-queue__list">
-                ${props.queue.map(
-                  (item) => html`
-                    <div class="chat-queue__item">
-                      <div class="chat-queue__text">
-                        ${
-                          item.text ||
-                          (item.attachments?.length ? `Image (${item.attachments.length})` : "")
-                        }
-                      </div>
-                      <button
-                        class="btn chat-queue__remove"
-                        type="button"
-                        aria-label="Remove queued message"
-                        @click=${() => props.onQueueRemove(item.id)}
-                      >
-                        ${icons.x}
-                      </button>
-                    </div>
-                  `,
-                )}
-              </div>
-            </div>
-          `
-          : nothing
-      }
-
-      <div class="chat-compose">
+      <div class="chat-compose agent-terminal__compose">
         ${renderAttachmentPreview(props)}
         <div class="chat-compose__row">
           <label class="field chat-compose__field">
-            <span>Message</span>
+            <span class="agent-terminal__composeLabel">${isRunning ? "Steer" : "Message"}</span>
             <textarea
               ${ref((el) => el && adjustTextareaHeight(el as HTMLTextAreaElement))}
               .value=${props.draft}
@@ -340,7 +828,7 @@ export function renderChat(props: ChatProps) {
               @keydown=${(e: KeyboardEvent) => {
                 if (e.key !== "Enter") return;
                 if (e.isComposing || e.keyCode === 229) return;
-                if (e.shiftKey) return; // Allow Shift+Enter for line breaks
+                if (e.shiftKey) return;
                 if (!props.connected) return;
                 e.preventDefault();
                 if (canCompose) props.onSend();
@@ -355,19 +843,28 @@ export function renderChat(props: ChatProps) {
             ></textarea>
           </label>
           <div class="chat-compose__actions">
-            <button
-              class="btn"
-              ?disabled=${!props.connected || (!canAbort && props.sending)}
-              @click=${canAbort ? props.onAbort : props.onNewSession}
-            >
-              ${canAbort ? "Stop" : "New session"}
-            </button>
+            ${
+              isRunning && props.onQueue
+                ? html`
+                    <button
+                      class="btn"
+                      type="button"
+                      ?disabled=${!props.connected || !canQueue}
+                      @click=${() => props.onQueue?.()}
+                      title="Queue message to send after the run finishes"
+                    >
+                      Queue
+                    </button>
+                  `
+                : nothing
+            }
             <button
               class="btn primary"
               ?disabled=${!props.connected}
               @click=${props.onSend}
+              title=${isRunning ? "Steer the running agent" : "Send message"}
             >
-              ${isBusy ? "Queue" : "Send"}<kbd class="btn-kbd">↵</kbd>
+              ${isRunning ? "Steer" : "Send"}<kbd class="btn-kbd">↵</kbd>
             </button>
           </div>
         </div>
@@ -376,100 +873,15 @@ export function renderChat(props: ChatProps) {
   `;
 }
 
-const CHAT_HISTORY_RENDER_LIMIT = 200;
+export function renderChat(props: ChatProps) {
+  const showOrchestration = !props.focusMode;
 
-function groupMessages(items: ChatItem[]): Array<ChatItem | MessageGroup> {
-  const result: Array<ChatItem | MessageGroup> = [];
-  let currentGroup: MessageGroup | null = null;
-
-  for (const item of items) {
-    if (item.kind !== "message") {
-      if (currentGroup) {
-        result.push(currentGroup);
-        currentGroup = null;
-      }
-      result.push(item);
-      continue;
-    }
-
-    const normalized = normalizeMessage(item.message);
-    const role = normalizeRoleForGrouping(normalized.role);
-    const timestamp = normalized.timestamp || Date.now();
-
-    if (!currentGroup || currentGroup.role !== role) {
-      if (currentGroup) result.push(currentGroup);
-      currentGroup = {
-        kind: "group",
-        key: `group:${role}:${item.key}`,
-        role,
-        messages: [{ message: item.message, key: item.key }],
-        timestamp,
-        isStreaming: false,
-      };
-    } else {
-      currentGroup.messages.push({ message: item.message, key: item.key });
-    }
-  }
-
-  if (currentGroup) result.push(currentGroup);
-  return result;
-}
-
-function buildChatItems(props: ChatProps): Array<ChatItem | MessageGroup> {
-  const items: ChatItem[] = [];
-  const history = Array.isArray(props.messages) ? props.messages : [];
-  const tools = Array.isArray(props.toolMessages) ? props.toolMessages : [];
-  const historyStart = Math.max(0, history.length - CHAT_HISTORY_RENDER_LIMIT);
-  if (historyStart > 0) {
-    items.push({
-      kind: "message",
-      key: "chat:history:notice",
-      message: {
-        role: "system",
-        content: `Showing last ${CHAT_HISTORY_RENDER_LIMIT} messages (${historyStart} hidden).`,
-        timestamp: Date.now(),
-      },
-    });
-  }
-  for (let i = historyStart; i < history.length; i++) {
-    const msg = history[i];
-    const normalized = normalizeMessage(msg);
-
-    if (!props.showThinking && normalized.role.toLowerCase() === "toolresult") {
-      continue;
-    }
-
-    items.push({
-      kind: "message",
-      key: messageKey(msg, i),
-      message: msg,
-    });
-  }
-  if (props.showThinking) {
-    for (let i = 0; i < tools.length; i++) {
-      items.push({
-        kind: "message",
-        key: messageKey(tools[i], i + history.length),
-        message: tools[i],
-      });
-    }
-  }
-
-  if (props.stream !== null) {
-    const key = `stream:${props.sessionKey}:${props.streamStartedAt ?? "live"}`;
-    if (props.stream.trim().length > 0) {
-      items.push({
-        kind: "stream",
-        key,
-        text: props.stream,
-        startedAt: props.streamStartedAt ?? Date.now(),
-      });
-    } else {
-      items.push({ kind: "reading-indicator", key });
-    }
-  }
-
-  return groupMessages(items);
+  return html`
+    <section class="agent-workspace ${showOrchestration ? "" : "agent-workspace--solo"}">
+      ${showOrchestration ? renderOrchestrationCard(props) : nothing}
+      ${renderTerminalCard(props)}
+    </section>
+  `;
 }
 
 function messageKey(message: unknown, index: number): string {

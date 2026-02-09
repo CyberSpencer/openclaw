@@ -21,6 +21,8 @@ export type VoiceState = {
   connected: boolean;
   enabled: boolean;
   mode: "option2a" | "personaplex" | "hybrid";
+  sessionKey: string | null;
+  driveOpenClaw: boolean;
   
   // Conversation state
   conversationActive: boolean;
@@ -88,6 +90,8 @@ export type VoiceProcessResult = {
   audioBase64?: string;
   route?: string;
   model?: string;
+  thinkingLevel?: string;
+  runId?: string;
   timings?: VoiceTimings;
 };
 
@@ -108,6 +112,8 @@ export function createVoiceState(): VoiceState {
     connected: false,
     enabled: false,
     mode: "personaplex", // Default to PersonaPlex S2S
+    sessionKey: null,
+    driveOpenClaw: true,
     
     // Conversation state
     conversationActive: false,
@@ -378,8 +384,15 @@ export async function processVoiceInput(
 
   try {
     console.log("[Voice] Sending audio to gateway for processing...");
-    const result = (await state.client.request("voice.process", {
+    const request: Record<string, unknown> = {
       audio: audioBase64,
+      driveOpenClaw: state.driveOpenClaw,
+    };
+    if (state.sessionKey) {
+      request.sessionKey = state.sessionKey;
+    }
+    const result = (await state.client.request("voice.process", {
+      ...request,
     })) as VoiceProcessResult;
 
     console.log("[Voice] Got response:", {
@@ -417,6 +430,8 @@ export async function processTextToVoice(
   try {
     const result = (await state.client.request("voice.processText", {
       text,
+      sessionKey: state.sessionKey ?? undefined,
+      driveOpenClaw: state.driveOpenClaw,
     })) as VoiceProcessResult;
 
     state.response = result.response ?? null;

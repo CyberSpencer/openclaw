@@ -10,8 +10,23 @@
  * - voice.synthesize: TTS only
  */
 
+import { randomUUID } from "node:crypto";
+import fs from "node:fs";
+import path from "node:path";
+
+import { CURRENT_SESSION_VERSION } from "@mariozechner/pi-coding-agent";
 import { loadConfig } from "../../config/config.js";
 import type { VoiceConfig } from "../../config/types.voice.js";
+import { resolveSessionAgentId } from "../../agents/agent-scope.js";
+import { resolveEffectiveMessagesConfig, resolveIdentityName } from "../../agents/identity.js";
+import { dispatchInboundMessage } from "../../auto-reply/dispatch.js";
+import { createReplyDispatcher } from "../../auto-reply/reply/reply-dispatcher.js";
+import {
+  extractShortModelName,
+  type ResponsePrefixContext,
+} from "../../auto-reply/reply/response-prefix-template.js";
+import type { MsgContext } from "../../auto-reply/templating.js";
+import { INTERNAL_MESSAGE_CHANNEL } from "../../utils/message-channel.js";
 import {
   resolveVoiceConfig,
   checkVoiceCapabilities,
@@ -23,8 +38,7 @@ import { synthesizeWithLocalTts, resolveLocalTtsConfig } from "../../voice/local
 import { routeVoiceRequest, resolveRouterConfig } from "../../voice/router.js";
 import {
   resolvePersonaPlexConfig,
-  isPersonaPlexInstalled,
-  isPersonaPlexRunning,
+  selectPersonaPlexEndpoint,
   startPersonaPlexServer,
   stopPersonaPlexServer,
   processWithPersonaPlex,
@@ -32,6 +46,7 @@ import {
 } from "../../voice/personaplex.js";
 import { ErrorCodes, errorShape } from "../protocol/index.js";
 import { formatForLog } from "../ws-log.js";
+import { loadSessionEntry } from "../session-utils.js";
 import type { GatewayRequestHandlers } from "./types.js";
 
 /**
@@ -40,6 +55,135 @@ import type { GatewayRequestHandlers } from "./types.js";
 function getVoiceConfig(): VoiceConfig {
   const cfg = loadConfig();
   return cfg.voice ?? {};
+}
+
+type TranscriptAppendResult = {
+  ok: boolean;
+  messageId?: string;
+  message?: Record<string, unknown>;
+  error?: string;
+};
+
+function resolveTranscriptPath(params: {
+  sessionId: string;
+  storePath: string | undefined;
+  sessionFile?: string;
+}): string | null {
+  const { sessionId, storePath, sessionFile } = params;
+  if (sessionFile) {
+    return sessionFile;
+  }
+  if (!storePath) {
+    return null;
+  }
+  return path.join(path.dirname(storePath), `${sessionId}.jsonl`);
+}
+
+function ensureTranscriptFile(params: { transcriptPath: string; sessionId: string }): {
+  ok: boolean;
+  error?: string;
+} {
+  if (fs.existsSync(params.transcriptPath)) {
+    return { ok: true };
+  }
+  try {
+    fs.mkdirSync(path.dirname(params.transcriptPath), { recursive: true });
+    const header = {
+      type: "session",
+      version: CURRENT_SESSION_VERSION,
+      id: params.sessionId,
+      timestamp: new Date().toISOString(),
+      cwd: process.cwd(),
+    };
+    fs.writeFileSync(params.transcriptPath, `${JSON.stringify(header)}\n`, "utf-8");
+    return { ok: true };
+  } catch (err) {
+    return { ok: false, error: err instanceof Error ? err.message : String(err) };
+  }
+}
+
+function appendAssistantTranscriptMessage(params: {
+  message: string;
+  label?: string;
+  sessionId: string;
+  storePath: string | undefined;
+  sessionFile?: string;
+  createIfMissing?: boolean;
+}): TranscriptAppendResult {
+  const transcriptPath = resolveTranscriptPath({
+    sessionId: params.sessionId,
+    storePath: params.storePath,
+    sessionFile: params.sessionFile,
+  });
+  if (!transcriptPath) {
+    return { ok: false, error: "transcript path not resolved" };
+  }
+
+  if (!fs.existsSync(transcriptPath)) {
+    if (!params.createIfMissing) {
+      return { ok: false, error: "transcript file not found" };
+    }
+    const ensured = ensureTranscriptFile({
+      transcriptPath,
+      sessionId: params.sessionId,
+    });
+    if (!ensured.ok) {
+      return { ok: false, error: ensured.error ?? "failed to create transcript file" };
+    }
+  }
+
+  const now = Date.now();
+  const messageId = randomUUID().slice(0, 8);
+  const labelPrefix = params.label ? `[${params.label}]\n\n` : "";
+  const messageBody: Record<string, unknown> = {
+    role: "assistant",
+    content: [{ type: "text", text: `${labelPrefix}${params.message}` }],
+    timestamp: now,
+    stopReason: "injected",
+    usage: { input: 0, output: 0, totalTokens: 0 },
+  };
+  const transcriptEntry = {
+    type: "message",
+    id: messageId,
+    timestamp: new Date(now).toISOString(),
+    message: messageBody,
+  };
+
+  try {
+    fs.appendFileSync(transcriptPath, `${JSON.stringify(transcriptEntry)}\n`, "utf-8");
+  } catch (err) {
+    return { ok: false, error: err instanceof Error ? err.message : String(err) };
+  }
+
+  return { ok: true, messageId, message: transcriptEntry.message };
+}
+
+function nextChatSeq(context: { agentRunSeq: Map<string, number> }, runId: string) {
+  const next = (context.agentRunSeq.get(runId) ?? 0) + 1;
+  context.agentRunSeq.set(runId, next);
+  return next;
+}
+
+function broadcastChatFinal(params: {
+  context: {
+    broadcast: (event: string, payload: unknown) => void;
+    nodeSendToSession: (sessionKey: string, event: string, payload: unknown) => void;
+    agentRunSeq: Map<string, number>;
+  };
+  runId: string;
+  sessionKey: string;
+  message?: Record<string, unknown>;
+}) {
+  const seq = nextChatSeq({ agentRunSeq: params.context.agentRunSeq }, params.runId);
+  const payload = {
+    runId: params.runId,
+    sessionKey: params.sessionKey,
+    seq,
+    state: "final" as const,
+    message: params.message,
+  };
+  params.context.broadcast("chat", payload);
+  params.context.nodeSendToSession(params.sessionKey, "chat", payload);
 }
 
 export const voiceHandlers: GatewayRequestHandlers = {
@@ -100,6 +244,7 @@ export const voiceHandlers: GatewayRequestHandlers = {
           port: config.personaplex.port,
           useSsl: config.personaplex.useSsl,
           cpuOffload: config.personaplex.cpuOffload,
+          idleTimeoutMs: config.personaplex.idleTimeoutMs,
           voicePrompt: config.personaplex.voicePrompt,
           textPrompt: config.personaplex.textPrompt,
           seed: config.personaplex.seed,
@@ -135,6 +280,7 @@ export const voiceHandlers: GatewayRequestHandlers = {
     const sessionKey = typeof params.sessionKey === "string" ? params.sessionKey : "webchat-voice";
     const textPrompt = typeof params.textPrompt === "string" ? params.textPrompt.trim() : "";
     const voicePrompt = typeof params.voicePrompt === "string" ? params.voicePrompt.trim() : "";
+    const driveOpenClaw = params.driveOpenClaw === true;
     const seed =
       typeof params.seed === "number" && Number.isFinite(params.seed)
         ? Math.trunc(params.seed)
@@ -145,71 +291,136 @@ export const voiceHandlers: GatewayRequestHandlers = {
       const audioBuffer = Buffer.from(audioBase64, "base64");
       const voiceConfig = getVoiceConfig();
       const personaplexOverrides: VoiceConfig["personaplex"] = {
-        ...(voiceConfig.personaplex ?? {}),
+        ...voiceConfig.personaplex,
         ...(textPrompt ? { textPrompt } : {}),
         ...(voicePrompt ? { voicePrompt } : {}),
         ...(seed !== undefined ? { seed } : {}),
         ...(cpuOffload !== undefined ? { cpuOffload } : {}),
       };
-      const config = resolveVoiceConfig({
+      const configBase = resolveVoiceConfig({
         ...voiceConfig,
         personaplex: personaplexOverrides,
       });
+      const config = driveOpenClaw ? { ...configBase, mode: "option2a" as const } : configBase;
+      if (!config.enabled) {
+        respond(false, undefined, errorShape(ErrorCodes.UNAVAILABLE, "Voice mode is disabled"));
+        return;
+      }
 
-      // LLM invocation that integrates with the chat system
-      const llmInvoke = async (text: string, model?: string): Promise<string> => {
-        // Use dispatchInboundMessage pattern from chat.ts
-        // For now, use a simpler approach via the chat completion system
-        const { completeSimple } = await import("@mariozechner/pi-ai");
-        const { getApiKeyForModel, requireApiKey } = await import("../../agents/model-auth.js");
-        const { resolveDefaultModelForAgent } = await import("../../agents/model-selection.js");
-        const { resolveModel } = await import("../../agents/pi-embedded-runner/model.js");
+      const selectedModelRef: {
+        value: { provider: string; model: string; thinkLevel?: string } | null;
+      } = { value: null };
+      const agentRunIdRef: { value: string | null } = { value: null };
 
-        const cfg = loadConfig();
-        const defaultRef = resolveDefaultModelForAgent({ cfg });
+      const llmInvoke = async (
+        text: string,
+        _model?: string,
+        thinking?: string,
+      ): Promise<string> => {
+        const { cfg } = loadSessionEntry(sessionKey);
+        const runId = randomUUID();
+        agentRunIdRef.value = runId;
+        let agentRunStarted = false;
 
-        // Use routed model if specified, otherwise use default
-        const provider = model?.includes("/") ? model.split("/")[0] : defaultRef.provider;
-        const modelName = model?.includes("/") ? model.split("/")[1] : (model ?? defaultRef.model);
+        const trimmed = text.trim();
+        const injectThinking = Boolean(thinking && trimmed && !trimmed.startsWith("/"));
+        const commandBody = injectThinking ? `/think ${thinking} ${text}` : text;
 
-        const resolved = resolveModel(provider, modelName, undefined, cfg);
-        if (!resolved.model) {
-          throw new Error(resolved.error ?? `Unknown model: ${provider}/${modelName}`);
+        const ctx: MsgContext = {
+          Body: text,
+          BodyForAgent: text,
+          BodyForCommands: commandBody,
+          RawBody: text,
+          CommandBody: commandBody,
+          SessionKey: sessionKey,
+          Provider: INTERNAL_MESSAGE_CHANNEL,
+          Surface: INTERNAL_MESSAGE_CHANNEL,
+          OriginatingChannel: INTERNAL_MESSAGE_CHANNEL,
+          ChatType: "direct",
+          CommandAuthorized: true,
+          MessageSid: runId,
+        };
+
+        const agentId = resolveSessionAgentId({ sessionKey, config: cfg });
+        let prefixContext: ResponsePrefixContext = {
+          identityName: resolveIdentityName(cfg, agentId),
+        };
+        const finalReplyParts: string[] = [];
+        const dispatcher = createReplyDispatcher({
+          responsePrefix: resolveEffectiveMessagesConfig(cfg, agentId).responsePrefix,
+          responsePrefixContextProvider: () => prefixContext,
+          onError: (err) => {
+            context.logGateway.warn(`voice dispatch failed: ${formatForLog(err)}`);
+          },
+          deliver: async (payload, info) => {
+            if (info.kind !== "final") {
+              return;
+            }
+            const text = payload.text?.trim() ?? "";
+            if (!text) {
+              return;
+            }
+            finalReplyParts.push(text);
+          },
+        });
+
+        await dispatchInboundMessage({
+          ctx,
+          cfg,
+          dispatcher,
+          replyOptions: {
+            runId,
+            disableBlockStreaming: true,
+            onAgentRunStart: () => {
+              agentRunStarted = true;
+            },
+            onModelSelected: (sel) => {
+              selectedModelRef.value = {
+                provider: sel.provider,
+                model: sel.model,
+                thinkLevel: sel.thinkLevel,
+              };
+              prefixContext.provider = sel.provider;
+              prefixContext.model = extractShortModelName(sel.model);
+              prefixContext.modelFull = `${sel.provider}/${sel.model}`;
+              prefixContext.thinkingLevel = sel.thinkLevel ?? "off";
+            },
+          },
+        });
+
+        const combinedReply = finalReplyParts
+          .map((part) => part.trim())
+          .filter(Boolean)
+          .join("\n\n")
+          .trim();
+
+        // For command-handled replies (no agent run), ensure the assistant message is persisted
+        // and broadcast as a final chat event so the Control UI stays in sync.
+        if (!agentRunStarted && combinedReply) {
+          const { storePath, entry } = loadSessionEntry(sessionKey);
+          const sessionId = entry?.sessionId ?? runId;
+          const appended = appendAssistantTranscriptMessage({
+            message: combinedReply,
+            label: "voice",
+            sessionId,
+            storePath,
+            sessionFile: entry?.sessionFile,
+            createIfMissing: true,
+          });
+          const message =
+            appended.ok && appended.message
+              ? appended.message
+              : {
+                  role: "assistant",
+                  content: [{ type: "text", text: combinedReply }],
+                  timestamp: Date.now(),
+                  stopReason: "injected",
+                  usage: { input: 0, output: 0, totalTokens: 0 },
+                };
+          broadcastChatFinal({ context, runId, sessionKey, message });
         }
 
-        const apiKey = requireApiKey(
-          await getApiKeyForModel({ model: resolved.model, cfg }),
-          provider,
-        );
-
-        const res = await completeSimple(
-          resolved.model,
-          {
-            messages: [
-              {
-                role: "user",
-                content: text,
-                timestamp: Date.now(),
-              },
-            ],
-          },
-          {
-            apiKey,
-            maxTokens: 500, // Keep voice responses concise
-            temperature: 0.7,
-          },
-        );
-
-        // Filter for text content blocks
-        const isTextBlock = (block: { type: string }): block is { type: "text"; text: string } =>
-          block.type === "text";
-
-        return res.content
-          .filter(isTextBlock)
-          .map((block) => block.text.trim())
-          .filter(Boolean)
-          .join(" ")
-          .trim();
+        return combinedReply;
       };
 
       const result = await processVoiceInput(audioBuffer, config, llmInvoke);
@@ -221,7 +432,11 @@ export const voiceHandlers: GatewayRequestHandlers = {
           response: result.response,
           audioBase64: result.audioBuffer?.toString("base64"),
           route: result.routerDecision?.route,
-          model: result.routerDecision?.model,
+          model: selectedModelRef.value
+            ? `${selectedModelRef.value.provider}/${selectedModelRef.value.model}`
+            : result.routerDecision?.model,
+          thinkingLevel: selectedModelRef.value?.thinkLevel,
+          runId: agentRunIdRef.value,
           timings: result.timings,
         });
       } else {
@@ -247,7 +462,7 @@ export const voiceHandlers: GatewayRequestHandlers = {
    * - text: Text to process
    * - sessionKey: Optional session key for chat context
    */
-  "voice.processText": async ({ params, respond }) => {
+  "voice.processText": async ({ params, respond, context }) => {
     const text = typeof params.text === "string" ? params.text.trim() : "";
     if (!text) {
       respond(
@@ -258,61 +473,128 @@ export const voiceHandlers: GatewayRequestHandlers = {
       return;
     }
 
+    const sessionKey = typeof params.sessionKey === "string" ? params.sessionKey : "webchat-voice";
+
     try {
       const voiceConfig = getVoiceConfig();
       const config = resolveVoiceConfig(voiceConfig);
+      if (!config.enabled) {
+        respond(false, undefined, errorShape(ErrorCodes.UNAVAILABLE, "Voice mode is disabled"));
+        return;
+      }
 
-      // LLM invocation using the chat completion system
-      const llmInvoke = async (inputText: string, model?: string): Promise<string> => {
-        const { completeSimple } = await import("@mariozechner/pi-ai");
-        const { getApiKeyForModel, requireApiKey } = await import("../../agents/model-auth.js");
-        const { resolveDefaultModelForAgent } = await import("../../agents/model-selection.js");
-        const { resolveModel } = await import("../../agents/pi-embedded-runner/model.js");
+      const selectedModelRef: {
+        value: { provider: string; model: string; thinkLevel?: string } | null;
+      } = { value: null };
+      const agentRunIdRef: { value: string | null } = { value: null };
 
-        const cfg = loadConfig();
-        const defaultRef = resolveDefaultModelForAgent({ cfg });
+      const llmInvoke = async (
+        inputText: string,
+        _model?: string,
+        thinking?: string,
+      ): Promise<string> => {
+        const { cfg } = loadSessionEntry(sessionKey);
+        const runId = randomUUID();
+        agentRunIdRef.value = runId;
+        let agentRunStarted = false;
 
-        const provider = model?.includes("/") ? model.split("/")[0] : defaultRef.provider;
-        const modelName = model?.includes("/") ? model.split("/")[1] : (model ?? defaultRef.model);
+        const trimmed = inputText.trim();
+        const injectThinking = Boolean(thinking && trimmed && !trimmed.startsWith("/"));
+        const commandBody = injectThinking ? `/think ${thinking} ${inputText}` : inputText;
 
-        const resolved = resolveModel(provider, modelName, undefined, cfg);
-        if (!resolved.model) {
-          throw new Error(resolved.error ?? `Unknown model: ${provider}/${modelName}`);
+        const ctx: MsgContext = {
+          Body: inputText,
+          BodyForAgent: inputText,
+          BodyForCommands: commandBody,
+          RawBody: inputText,
+          CommandBody: commandBody,
+          SessionKey: sessionKey,
+          Provider: INTERNAL_MESSAGE_CHANNEL,
+          Surface: INTERNAL_MESSAGE_CHANNEL,
+          OriginatingChannel: INTERNAL_MESSAGE_CHANNEL,
+          ChatType: "direct",
+          CommandAuthorized: true,
+          MessageSid: runId,
+        };
+
+        const agentId = resolveSessionAgentId({ sessionKey, config: cfg });
+        let prefixContext: ResponsePrefixContext = {
+          identityName: resolveIdentityName(cfg, agentId),
+        };
+        const finalReplyParts: string[] = [];
+        const dispatcher = createReplyDispatcher({
+          responsePrefix: resolveEffectiveMessagesConfig(cfg, agentId).responsePrefix,
+          responsePrefixContextProvider: () => prefixContext,
+          onError: (err) => {
+            context.logGateway.warn(`voice dispatch failed: ${formatForLog(err)}`);
+          },
+          deliver: async (payload, info) => {
+            if (info.kind !== "final") {
+              return;
+            }
+            const text = payload.text?.trim() ?? "";
+            if (!text) {
+              return;
+            }
+            finalReplyParts.push(text);
+          },
+        });
+
+        await dispatchInboundMessage({
+          ctx,
+          cfg,
+          dispatcher,
+          replyOptions: {
+            runId,
+            disableBlockStreaming: true,
+            onAgentRunStart: () => {
+              agentRunStarted = true;
+            },
+            onModelSelected: (sel) => {
+              selectedModelRef.value = {
+                provider: sel.provider,
+                model: sel.model,
+                thinkLevel: sel.thinkLevel,
+              };
+              prefixContext.provider = sel.provider;
+              prefixContext.model = extractShortModelName(sel.model);
+              prefixContext.modelFull = `${sel.provider}/${sel.model}`;
+              prefixContext.thinkingLevel = sel.thinkLevel ?? "off";
+            },
+          },
+        });
+
+        const combinedReply = finalReplyParts
+          .map((part) => part.trim())
+          .filter(Boolean)
+          .join("\n\n")
+          .trim();
+
+        if (!agentRunStarted && combinedReply) {
+          const { storePath, entry } = loadSessionEntry(sessionKey);
+          const sessionId = entry?.sessionId ?? runId;
+          const appended = appendAssistantTranscriptMessage({
+            message: combinedReply,
+            label: "voice",
+            sessionId,
+            storePath,
+            sessionFile: entry?.sessionFile,
+            createIfMissing: true,
+          });
+          const message =
+            appended.ok && appended.message
+              ? appended.message
+              : {
+                  role: "assistant",
+                  content: [{ type: "text", text: combinedReply }],
+                  timestamp: Date.now(),
+                  stopReason: "injected",
+                  usage: { input: 0, output: 0, totalTokens: 0 },
+                };
+          broadcastChatFinal({ context, runId, sessionKey, message });
         }
 
-        const apiKey = requireApiKey(
-          await getApiKeyForModel({ model: resolved.model, cfg }),
-          provider,
-        );
-
-        const res = await completeSimple(
-          resolved.model,
-          {
-            messages: [
-              {
-                role: "user",
-                content: inputText,
-                timestamp: Date.now(),
-              },
-            ],
-          },
-          {
-            apiKey,
-            maxTokens: 500,
-            temperature: 0.7,
-          },
-        );
-
-        // Filter for text content blocks
-        const isTextBlock = (block: { type: string }): block is { type: "text"; text: string } =>
-          block.type === "text";
-
-        return res.content
-          .filter(isTextBlock)
-          .map((block) => block.text.trim())
-          .filter(Boolean)
-          .join(" ")
-          .trim();
+        return combinedReply;
       };
 
       const result = await processTextToVoice(text, config, llmInvoke);
@@ -324,7 +606,11 @@ export const voiceHandlers: GatewayRequestHandlers = {
           response: result.response,
           audioBase64: result.audioBuffer?.toString("base64"),
           route: result.routerDecision?.route,
-          model: result.routerDecision?.model,
+          model: selectedModelRef.value
+            ? `${selectedModelRef.value.provider}/${selectedModelRef.value.model}`
+            : result.routerDecision?.model,
+          thinkingLevel: selectedModelRef.value?.thinkLevel,
+          runId: agentRunIdRef.value,
           timings: result.timings,
         });
       } else {
@@ -453,6 +739,7 @@ export const voiceHandlers: GatewayRequestHandlers = {
         sensitiveDetected: decision.sensitiveDetected,
         complexityScore: decision.complexityScore,
         model: decision.model,
+        thinking: decision.thinking,
       });
     } catch (err) {
       respond(false, undefined, errorShape(ErrorCodes.UNAVAILABLE, formatForLog(err)));
@@ -480,6 +767,7 @@ export const voiceHandlers: GatewayRequestHandlers = {
         device: status.device,
         hasToken: status.hasToken,
         port: config.port,
+        idleTimeoutMs: config.idleTimeoutMs,
       });
     } catch (err) {
       respond(false, undefined, errorShape(ErrorCodes.UNAVAILABLE, formatForLog(err)));
@@ -558,7 +846,7 @@ export const voiceHandlers: GatewayRequestHandlers = {
           : undefined;
       const cpuOffload = typeof params.cpuOffload === "boolean" ? params.cpuOffload : undefined;
       const config = resolvePersonaPlexConfig({
-        ...(voiceConfig.personaplex ?? {}),
+        ...voiceConfig.personaplex,
         ...(textPrompt ? { textPrompt } : {}),
         ...(voicePrompt ? { voicePrompt } : {}),
         ...(seed !== undefined ? { seed } : {}),
@@ -575,7 +863,16 @@ export const voiceHandlers: GatewayRequestHandlers = {
       }
 
       const audioBuffer = Buffer.from(audioBase64, "base64");
-      const result = await processWithPersonaPlex(audioBuffer, config);
+      const selected = await selectPersonaPlexEndpoint(config);
+      if (!selected) {
+        respond(
+          false,
+          undefined,
+          errorShape(ErrorCodes.UNAVAILABLE, "PersonaPlex unavailable (no healthy endpoints)"),
+        );
+        return;
+      }
+      const result = await processWithPersonaPlex(audioBuffer, selected.config, selected.transport);
 
       if (result.success) {
         respond(true, {

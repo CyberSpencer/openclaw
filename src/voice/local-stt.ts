@@ -227,7 +227,9 @@ function parseWhisperOutput(output: string): string {
 
   for (const line of lines) {
     const trimmed = line.trim();
-    if (!trimmed) continue;
+    if (!trimmed) {
+      continue;
+    }
 
     // Skip timestamp lines like "[00:00:00.000 --> 00:00:02.000]"
     if (trimmed.startsWith("[") && trimmed.includes("-->")) {
@@ -258,7 +260,9 @@ function parseWhisperOutput(output: string): string {
  * Returns "wav", "webm", "ogg", or "unknown".
  */
 export function detectAudioFormat(audioBuffer: Buffer): string {
-  if (audioBuffer.length < 12) return "unknown";
+  if (audioBuffer.length < 12) {
+    return "unknown";
+  }
 
   // WAV: starts with "RIFF" and contains "WAVE"
   if (
@@ -401,7 +405,9 @@ export async function prepareAudioForWhisper(
   if (format === "unknown") {
     // Try as webm first (most common from browsers)
     const result = await convertToWav(audioBuffer, "webm");
-    if (result.success) return result;
+    if (result.success) {
+      return result;
+    }
 
     // Fall back to letting ffmpeg auto-detect
     return await convertToWav(audioBuffer, "bin");

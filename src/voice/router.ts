@@ -8,9 +8,11 @@
  */
 
 import type { VoiceRouterConfig, VoiceRouterMode } from "../config/types.voice.js";
+import { getDefaultRedactPatterns } from "../logging/redact.js";
 
 const DEFAULT_MODE: VoiceRouterMode = "auto";
-const DEFAULT_LOCAL_MODEL = "llama3:8b";
+const DEFAULT_LOCAL_MODEL = "ollama/nemotron-3-nano:30b";
+const DEFAULT_CLOUD_MODEL = "openai-codex/gpt-5.3-codex";
 const DEFAULT_COMPLEXITY_THRESHOLD = 5;
 
 export type RouterDecision = {
@@ -19,17 +21,30 @@ export type RouterDecision = {
   sensitiveDetected: boolean;
   complexityScore: number;
   model?: string;
+  thinking?: string;
 };
 
 export type ResolvedRouterConfig = Required<VoiceRouterConfig>;
 
+function normalizeLocalModel(raw: string): string {
+  const trimmed = raw.trim();
+  if (!trimmed) {
+    return DEFAULT_LOCAL_MODEL;
+  }
+  if (trimmed.includes("/")) {
+    return trimmed;
+  }
+  return `ollama/${trimmed}`;
+}
+
 export function resolveRouterConfig(config?: VoiceRouterConfig): ResolvedRouterConfig {
+  const localModel = normalizeLocalModel(config?.localModel?.trim() || DEFAULT_LOCAL_MODEL);
   return {
     mode: config?.mode ?? DEFAULT_MODE,
     detectSensitive: config?.detectSensitive ?? true,
     useComplexity: config?.useComplexity ?? true,
-    localModel: config?.localModel?.trim() || DEFAULT_LOCAL_MODEL,
-    cloudModel: config?.cloudModel?.trim() || "",
+    localModel,
+    cloudModel: config?.cloudModel?.trim() || DEFAULT_CLOUD_MODEL,
     complexityThreshold: config?.complexityThreshold ?? DEFAULT_COMPLEXITY_THRESHOLD,
   };
 }
@@ -37,32 +52,28 @@ export function resolveRouterConfig(config?: VoiceRouterConfig): ResolvedRouterC
 /**
  * Sensitive data patterns that should route to local models.
  */
-const SENSITIVE_PATTERNS = [
-  // API keys and tokens
-  /\b(api[_-]?key|apikey)\s*[:=]\s*['"]?[a-zA-Z0-9_-]{20,}/gi,
-  /\b(secret|token)\s*[:=]\s*['"]?[a-zA-Z0-9_-]{20,}/gi,
-  /\bsk-[a-zA-Z0-9]{32,}/g, // OpenAI
-  /\bghp_[a-zA-Z0-9]{36,}/g, // GitHub
-  /\bAIza[a-zA-Z0-9_-]{35}/g, // Google
-  /\bAKIA[A-Z0-9]{16}/g, // AWS
-
-  // Credentials
-  /\b(password|passwd|pwd)\s*[:=]\s*['"]?[^\s'"]{8,}/gi,
-  /\b(private[_-]?key)\s*[:=]/gi,
-
-  // Personal identifiable information
-  /\b\d{3}[-.]?\d{2}[-.]?\d{4}\b/, // SSN
-  /\b\d{4}[-\s]?\d{4}[-\s]?\d{4}[-\s]?\d{4}\b/, // Credit card
-  /\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Z|a-z]{2,}\b.*password/gi, // Email with password context
-
-  // Connection strings
-  /\b(mongodb|postgres|mysql|redis):\/\/[^\s]+:[^\s]+@/gi,
-  /\bDatabase\s*=.*Password\s*=/gi,
-
-  // Certificates and keys
-  /-----BEGIN (RSA |EC |OPENSSH )?PRIVATE KEY-----/,
-  /-----BEGIN CERTIFICATE-----/,
-];
+const SENSITIVE_PATTERNS = (() => {
+  const raw = getDefaultRedactPatterns();
+  const parsed: RegExp[] = [];
+  for (const entry of raw) {
+    const trimmed = entry.trim();
+    if (!trimmed) {
+      continue;
+    }
+    const match = trimmed.match(/^\/(.+)\/([gimsuy]*)$/);
+    try {
+      if (match) {
+        const flags = match[2].includes("g") ? match[2] : `${match[2]}g`;
+        parsed.push(new RegExp(match[1], flags));
+      } else {
+        parsed.push(new RegExp(trimmed, "gi"));
+      }
+    } catch {
+      continue;
+    }
+  }
+  return parsed;
+})();
 
 /**
  * Keywords that indicate potentially sensitive context.
@@ -93,14 +104,13 @@ export function detectSensitiveData(text: string): { detected: boolean; matches:
   // Check patterns
   for (const pattern of SENSITIVE_PATTERNS) {
     // Reset lastIndex for global patterns
-    if (pattern.global) pattern.lastIndex = 0;
+    if (pattern.global) {
+      pattern.lastIndex = 0;
+    }
     if (pattern.test(text)) {
       // Reset again to get the actual match
       pattern.lastIndex = 0;
-      const match = text.match(pattern);
-      if (match) {
-        matches.push(`pattern:${pattern.source.slice(0, 30)}...`);
-      }
+      matches.push(`pattern:${pattern.source.slice(0, 30)}...`);
     }
   }
 
@@ -200,12 +210,16 @@ export function analyzeComplexity(text: string): { score: number; factors: Compl
 
   // Count question words
   for (const qw of QUESTION_WORDS) {
-    if (lowerText.includes(qw)) factors.questionWords++;
+    if (lowerText.includes(qw)) {
+      factors.questionWords++;
+    }
   }
 
   // Count technical terms
   for (const term of TECHNICAL_TERMS) {
-    if (lowerText.includes(term)) factors.technicalTerms++;
+    if (lowerText.includes(term)) {
+      factors.technicalTerms++;
+    }
   }
 
   // Check for multi-step indicators
@@ -232,25 +246,43 @@ export function analyzeComplexity(text: string): { score: number; factors: Compl
   let score = 0;
 
   // Length contribution (0-2)
-  if (factors.length > 50) score += 1;
-  if (factors.length > 150) score += 1;
+  if (factors.length > 50) {
+    score += 1;
+  }
+  if (factors.length > 150) {
+    score += 1;
+  }
 
   // Question complexity (0-2)
-  if (factors.questionWords >= 2) score += 1;
-  if (factors.questionWords >= 4) score += 1;
+  if (factors.questionWords >= 2) {
+    score += 1;
+  }
+  if (factors.questionWords >= 4) {
+    score += 1;
+  }
 
   // Technical depth (0-2)
-  if (factors.technicalTerms >= 2) score += 1;
-  if (factors.technicalTerms >= 5) score += 1;
+  if (factors.technicalTerms >= 2) {
+    score += 1;
+  }
+  if (factors.technicalTerms >= 5) {
+    score += 1;
+  }
 
   // Multi-step tasks (0-1)
-  if (factors.multiStep) score += 1;
+  if (factors.multiStep) {
+    score += 1;
+  }
 
   // Code-related (0-1.5)
-  if (factors.codeRelated) score += 1.5;
+  if (factors.codeRelated) {
+    score += 1.5;
+  }
 
   // Reasoning required (0-1.5)
-  if (factors.reasoning) score += 1.5;
+  if (factors.reasoning) {
+    score += 1.5;
+  }
 
   return {
     score: Math.min(10, Math.round(score * 10) / 10),
@@ -270,6 +302,7 @@ export function routeVoiceRequest(text: string, config: ResolvedRouterConfig): R
       sensitiveDetected: false,
       complexityScore: 0,
       model: config.localModel,
+      thinking: "none",
     };
   }
 
@@ -280,6 +313,7 @@ export function routeVoiceRequest(text: string, config: ResolvedRouterConfig): R
       sensitiveDetected: false,
       complexityScore: 0,
       model: config.cloudModel || undefined,
+      thinking: "medium",
     };
   }
 
@@ -295,6 +329,7 @@ export function routeVoiceRequest(text: string, config: ResolvedRouterConfig): R
       sensitiveDetected: true,
       complexityScore: 0,
       model: config.localModel,
+      thinking: "none",
     };
   }
 
@@ -310,6 +345,7 @@ export function routeVoiceRequest(text: string, config: ResolvedRouterConfig): R
       sensitiveDetected: false,
       complexityScore: complexity.score,
       model: config.cloudModel || undefined,
+      thinking: "xhigh",
     };
   }
 
@@ -320,5 +356,6 @@ export function routeVoiceRequest(text: string, config: ResolvedRouterConfig): R
     sensitiveDetected: false,
     complexityScore: complexity.score,
     model: config.localModel,
+    thinking: "none",
   };
 }

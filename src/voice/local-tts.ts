@@ -238,20 +238,16 @@ export async function synthesizeWithMacos(
   }
 
   // Convert AIFF to WAV for browser compatibility
-  const convertResult = await runCommand(
-    "ffmpeg",
-    ["-y", "-i", aiffPath, "-ar", "44100", "-ac", "1", "-f", "wav", wavPath],
-    config.timeoutMs,
-  );
+  let converted =
+    (
+      await runCommand(
+        "ffmpeg",
+        ["-y", "-i", aiffPath, "-ar", "44100", "-ac", "1", "-f", "wav", wavPath],
+        config.timeoutMs,
+      )
+    ).exitCode === 0 && existsSync(wavPath);
 
-  // Clean up AIFF file
-  try {
-    unlinkSync(aiffPath);
-  } catch {
-    // Ignore
-  }
-
-  if (convertResult.exitCode !== 0 || !existsSync(wavPath)) {
+  if (!converted) {
     // Fallback: try afconvert if ffmpeg fails
     const afconvertResult = await runCommand(
       "afconvert",
@@ -259,13 +255,22 @@ export async function synthesizeWithMacos(
       config.timeoutMs,
     );
 
-    if (afconvertResult.exitCode !== 0 || !existsSync(wavPath)) {
-      return {
-        success: false,
-        error: "Failed to convert audio to WAV format",
-        provider: "macos",
-      };
-    }
+    converted = afconvertResult.exitCode === 0 && existsSync(wavPath);
+  }
+
+  // Clean up AIFF file after conversion attempts
+  try {
+    unlinkSync(aiffPath);
+  } catch {
+    // Ignore
+  }
+
+  if (!converted) {
+    return {
+      success: false,
+      error: "Failed to convert audio to WAV format",
+      provider: "macos",
+    };
   }
 
   return {
@@ -334,7 +339,9 @@ function runCommand(
  */
 export function cleanupTtsCache(): number {
   const tempDir = path.join(tmpdir(), "openclaw-tts");
-  if (!existsSync(tempDir)) return 0;
+  if (!existsSync(tempDir)) {
+    return 0;
+  }
 
   const { readdirSync, statSync } = require("node:fs");
   const fiveMinutesAgo = Date.now() - 5 * 60 * 1000;

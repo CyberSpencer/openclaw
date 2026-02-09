@@ -50,6 +50,24 @@ function buildMemorySection(params: { isMinimal: boolean; availableTools: Set<st
   ];
 }
 
+function buildOrchestrationSection(params: { isMinimal: boolean; availableTools: Set<string> }) {
+  if (params.isMinimal) {
+    return [];
+  }
+  if (!params.availableTools.has("orchestration_plan")) {
+    return [];
+  }
+  return [
+    "## Agent Orchestration",
+    "For non-trivial requests, treat orchestration as a first-class artifact:",
+    "- Start by creating a short task plan (to-do list) and publish it with `orchestration_plan`.",
+    "- Keep task statuses updated: todo, running, done, blocked, skipped.",
+    "- Delegate focused tasks to subagents (sessions_spawn) and record the child sessionKey as assignedSessionKey on that task.",
+    "- Update the plan as work completes; the Control UI renders progress from it.",
+    "",
+  ];
+}
+
 function buildUserIdentitySection(ownerLine: string | undefined, isMinimal: boolean) {
   if (!ownerLine || isMinimal) {
     return [];
@@ -223,6 +241,8 @@ export function buildAgentSystemPrompt(params: {
     sessions_history: "Fetch history for another session/sub-agent",
     sessions_send: "Send a message to another session/sub-agent",
     sessions_spawn: "Spawn a sub-agent session",
+    orchestration_plan:
+      "Publish/update a structured task plan (to-do list) used by the Control UI for progress + subagent mapping",
     session_status:
       "Show a /status-equivalent status card (usage + time + Reasoning/Verbose/Elevated); use for model-use questions (📊 session_status); optional per-session model override",
     image: "Analyze an image with the configured image model",
@@ -251,6 +271,7 @@ export function buildAgentSystemPrompt(params: {
     "sessions_history",
     "sessions_send",
     "session_status",
+    "orchestration_plan",
     "image",
   ];
 
@@ -337,6 +358,7 @@ export function buildAgentSystemPrompt(params: {
     readToolName,
   });
   const memorySection = buildMemorySection({ isMinimal, availableTools });
+  const orchestrationSection = buildOrchestrationSection({ isMinimal, availableTools });
   const docsSection = buildDocsSection({
     docsPath: params.docsPath,
     isMinimal,
@@ -393,6 +415,7 @@ export function buildAgentSystemPrompt(params: {
     "",
     ...skillsSection,
     ...memorySection,
+    ...orchestrationSection,
     // Skip self-update for subagent/none modes
     hasGateway && !isMinimal ? "## OpenClaw Self-Update" : "",
     hasGateway && !isMinimal

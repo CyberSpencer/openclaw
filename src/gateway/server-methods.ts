@@ -13,6 +13,10 @@ import { healthHandlers } from "./server-methods/health.js";
 import { logsHandlers } from "./server-methods/logs.js";
 import { modelsHandlers } from "./server-methods/models.js";
 import { nodeHandlers } from "./server-methods/nodes.js";
+import { opsHandlers } from "./server-methods/ops.js";
+import { orchestratorHandlers } from "./server-methods/orchestrator.js";
+import { routerStatusHandlers } from "./server-methods/router-status.js";
+import { sparkStatusHandlers } from "./server-methods/spark-status.js";
 import { sendHandlers } from "./server-methods/send.js";
 import { sessionsHandlers } from "./server-methods/sessions.js";
 import { skillsHandlers } from "./server-methods/skills.js";
@@ -76,6 +80,8 @@ const READ_METHODS = new Set([
   "node.list",
   "node.describe",
   "chat.history",
+  "router.status",
+  "spark.status",
 ]);
 const WRITE_METHODS = new Set([
   "send",
@@ -94,8 +100,10 @@ const WRITE_METHODS = new Set([
   "voice.synthesize",
   "node.invoke",
   "chat.send",
+  "chat.steer",
   "chat.abort",
   "browser.request",
+  "router.setEnabled",
 ]);
 
 function authorizeGatewayMethod(method: string, client: GatewayRequestOptions["client"]) {
@@ -169,12 +177,14 @@ function authorizeGatewayMethod(method: string, client: GatewayRequestOptions["c
 
 export const coreGatewayHandlers: GatewayRequestHandlers = {
   ...connectHandlers,
+  ...opsHandlers,
   ...logsHandlers,
   ...voicewakeHandlers,
   ...voiceHandlers,
   ...healthHandlers,
   ...channelsHandlers,
   ...chatHandlers,
+  ...orchestratorHandlers,
   ...cronHandlers,
   ...deviceHandlers,
   ...execApprovalsHandlers,
@@ -189,6 +199,8 @@ export const coreGatewayHandlers: GatewayRequestHandlers = {
   ...systemHandlers,
   ...updateHandlers,
   ...nodeHandlers,
+  ...routerStatusHandlers,
+  ...sparkStatusHandlers,
   ...sendHandlers,
   ...usageHandlers,
   ...agentHandlers,

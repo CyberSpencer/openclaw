@@ -45,6 +45,17 @@ export const ChatSendParamsSchema = Type.Object(
   { additionalProperties: false },
 );
 
+export const ChatSteerParamsSchema = Type.Object(
+  {
+    sessionKey: NonEmptyString,
+    /** Inject a message into the currently streaming run (no new run started). */
+    message: NonEmptyString,
+    /** Idempotency key to avoid duplicate steering on retries. */
+    idempotencyKey: NonEmptyString,
+  },
+  { additionalProperties: false },
+);
+
 export const ChatAbortParamsSchema = Type.Object(
   {
     sessionKey: NonEmptyString,

@@ -51,6 +51,15 @@ bash command:"codex exec 'Your prompt'"
 
 ---
 
+## Codex sub-agent prompt: RALF Wiggum Loop (recommended)
+
+When spawning a Codex-based coding sub-agent, prefer the **RALF (Read, Act, Learn, Fix)** loop prompt.
+
+- Prompt text: `references/ralf-wiggum-loop-prompt.txt`
+- Mission template: `references/ralf-wiggum-mission-template.txt`
+
+Why: it forces small patches, verification, and safe behavior in the constraints sub-agents actually have (no further sub-agents, often no session tools).
+
 ## Quick Start: One-Shot Tasks
 
 For quick prompts/chats, create a temp git repo and run:
