@@ -68,6 +68,7 @@ function disableMemorySearchAutoSync(cfg: OpenClawConfig, agentId: string): Open
   apply(defaults);
   apply(listEntry?.memorySearch);
   apply(overrides);
+  apply(listEntry?.memorySearch);
   return clone;
 }
 
