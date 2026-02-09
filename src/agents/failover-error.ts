@@ -46,7 +46,7 @@ export function resolveFailoverStatus(reason: FailoverReason): number | undefine
       return 429;
     case "auth":
       return 401;
-    case "timeout":
+    case "network":
       return 408;
     case "format":
       return 400;
@@ -158,7 +158,7 @@ export function resolveFailoverReasonFromError(err: unknown): FailoverReason | n
     return "auth";
   }
   if (status === 408) {
-    return "timeout";
+    return "network";
   }
   if (status === 400) {
     return "format";
@@ -179,10 +179,10 @@ export function resolveFailoverReasonFromError(err: unknown): FailoverReason | n
       "ERR_NETWORK",
     ].includes(code)
   ) {
-    return "timeout";
+    return "network";
   }
   if (isTimeoutError(err)) {
-    return "timeout";
+    return "network";
   }
 
   const message = getErrorMessage(err);

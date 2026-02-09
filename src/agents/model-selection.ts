@@ -423,7 +423,15 @@ export function resolveThinkingDefault(params: {
 // Secrets pre-flight: local provider detection & fallback model resolution
 // ---------------------------------------------------------------------------
 
-const PRIVATE_IP_RANGES = [/^10\./, /^172\.(1[6-9]|2\d|3[01])\./, /^192\.168\./];
+const PRIVATE_IPV4_RANGES = [/^10\./, /^172\.(1[6-9]|2\d|3[01])\./, /^192\.168\./];
+const RFC4193_ULA_RE = /^(?:fc|fd)[0-9a-f]{2}:/;
+
+function stripIpv6Zone(hostname: string): string {
+  // URL hostnames can include a zone identifier for IPv6 link-local addresses (e.g. fe80::1%lo0).
+  // Strip it so prefix checks behave predictably.
+  const idx = hostname.indexOf("%");
+  return idx === -1 ? hostname : hostname.slice(0, idx);
+}
 
 /**
  * Returns true when {@link baseUrl} points at a local or LAN host.
@@ -433,17 +441,30 @@ const PRIVATE_IP_RANGES = [/^10\./, /^172\.(1[6-9]|2\d|3[01])\./, /^192\.168\./]
  */
 export function isLocalProviderUrl(baseUrl: string): boolean {
   try {
-    const host = new URL(baseUrl).hostname.toLowerCase();
+    const hostRaw = new URL(baseUrl).hostname.toLowerCase();
+    const host = stripIpv6Zone(hostRaw);
+
     if (
       host === "localhost" ||
-      host === "127.0.0.1" ||
       host === "0.0.0.0" ||
       host === "::1" ||
+      host === "127.0.0.1" ||
+      host.startsWith("127.") ||
       host.endsWith(".local")
     ) {
       return true;
     }
-    return PRIVATE_IP_RANGES.some((re) => re.test(host));
+
+    if (PRIVATE_IPV4_RANGES.some((re) => re.test(host))) {
+      return true;
+    }
+
+    // RFC 4193 Unique Local Addresses (fc00::/7)
+    if (host.includes(":")) {
+      return RFC4193_ULA_RE.test(host);
+    }
+
+    return false;
   } catch {
     return false;
   }
