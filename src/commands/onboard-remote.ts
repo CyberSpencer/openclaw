@@ -80,7 +80,8 @@ export async function promptRemoteGatewayConfig(
 
   if (selectedBeacon) {
     const host = pickHost(selectedBeacon);
-    const port = selectedBeacon.gatewayPort ?? 18789;
+    const port = selectedBeacon.gatewayPort ?? selectedBeacon.port ?? 18789;
+
     if (host) {
       const mode = await prompter.select({
         message: "Connection method",
@@ -99,9 +100,12 @@ export async function promptRemoteGatewayConfig(
         await prompter.note(
           [
             "Start a tunnel before using the CLI:",
-            `ssh -N -L 18789:127.0.0.1:18789 <user>@${host}${
+            `ssh -N -L 18789:127.0.0.1:${port}${
               selectedBeacon.sshPort ? ` -p ${selectedBeacon.sshPort}` : ""
-            }`,
+            } <user>@${host}`,
+
+              selectedBeacon.sshPort ? ` -p ${selectedBeacon.sshPort}` : ""
+            } <user>@${host}`,
             "Docs: https://docs.openclaw.ai/gateway/remote",
           ].join("\n"),
           "SSH tunnel",

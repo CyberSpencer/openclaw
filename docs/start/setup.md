@@ -37,16 +37,12 @@ If you want “100% tailored to me” _and_ easy updates, keep your customizatio
 Bootstrap once:
 
 ```bash
+# If you installed the openclaw CLI globally:
 openclaw setup
+
+# From a git checkout (repo-local CLI):
+pnpm openclaw setup
 ```
-
-From inside this repo, use the local CLI entry:
-
-```bash
-openclaw setup
-```
-
-If you don’t have a global install yet, run it via `pnpm openclaw setup`.
 
 ## Run the Gateway from this repo
 

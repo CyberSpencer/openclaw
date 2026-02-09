@@ -863,7 +863,6 @@ No filesystem access (messaging/session tools enabled):
             "telegram",
             "slack",
             "discord",
-            "gateway",
           ],
           deny: [
             "read",
@@ -879,10 +878,7 @@ No filesystem access (messaging/session tools enabled):
             "gateway",
             "image",
           ],
-        },
-      },
-    ],
-  },
+
 }
 ```
 
