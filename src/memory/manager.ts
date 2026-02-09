@@ -252,6 +252,7 @@ export class MemoryIndexManager {
   private readonly settings: ResolvedMemorySearchConfig;
   private readonly storeDriver!: "sqlite" | "qdrant";
   private readonly qdrant?: QdrantConfig;
+  private lastSuccessfulQdrantEndpoint?: { url: string; apiKey?: string; timeoutMs?: number };
   private provider: EmbeddingProvider;
   private readonly requestedProvider: "openai" | "local" | "gemini" | "auto";
   private fallbackFrom?: "openai" | "local" | "gemini";
@@ -717,7 +718,7 @@ export class MemoryIndexManager {
       workspaceDir: this.workspaceDir,
       dbPath:
         this.storeDriver === "qdrant"
-          ? `qdrant:${this.qdrant?.url ?? "unknown"}/collections/${this.qdrant?.collection ?? "unknown"}`
+          ? `qdrant:${this.lastSuccessfulQdrantEndpoint?.url ?? this.qdrant?.url ?? "unknown"}/collections/${this.qdrant?.collection ?? "unknown"}`
           : this.settings.store.path,
       provider: this.provider.id,
       model: this.provider.model,
@@ -989,16 +990,13 @@ export class MemoryIndexManager {
           throw new Error(detail);
         }
 
-        // Update status to reflect the active endpoint.
-        if (cfg.url !== endpoint.url) {
-          cfg.url = endpoint.url;
-        }
-        if (endpoint.apiKey !== undefined && endpoint.apiKey !== cfg.apiKey) {
-          cfg.apiKey = endpoint.apiKey;
-        }
-        if (endpoint.timeoutMs !== undefined && endpoint.timeoutMs !== cfg.timeoutMs) {
-          cfg.timeoutMs = endpoint.timeoutMs;
-        }
+        // Record which endpoint worked for observability/debugging.
+        // Do not mutate the shared qdrant config object here (race-prone under concurrency).
+        this.lastSuccessfulQdrantEndpoint = {
+          url: endpoint.url,
+          apiKey: endpoint.apiKey ?? cfg.apiKey,
+          timeoutMs: endpoint.timeoutMs ?? cfg.timeoutMs,
+        };
 
         const data = (await res.json()) as T;
         return data;

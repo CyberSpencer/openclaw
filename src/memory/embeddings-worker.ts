@@ -2,10 +2,6 @@ import type { Llama, LlamaEmbeddingContext, LlamaModel } from "node-llama-cpp";
 
 import { importNodeLlamaCpp } from "./node-llama.js";
 
-type WorkerRequest =
-  | { id: string; type: "embedQuery"; text: string }
-  | { id: string; type: "embedBatch"; texts: string[] };
-
 type WorkerResponse =
   | { id: string; ok: true; embeddings: number[][] }
   | { id: string; ok: false; error: string };
@@ -50,29 +46,46 @@ async function handleMessage(raw: unknown) {
   if (!raw || typeof raw !== "object") {
     return;
   }
-  const msg = raw as WorkerRequest;
-  if (!msg.id || !msg.type) {
+  // Validate input at runtime, worker messages originate from an untyped IPC boundary.
+  const msg = raw as Record<string, unknown>;
+  const id = typeof msg.id === "string" ? msg.id : "";
+  const type = typeof msg.type === "string" ? msg.type : "";
+  if (!id || !type) {
+    return;
+  }
+  if (type !== "embedQuery" && type !== "embedBatch") {
+    send({ id, ok: false, error: `unsupported message type: ${type}` });
     return;
   }
   try {
     const ctx = await ensureContext();
-    if (msg.type === "embedQuery") {
-      const embedding = await ctx.getEmbeddingFor(msg.text);
-      send({ id: msg.id, ok: true, embeddings: [Array.from(embedding.vector)] });
+    if (type === "embedQuery") {
+      const text = typeof msg.text === "string" ? msg.text : "";
+      if (!text) {
+        send({ id, ok: false, error: "embedQuery expects text" });
+        return;
+      }
+      const embedding = await ctx.getEmbeddingFor(text);
+      send({ id, ok: true, embeddings: [Array.from(embedding.vector)] });
       return;
     }
-    if (msg.type === "embedBatch") {
+    if (type === "embedBatch") {
+      const texts = Array.isArray(msg.texts) ? msg.texts : null;
+      if (!texts || texts.some((text) => typeof text !== "string")) {
+        send({ id, ok: false, error: "embedBatch expects texts[]" });
+        return;
+      }
       const embeddings: number[][] = [];
-      for (const text of msg.texts) {
+      for (const text of texts) {
         const embedding = await ctx.getEmbeddingFor(text);
         embeddings.push(Array.from(embedding.vector));
       }
-      send({ id: msg.id, ok: true, embeddings });
+      send({ id, ok: true, embeddings });
       return;
     }
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
-    send({ id: msg.id, ok: false, error: message });
+    send({ id, ok: false, error: message });
   }
 }
 
