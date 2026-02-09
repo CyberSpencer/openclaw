@@ -1,4 +1,5 @@
 import { truncateText } from "./format";
+import type { TaskPlan } from "./ui-types";
 
 const TOOL_STREAM_LIMIT = 50;
 const TOOL_STREAM_THROTTLE_MS = 80;
@@ -38,6 +39,7 @@ type ToolStreamHost = {
   sessionKey: string;
   chatRunId: string | null;
   chatModelSelection?: ModelSelectionInfo | null;
+  chatTaskPlan?: TaskPlan | null;
   toolStreamById: Map<string, ToolStreamEntry>;
   toolStreamOrder: string[];
   chatToolMessages: Record<string, unknown>[];
@@ -197,6 +199,25 @@ export function handleAgentEvent(host: ToolStreamHost, payload?: AgentEventPaylo
   // Handle compaction events
   if (payload.stream === "compaction") {
     handleCompactionEvent(host as CompactionHost, payload);
+    return;
+  }
+
+  if (payload.stream === "orchestration") {
+    const sessionKey = typeof payload.sessionKey === "string" ? payload.sessionKey : undefined;
+    const accept =
+      sessionKey
+        ? sessionKey === host.sessionKey
+        : host.chatRunId
+          ? payload.runId === host.chatRunId
+          : false;
+    if (!accept) return;
+
+    const data = payload.data ?? {};
+    const eventType = typeof data.type === "string" ? data.type : "";
+    if (eventType !== "task_plan") return;
+
+    const plan = (data.plan as TaskPlan | null | undefined) ?? null;
+    host.chatTaskPlan = plan;
     return;
   }
 

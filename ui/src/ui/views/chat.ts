@@ -4,7 +4,13 @@ import { repeat } from "lit/directives/repeat.js";
 import { unsafeHTML } from "lit/directives/unsafe-html.js";
 
 import type { SessionsListResult } from "../types";
-import type { ChatAttachment, ChatQueueItem } from "../ui-types";
+import type {
+  ChatAttachment,
+  ChatQueueItem,
+  TaskPlan,
+  TaskPlanStatus,
+  TaskPlanTask,
+} from "../ui-types";
 import type { ModelSelectionInfo } from "../app-tool-stream";
 import { icons } from "../icons";
 import { normalizeMessage, normalizeRoleForGrouping } from "../chat/message-normalizer";
@@ -33,6 +39,7 @@ export type ChatProps = {
   stream: string | null;
   streamStartedAt: number | null;
   modelSelection?: ModelSelectionInfo | null;
+  taskPlan?: TaskPlan | null;
   assistantAvatarUrl?: string | null;
   draft: string;
   queue: ChatQueueItem[];
@@ -79,6 +86,49 @@ type ImageBlock = {
   url: string;
   alt?: string;
 };
+
+type TaskProgress = {
+  done: number;
+  total: number;
+  pct: number;
+};
+
+function normalizeTaskStatus(raw: unknown): TaskPlanStatus {
+  const value = typeof raw === "string" ? raw.trim().toLowerCase() : "";
+  if (value === "running" || value === "done" || value === "blocked" || value === "skipped") {
+    return value;
+  }
+  return "todo";
+}
+
+function computeTaskProgress(plan: TaskPlan | null | undefined): TaskProgress {
+  const tasks = plan?.tasks ?? [];
+  const total = tasks.length;
+  const done = tasks.filter((t) => {
+    const status = normalizeTaskStatus(t.status);
+    return status === "done" || status === "skipped";
+  }).length;
+  const pct = total > 0 ? Math.max(0, Math.min(100, Math.round((done / total) * 100))) : 0;
+  return { done, total, pct };
+}
+
+function taskStatusLabel(status: TaskPlanStatus): string {
+  if (status === "running") return "Running";
+  if (status === "done") return "Done";
+  if (status === "blocked") return "Blocked";
+  if (status === "skipped") return "Skipped";
+  return "Todo";
+}
+
+function renderTaskStatusIcon(status: TaskPlanStatus) {
+  if (status === "running") {
+    return html`<span class="agent-task__icon agent-spin">${icons.loader}</span>`;
+  }
+  if (status === "done") return html`<span class="agent-task__icon">${icons.check}</span>`;
+  if (status === "blocked") return html`<span class="agent-task__icon">${icons.zap}</span>`;
+  if (status === "skipped") return html`<span class="agent-task__icon">${icons.x}</span>`;
+  return html`<span class="agent-task__dot" aria-hidden="true"></span>`;
+}
 
 type TerminalItem =
   | {
@@ -543,6 +593,11 @@ function renderOrchestrationCard(props: ChatProps) {
   const subagentLoading = Boolean(props.subagentMonitorLoading);
   const canRefresh = Boolean(props.onSubagentRefresh);
 
+  const plan = props.taskPlan ?? null;
+  const tasks = Array.isArray(plan?.tasks) ? (plan?.tasks as TaskPlanTask[]) : [];
+  const progress = computeTaskProgress(plan);
+  const subagentByKey = new Map(subagents.map((s) => [s.key, s]));
+
   return html`
     <section class="card agent-orchestration" aria-label="Agent orchestration">
       <div class="agent-orchestration__header">
@@ -578,10 +633,26 @@ function renderOrchestrationCard(props: ChatProps) {
         </div>
       </div>
 
-      <div class="agent-progress" aria-hidden="true">
+      <div class="agent-progress-wrap">
         <div
-          class="agent-progress__bar ${isStreaming || isCompacting ? "agent-progress__bar--active" : ""}"
-        ></div>
+          class="agent-progress"
+          role="progressbar"
+          aria-label="Task progress"
+          aria-valuemin="0"
+          aria-valuemax=${String(progress.total)}
+          aria-valuenow=${String(progress.done)}
+        >
+          <div class="agent-progress__fill" style=${`width: ${progress.pct}%`}></div>
+          <div
+            class="agent-progress__bar ${isStreaming || isCompacting ? "agent-progress__bar--active" : ""}"
+          ></div>
+        </div>
+        <div class="agent-progress-meta">
+          <span class="agent-progress-meta__label">Progress</span>
+          <span class="mono agent-progress-meta__value">
+            ${progress.total > 0 ? `${progress.done}/${progress.total}` : "—"}
+          </span>
+        </div>
       </div>
 
       <div class="agent-orchestration__meta">
@@ -603,6 +674,89 @@ function renderOrchestrationCard(props: ChatProps) {
       </div>
 
       ${renderCompactionIndicator(props.compactionStatus)}
+
+      ${
+        plan && (tasks.length > 0 || plan.goal)
+          ? html`
+              <div class="agent-plan" aria-label="Task plan">
+                <div class="agent-plan__header">
+                  <div class="agent-plan__title">
+                    Tasks
+                    ${
+                      tasks.length > 0
+                        ? html`
+                            <span class="agent-plan__count mono">
+                              ${progress.done}/${progress.total}
+                            </span>
+                          `
+                        : nothing
+                    }
+                  </div>
+                  ${plan.goal
+                    ? html`<div class="agent-plan__goal muted">${plan.goal}</div>`
+                    : nothing}
+                </div>
+                ${
+                  tasks.length > 0
+                    ? html`
+                        <div class="agent-plan__list" role="list">
+                          ${tasks.map((task) => {
+                            const status = normalizeTaskStatus(task.status);
+                            const assignedKey = (task.assignedSessionKey ?? "").trim();
+                            const assigned = assignedKey ? subagentByKey.get(assignedKey) : undefined;
+                            const assignedLabel =
+                              assigned?.label?.trim() ||
+                              assigned?.derivedTitle?.trim() ||
+                              assigned?.displayName?.trim() ||
+                              assigned?.key ||
+                              assignedKey;
+                            const updatedAt =
+                              typeof assigned?.updatedAt === "number" ? assigned.updatedAt : null;
+                            return html`
+                              <div class="agent-task agent-task--${status}" role="listitem">
+                                <div class="agent-task__status" title=${taskStatusLabel(status)}>
+                                  ${renderTaskStatusIcon(status)}
+                                </div>
+                                <div class="agent-task__main">
+                                  <div class="agent-task__title">${task.title}</div>
+                                  ${
+                                    task.detail
+                                      ? html`<div class="agent-task__detail muted">${task.detail}</div>`
+                                      : nothing
+                                  }
+                                  ${
+                                    assignedKey
+                                      ? html`
+                                          <button
+                                            class="agent-task__assigned"
+                                            type="button"
+                                            @click=${() => props.onSessionKeyChange(assignedKey)}
+                                            title="Open assigned subagent"
+                                          >
+                                            <span class="mono agent-task__assignedKey">
+                                              ${assignedLabel}
+                                            </span>
+                                            <span class="agent-task__assignedAge mono">
+                                              ${formatAge(updatedAt)}
+                                            </span>
+                                          </button>
+                                        `
+                                      : nothing
+                                  }
+                                </div>
+                              </div>
+                            `;
+                          })}
+                        </div>
+                      `
+                    : html`<div class="muted agent-plan__empty">No tasks yet.</div>`
+                }
+              </div>
+            `
+          : isStreaming
+            ? html`<div class="muted agent-plan__empty">Waiting for task plan...</div>`
+            : nothing
+      }
 
       ${
         props.queue.length

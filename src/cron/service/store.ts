@@ -38,8 +38,50 @@ export async function ensureLoaded(state: CronServiceState) {
 
     const payload = raw.payload;
     if (payload && typeof payload === "object" && !Array.isArray(payload)) {
-      if (migrateLegacyCronPayload(payload as Record<string, unknown>)) {
+      const payloadRecord = payload as Record<string, unknown>;
+      const modelBefore =
+        typeof payloadRecord.model === "string" ? payloadRecord.model.trim() : undefined;
+      if (migrateLegacyCronPayload(payloadRecord)) {
         mutated = true;
+      }
+      const modelAfter =
+        typeof payloadRecord.model === "string" ? payloadRecord.model.trim() : undefined;
+      const state = raw.state;
+      if (state && typeof state === "object" && !Array.isArray(state)) {
+        const lastError = (state as { lastError?: unknown }).lastError;
+        const lastStatus = (state as { lastStatus?: unknown }).lastStatus;
+
+        if (
+          modelBefore &&
+          modelAfter &&
+          modelBefore !== modelAfter &&
+          lastStatus === "error" &&
+          typeof lastError === "string" &&
+          lastError.includes(modelBefore)
+        ) {
+          // If we migrated an invalid/stale model id, clear the stored error so the UI doesn't
+          // keep showing an obsolete failure after upgrade.
+          delete (state as { lastError?: string }).lastError;
+          delete (state as { lastStatus?: string }).lastStatus;
+          mutated = true;
+        }
+
+        // If the payload no longer references the model mentioned by a previous allowlist error,
+        // clear it to avoid confusing stale errors.
+        if (lastStatus === "error" && typeof lastError === "string") {
+          const match = lastError.match(/^model not allowed:\s*(.+)\s*$/i);
+          const denied = match?.[1]?.trim() ?? "";
+          if (
+            denied &&
+            (denied === "openai-codex/gpt-5.2" || denied === "openai-codex/gpt-5.3") &&
+            modelAfter &&
+            modelAfter !== denied
+          ) {
+            delete (state as { lastError?: string }).lastError;
+            delete (state as { lastStatus?: string }).lastStatus;
+            mutated = true;
+          }
+        }
       }
     }
   }
