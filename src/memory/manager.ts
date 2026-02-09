@@ -252,6 +252,11 @@ export class MemoryIndexManager {
   private readonly settings: ResolvedMemorySearchConfig;
   private readonly storeDriver!: "sqlite" | "qdrant";
   private readonly qdrant?: QdrantConfig;
+  private lastSuccessfulQdrantEndpoint: {
+    url: string;
+    apiKey?: string;
+    timeoutMs?: number;
+  } | null = null;
   private provider: EmbeddingProvider;
   private readonly requestedProvider: "openai" | "local" | "gemini" | "auto";
   private fallbackFrom?: "openai" | "local" | "gemini";
@@ -717,7 +722,7 @@ export class MemoryIndexManager {
       workspaceDir: this.workspaceDir,
       dbPath:
         this.storeDriver === "qdrant"
-          ? `qdrant:${this.qdrant?.url ?? "unknown"}/collections/${this.qdrant?.collection ?? "unknown"}`
+          ? `qdrant:${this.lastSuccessfulQdrantEndpoint?.url ?? this.qdrant?.url ?? "unknown"}/collections/${this.qdrant?.collection ?? "unknown"}`
           : this.settings.store.path,
       provider: this.provider.id,
       model: this.provider.model,
@@ -952,8 +957,17 @@ export class MemoryIndexManager {
       ? sortQdrantEndpoints((cfg.endpoints ?? []).filter((entry) => entry.url?.trim()))
       : [{ url: cfg.url, apiKey: cfg.apiKey, timeoutMs: cfg.timeoutMs }];
 
+    const preferredUrl = this.lastSuccessfulQdrantEndpoint?.url;
+    const orderedEndpoints =
+      preferredUrl && endpoints.some((entry) => entry.url === preferredUrl)
+        ? [
+            endpoints.find((entry) => entry.url === preferredUrl)!,
+            ...endpoints.filter((entry) => entry.url !== preferredUrl),
+          ]
+        : endpoints;
+
     const errors: string[] = [];
-    for (const endpoint of endpoints) {
+    for (const endpoint of orderedEndpoints) {
       // Prefer Spark whenever it is healthy (priority order + health cache TTL).
       if (hasExplicitEndpoints) {
         const ok = await checkQdrantEndpoint(endpoint, cfg.apiKey);
@@ -976,6 +990,11 @@ export class MemoryIndexManager {
 
         if (res.status === 404 && options?.allowNotFound) {
           // 404 is a valid response, do not hide it by failing over.
+          this.lastSuccessfulQdrantEndpoint = {
+            url: endpoint.url,
+            apiKey: endpoint.apiKey ?? cfg.apiKey,
+            timeoutMs: endpoint.timeoutMs ?? cfg.timeoutMs,
+          };
           return null;
         }
 
@@ -989,16 +1008,11 @@ export class MemoryIndexManager {
           throw new Error(detail);
         }
 
-        // Update status to reflect the active endpoint.
-        if (cfg.url !== endpoint.url) {
-          cfg.url = endpoint.url;
-        }
-        if (endpoint.apiKey !== undefined && endpoint.apiKey !== cfg.apiKey) {
-          cfg.apiKey = endpoint.apiKey;
-        }
-        if (endpoint.timeoutMs !== undefined && endpoint.timeoutMs !== cfg.timeoutMs) {
-          cfg.timeoutMs = endpoint.timeoutMs;
-        }
+        this.lastSuccessfulQdrantEndpoint = {
+          url: endpoint.url,
+          apiKey: endpoint.apiKey ?? cfg.apiKey,
+          timeoutMs: endpoint.timeoutMs ?? cfg.timeoutMs,
+        };
 
         const data = (await res.json()) as T;
         return data;

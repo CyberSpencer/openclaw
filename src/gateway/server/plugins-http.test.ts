@@ -85,6 +85,31 @@ describe("createGatewayPluginRequestHandler", () => {
     expect(fallback).not.toHaveBeenCalled();
   });
 
+  it("responds with 401 Unauthorized when auth is configured and no token is provided", async () => {
+    const downstream = vi.fn(async () => true);
+    const handler = createGatewayPluginRequestHandler({
+      registry: createTestRegistry({
+        httpHandlers: [{ pluginId: "downstream", handler: downstream, source: "downstream" }],
+      }),
+      log: { warn: vi.fn() } as unknown as Parameters<
+        typeof createGatewayPluginRequestHandler
+      >[0]["log"],
+      auth: {
+        mode: "token",
+        token: "secret",
+        allowTailscale: false,
+      },
+    });
+
+    const { res, setHeader, end } = makeResponse();
+    const handled = await handler({ headers: {} } as IncomingMessage, res);
+    expect(handled).toBe(true);
+    expect(downstream).not.toHaveBeenCalled();
+    expect(res.statusCode).toBe(401);
+    expect(setHeader).toHaveBeenCalledWith("Content-Type", "text/plain; charset=utf-8");
+    expect(end).toHaveBeenCalledWith("Unauthorized");
+  });
+
   it("logs and responds with 500 when a handler throws", async () => {
     const log = { warn: vi.fn() } as unknown as Parameters<
       typeof createGatewayPluginRequestHandler
