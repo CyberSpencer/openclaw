@@ -13,7 +13,7 @@ import {
   resolveAuthProfileOrder,
   resolveAuthStorePathForDisplay,
 } from "./auth-profiles.js";
-import { normalizeProviderId } from "./model-selection.js";
+import { isLocalProviderUrl, normalizeProviderId } from "./model-selection.js";
 
 export { ensureAuthProfileStore, resolveAuthProfileOrder } from "./auth-profiles.js";
 
@@ -65,20 +65,6 @@ function resolveProviderAuthOverride(
   return undefined;
 }
 
-function isLoopbackHost(hostname: string): boolean {
-  const normalized = hostname.trim().toLowerCase();
-  if (!normalized) {
-    return false;
-  }
-  return (
-    normalized === "localhost" ||
-    normalized === "::1" ||
-    normalized === "[::1]" ||
-    normalized === "127.0.0.1" ||
-    normalized.startsWith("127.")
-  );
-}
-
 function isLikelyLocalProvider(cfg: OpenClawConfig | undefined, provider: string): boolean {
   const normalized = normalizeProviderId(provider);
   if (normalized === "ollama") {
@@ -89,12 +75,7 @@ function isLikelyLocalProvider(cfg: OpenClawConfig | undefined, provider: string
   if (!baseUrl) {
     return false;
   }
-  try {
-    const parsed = new URL(baseUrl);
-    return isLoopbackHost(parsed.hostname);
-  } catch {
-    return false;
-  }
+  return isLocalProviderUrl(baseUrl);
 }
 
 function resolveEnvSourceLabel(params: {

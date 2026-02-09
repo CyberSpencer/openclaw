@@ -16,6 +16,10 @@ Docs: https://docs.openclaw.ai
 - Build: move TypeScript builds to `tsdown` + `tsgo` (faster builds, CI typechecks), update tsconfig target, and clean up lint rules.
 - Docs: add pi/pi-dev docs and update OpenClaw branding + install links.
 
+### Breaking
+
+- **BREAKING:** Memory Search now defaults to the `qdrant` store driver (was `sqlite`). Set `agents.defaults.memorySearch.store.driver: sqlite` to keep the previous behavior.
+
 ### Fixes
 
 - Security: restrict local path extraction in media parser to prevent LFI. (#4880)
