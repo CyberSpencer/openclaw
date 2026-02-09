@@ -95,6 +95,10 @@ The Gateway is the single source of truth for sessions, routing, and channel con
 
 ## Quick start
 
+> Private note (AI Integrations): If you are working in the AI Integrations setup, also see the workspace/ops repo and DGX Spark integration notes:
+>
+> - `/docs/reference/ai-integrations-workspace`
+
 <Steps>
   <Step title="Install OpenClaw">
     ```bash
