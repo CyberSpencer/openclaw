@@ -17,8 +17,10 @@ import { runWithModelFallback } from "../agents/model-fallback.js";
 import {
   buildAllowedModelSet,
   isCliProvider,
+  isLocalProvider,
   modelKey,
   resolveConfiguredModelRef,
+  resolveSecretsLocalModel,
   resolveThinkingDefault,
 } from "../agents/model-selection.js";
 import { runEmbeddedPiAgent } from "../agents/pi-embedded.js";
@@ -340,6 +342,17 @@ export async function agentCommand(
       }
     }
 
+    // --- Layer 2: Pre-flight secrets check ---
+    // Detect once; reused by both pre-flight (here) and failover guard below.
+    const promptHasSecrets =
+      redactSensitiveText(body, { mode: "tools", patterns: getDefaultRedactPatterns() }) !== body;
+
+    if (promptHasSecrets && !isLocalProvider(provider, cfg)) {
+      const localRef = resolveSecretsLocalModel(cfg);
+      provider = localRef.provider;
+      model = localRef.model;
+    }
+
     if (!resolvedThinkLevel) {
       let catalogForThinking = modelCatalog ?? allowedModelCatalog;
       if (!catalogForThinking || catalogForThinking.length === 0) {
@@ -386,12 +399,18 @@ export async function agentCommand(
         opts.replyChannel ?? opts.channel,
       );
       const spawnedBy = opts.spawnedBy ?? sessionEntry?.spawnedBy;
+      // Layer 3: Failover guard — disable cloud fallbacks when prompt contains secrets.
+      // (promptHasSecrets was computed earlier in the pre-flight check.)
+      let fallbacksOverride = resolveAgentModelFallbacksOverride(cfg, sessionAgentId);
+      if (promptHasSecrets) {
+        fallbacksOverride = [];
+      }
       const fallbackResult = await runWithModelFallback({
         cfg,
         provider,
         model,
         agentDir,
-        fallbacksOverride: resolveAgentModelFallbacksOverride(cfg, sessionAgentId),
+        fallbacksOverride,
         run: (providerOverride, modelOverride) => {
           if (isCliProvider(providerOverride, cfg)) {
             const cliSessionId = getCliSessionId(sessionEntry, providerOverride);
