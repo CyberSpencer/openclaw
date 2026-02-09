@@ -110,7 +110,7 @@ async function buildMemoryPrelude(params: {
   let results: Awaited<ReturnType<typeof manager.search>> = [];
   try {
     const maxResults = Math.min(20, resolved.query.maxResults ?? 20);
-    const minScore = Math.min(0.2, resolved.query.minScore ?? 0.2);
+    const minScore = Math.max(0.2, resolved.query.minScore ?? 0.2);
     results = await manager.search(params.prompt, { maxResults, minScore });
   } catch {
     return "";
@@ -214,15 +214,26 @@ async function runModelRouter(params: {
   timeoutMs?: number;
 }): Promise<RouterDecision | null> {
   const scriptPath = path.join(params.workspaceDir, "scripts", "route.sh");
+  let resolvedScriptPath: string;
   try {
     await fs.access(scriptPath);
+    const [realWorkspaceDir, realScriptPath] = await Promise.all([
+      fs.realpath(params.workspaceDir),
+      fs.realpath(scriptPath),
+    ]);
+    const rel = path.relative(realWorkspaceDir, realScriptPath);
+    if (rel.startsWith("..") || path.isAbsolute(rel)) {
+      log.warn("router script is not contained within workspaceDir; refusing to execute");
+      return null;
+    }
+    resolvedScriptPath = realScriptPath;
   } catch {
     return null;
   }
 
   const timeoutMs = params.timeoutMs ?? 2500;
   return new Promise((resolve) => {
-    const child = spawn(scriptPath, ["--json", "--mode", params.mode], {
+    const child = spawn(resolvedScriptPath, ["--json", "--mode", params.mode], {
       stdio: ["pipe", "pipe", "pipe"],
       env: process.env,
     });

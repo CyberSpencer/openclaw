@@ -54,6 +54,7 @@ function disableMemorySearchAutoSync(cfg: OpenClawConfig, agentId: string): Open
     | (Record<string, { memorySearch?: MemorySearchConfig } | undefined> & typeof clone.agents)
     | undefined;
   const overrides = agentsById?.[agentId]?.memorySearch;
+  const listEntry = clone.agents?.list?.find((entry) => entry.id === agentId);
   const apply = (target?: MemorySearchConfig) => {
     if (!target) {
       return;
@@ -65,6 +66,7 @@ function disableMemorySearchAutoSync(cfg: OpenClawConfig, agentId: string): Open
     sync.intervalMinutes = 0;
   };
   apply(defaults);
+  apply(listEntry?.memorySearch);
   apply(overrides);
   return clone;
 }
