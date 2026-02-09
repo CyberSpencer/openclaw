@@ -28,7 +28,7 @@ AI Integrations maintains a separate **workspace/ops repo** that documents how w
 
 Locally, AI Integrations typically clones `openclaw-core` into the workspace at:
 
-- `/Users/spencerthomson/clawd/core`
+- `~/clawd/core` (example, if checked out adjacent to the workspace repo)
 
 That `core/` directory is **gitignored** by the workspace repo.
 
