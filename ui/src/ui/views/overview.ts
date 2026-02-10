@@ -26,8 +26,10 @@ export function renderOverview(props: OverviewProps) {
   const snapshot = props.hello?.snapshot as
     | { uptimeMs?: number; policy?: { tickIntervalMs?: number } }
     | undefined;
-  const uptime = snapshot?.uptimeMs ? formatDurationHuman(snapshot.uptimeMs) : "n/a";
-  const tick = snapshot?.policy?.tickIntervalMs ? `${snapshot.policy.tickIntervalMs}ms` : "n/a";
+  const uptime = snapshot?.uptimeMs ? formatDurationMs(snapshot.uptimeMs) : "n/a";
+  const tick = snapshot?.policy?.tickIntervalMs
+    ? `${snapshot.policy.tickIntervalMs}ms`
+    : "n/a";
   const authHint = (() => {
     if (props.connected || !props.lastError) {
       return null;
@@ -41,13 +43,13 @@ export function renderOverview(props: OverviewProps) {
     const hasPassword = Boolean(props.password.trim());
     if (!hasToken && !hasPassword) {
       return html`
-        <div class="muted" style="margin-top: 8px">
+        <div class="muted" style="margin-top: 8px;">
           This gateway requires auth. Add a token or password, then click Connect.
-          <div style="margin-top: 6px">
-            <span class="mono">openclaw dashboard --no-open</span> → open the Control UI<br />
+          <div style="margin-top: 6px;">
+            <span class="mono">openclaw dashboard --no-open</span> → tokenized URL<br />
             <span class="mono">openclaw doctor --generate-gateway-token</span> → set token
           </div>
-          <div style="margin-top: 6px">
+          <div style="margin-top: 6px;">
             <a
               class="session-link"
               href="https://docs.openclaw.ai/web/dashboard"
@@ -61,9 +63,11 @@ export function renderOverview(props: OverviewProps) {
       `;
     }
     return html`
-      <div class="muted" style="margin-top: 8px">
-        Auth failed. Update the token or password in Control UI settings, then click Connect.
-        <div style="margin-top: 6px">
+      <div class="muted" style="margin-top: 8px;">
+        Auth failed. Re-copy a tokenized URL with
+        <span class="mono">openclaw dashboard --no-open</span>, or update the token,
+        then click Connect.
+        <div style="margin-top: 6px;">
           <a
             class="session-link"
             href="https://docs.openclaw.ai/web/dashboard"
@@ -89,14 +93,14 @@ export function renderOverview(props: OverviewProps) {
       return null;
     }
     return html`
-      <div class="muted" style="margin-top: 8px">
-        This page is HTTP, so the browser blocks device identity. Use HTTPS (Tailscale Serve) or open
-        <span class="mono">http://127.0.0.1:18789</span> on the gateway host.
-        <div style="margin-top: 6px">
+      <div class="muted" style="margin-top: 8px;">
+        This page is HTTP, so the browser blocks device identity. Use HTTPS (Tailscale Serve) or
+        open <span class="mono">http://127.0.0.1:32555</span> on the gateway host.
+        <div style="margin-top: 6px;">
           If you must stay on HTTP, set
           <span class="mono">gateway.controlUi.allowInsecureAuth: true</span> (token-only).
         </div>
-        <div style="margin-top: 6px">
+        <div style="margin-top: 6px;">
           <a
             class="session-link"
             href="https://docs.openclaw.ai/gateway/tailscale"
@@ -133,7 +137,7 @@ export function renderOverview(props: OverviewProps) {
                 const v = (e.target as HTMLInputElement).value;
                 props.onSettingsChange({ ...props.settings, gatewayUrl: v });
               }}
-              placeholder="ws://100.x.y.z:18789"
+              placeholder="ws://100.x.y.z:32555"
             />
           </label>
           <label class="field">
@@ -198,23 +202,21 @@ export function renderOverview(props: OverviewProps) {
           <div class="stat">
             <div class="stat-label">Last Channels Refresh</div>
             <div class="stat-value">
-              ${props.lastChannelsRefresh ? formatRelativeTimestamp(props.lastChannelsRefresh) : "n/a"}
+              ${props.lastChannelsRefresh
+                ? formatAgo(props.lastChannelsRefresh)
+                : "n/a"}
             </div>
           </div>
         </div>
-        ${
-          props.lastError
-            ? html`<div class="callout danger" style="margin-top: 14px;">
+        ${props.lastError
+          ? html`<div class="callout danger" style="margin-top: 14px;">
               <div>${props.lastError}</div>
               ${authHint ?? ""}
               ${insecureContextHint ?? ""}
             </div>`
-            : html`
-                <div class="callout" style="margin-top: 14px">
-                  Use Channels to link WhatsApp, Telegram, Discord, Signal, or iMessage.
-                </div>
-              `
-        }
+          : html`<div class="callout" style="margin-top: 14px;">
+              Use Channels to link WhatsApp, Telegram, Discord, Signal, or iMessage.
+            </div>`}
       </div>
     </section>
 
@@ -232,7 +234,11 @@ export function renderOverview(props: OverviewProps) {
       <div class="card stat-card">
         <div class="stat-label">Cron</div>
         <div class="stat-value">
-          ${props.cronEnabled == null ? "n/a" : props.cronEnabled ? "Enabled" : "Disabled"}
+          ${props.cronEnabled == null
+            ? "n/a"
+            : props.cronEnabled
+              ? "Enabled"
+              : "Disabled"}
         </div>
         <div class="muted">Next wake ${formatNextRun(props.cronNext)}</div>
       </div>

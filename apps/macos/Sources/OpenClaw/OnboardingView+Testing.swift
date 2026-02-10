@@ -13,7 +13,7 @@ extension OnboardingView {
             lanHost: "gateway.local",
             tailnetDns: "gateway.ts.net",
             sshPort: 2222,
-            gatewayPort: 18789,
+            gatewayPort: 32555,
             cliPath: "/usr/local/bin/openclaw",
             stableID: "gateway-1",
             debugID: "gateway-1",

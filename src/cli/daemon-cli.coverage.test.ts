@@ -3,7 +3,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const callGateway = vi.fn(async () => ({ ok: true }));
 const resolveGatewayProgramArguments = vi.fn(async () => ({
-  programArguments: ["/bin/node", "cli", "gateway", "--port", "18789"],
+  programArguments: ["/bin/node", "cli", "gateway", "--port", "32555"],
 }));
 const serviceInstall = vi.fn().mockResolvedValue(undefined);
 const serviceUninstall = vi.fn().mockResolvedValue(undefined);
@@ -64,7 +64,7 @@ vi.mock("../daemon/inspect.js", () => ({
 
 vi.mock("../infra/ports.js", () => ({
   inspectPortUsage: (port: number) => inspectPortUsage(port),
-  formatPortDiagnostics: () => ["Port 18789 is already in use."],
+  formatPortDiagnostics: () => ["Port 32555 is already in use."],
 }));
 
 vi.mock("../runtime.js", () => ({
@@ -146,12 +146,12 @@ describe("daemon-cli coverage", () => {
     inspectPortUsage.mockClear();
 
     serviceReadCommand.mockResolvedValueOnce({
-      programArguments: ["/bin/node", "cli", "gateway", "--port", "19001"],
+      programArguments: ["/bin/node", "cli", "gateway", "--port", "55532"],
       environment: {
         OPENCLAW_PROFILE: "dev",
         OPENCLAW_STATE_DIR: "/tmp/openclaw-daemon-state",
         OPENCLAW_CONFIG_PATH: "/tmp/openclaw-daemon-state/openclaw.json",
-        OPENCLAW_GATEWAY_PORT: "19001",
+        OPENCLAW_GATEWAY_PORT: "55532",
       },
       sourcePath: "/tmp/bot.molt.gateway.plist",
     });
@@ -165,11 +165,11 @@ describe("daemon-cli coverage", () => {
 
     expect(callGateway).toHaveBeenCalledWith(
       expect.objectContaining({
-        url: "ws://127.0.0.1:19001",
+        url: "ws://127.0.0.1:55532",
         method: "status",
       }),
     );
-    expect(inspectPortUsage).toHaveBeenCalledWith(19001);
+    expect(inspectPortUsage).toHaveBeenCalledWith(55532);
 
     const jsonLine = runtimeLogs.find((line) => line.trim().startsWith("{"));
     const parsed = JSON.parse(jsonLine ?? "{}") as {
@@ -177,11 +177,11 @@ describe("daemon-cli coverage", () => {
       config?: { mismatch?: boolean };
       rpc?: { url?: string; ok?: boolean };
     };
-    expect(parsed.gateway?.port).toBe(19001);
+    expect(parsed.gateway?.port).toBe(55532);
     expect(parsed.gateway?.portSource).toBe("service args");
-    expect(parsed.gateway?.probeUrl).toBe("ws://127.0.0.1:19001");
+    expect(parsed.gateway?.probeUrl).toBe("ws://127.0.0.1:55532");
     expect(parsed.config?.mismatch).toBe(true);
-    expect(parsed.rpc?.url).toBe("ws://127.0.0.1:19001");
+    expect(parsed.rpc?.url).toBe("ws://127.0.0.1:55532");
     expect(parsed.rpc?.ok).toBe(true);
   }, 20_000);
 
@@ -210,7 +210,7 @@ describe("daemon-cli coverage", () => {
     program.exitOverride();
     registerDaemonCli(program);
 
-    await program.parseAsync(["daemon", "install", "--port", "18789"], {
+    await program.parseAsync(["daemon", "install", "--port", "32555"], {
       from: "user",
     });
 
@@ -228,7 +228,7 @@ describe("daemon-cli coverage", () => {
     program.exitOverride();
     registerDaemonCli(program);
 
-    await program.parseAsync(["daemon", "install", "--port", "18789", "--json"], {
+    await program.parseAsync(["daemon", "install", "--port", "32555", "--json"], {
       from: "user",
     });
 

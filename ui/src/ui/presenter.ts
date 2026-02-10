@@ -47,7 +47,16 @@ export function formatCronState(job: CronJob) {
   const next = state.nextRunAtMs ? formatMs(state.nextRunAtMs) : "n/a";
   const last = state.lastRunAtMs ? formatMs(state.lastRunAtMs) : "n/a";
   const status = state.lastStatus ?? "n/a";
-  return `${status} · next ${next} · last ${last}`;
+  let summary = `${status} · next ${next} · last ${last}`;
+  if (status === "error") {
+    const err = typeof state.lastError === "string" ? state.lastError.trim() : "";
+    if (err) {
+      const maxLen = 140;
+      const truncated = err.length > maxLen ? `${err.slice(0, maxLen - 1)}…` : err;
+      summary = `${summary} · ${truncated}`;
+    }
+  }
+  return summary;
 }
 
 export function formatCronSchedule(job: CronJob) {

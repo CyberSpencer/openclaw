@@ -1119,32 +1119,80 @@ public struct SessionsCompactParams: Codable, Sendable {
     }
 }
 
-public struct SessionsUsageParams: Codable, Sendable {
-    public let key: String?
-    public let startdate: String?
-    public let enddate: String?
-    public let limit: Int?
-    public let includecontextweight: Bool?
+public struct SessionsSpawnParams: Codable, Sendable {
+    public let requestersessionkey: String
+    public let task: String
+    public let label: String?
+    public let agentid: String?
+    public let model: String?
+    public let thinking: String?
+    public let runtimeoutseconds: Double?
+    public let timeoutseconds: Double?
+    public let cleanup: AnyCodable?
+    public let idempotencykey: String?
+    public let channel: String?
+    public let accountid: String?
+    public let to: String?
+    public let threadid: AnyCodable?
+    public let groupid: String?
+    public let groupchannel: String?
+    public let groupspace: String?
 
     public init(
-        key: String?,
-        startdate: String?,
-        enddate: String?,
-        limit: Int?,
-        includecontextweight: Bool?
+        requestersessionkey: String,
+        task: String,
+        label: String?,
+        agentid: String?,
+        model: String?,
+        thinking: String?,
+        runtimeoutseconds: Double?,
+        timeoutseconds: Double?,
+        cleanup: AnyCodable?,
+        idempotencykey: String?,
+        channel: String?,
+        accountid: String?,
+        to: String?,
+        threadid: AnyCodable?,
+        groupid: String?,
+        groupchannel: String?,
+        groupspace: String?
     ) {
-        self.key = key
-        self.startdate = startdate
-        self.enddate = enddate
-        self.limit = limit
-        self.includecontextweight = includecontextweight
+        self.requestersessionkey = requestersessionkey
+        self.task = task
+        self.label = label
+        self.agentid = agentid
+        self.model = model
+        self.thinking = thinking
+        self.runtimeoutseconds = runtimeoutseconds
+        self.timeoutseconds = timeoutseconds
+        self.cleanup = cleanup
+        self.idempotencykey = idempotencykey
+        self.channel = channel
+        self.accountid = accountid
+        self.to = to
+        self.threadid = threadid
+        self.groupid = groupid
+        self.groupchannel = groupchannel
+        self.groupspace = groupspace
     }
     private enum CodingKeys: String, CodingKey {
-        case key
-        case startdate = "startDate"
-        case enddate = "endDate"
-        case limit
-        case includecontextweight = "includeContextWeight"
+        case requestersessionkey = "requesterSessionKey"
+        case task
+        case label
+        case agentid = "agentId"
+        case model
+        case thinking
+        case runtimeoutseconds = "runTimeoutSeconds"
+        case timeoutseconds = "timeoutSeconds"
+        case cleanup
+        case idempotencykey = "idempotencyKey"
+        case channel
+        case accountid = "accountId"
+        case to
+        case threadid = "threadId"
+        case groupid = "groupId"
+        case groupchannel = "groupChannel"
+        case groupspace = "groupSpace"
     }
 }
 

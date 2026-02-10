@@ -65,6 +65,34 @@ function normalizeModelSelection(value: unknown): string | undefined {
   return undefined;
 }
 
+async function resolveSessionModel(sessionKey: string): Promise<string | undefined> {
+  const key = sessionKey.trim();
+  if (!key) {
+    return undefined;
+  }
+  try {
+    const res = await callGateway<{
+      sessions?: Array<{ key?: string; model?: string }>;
+    }>({
+      method: "sessions.list",
+      params: {
+        search: key,
+        includeGlobal: false,
+        includeUnknown: false,
+        includeDerivedTitles: false,
+        includeLastMessage: false,
+        limit: 10,
+      },
+      timeoutMs: 10_000,
+    });
+    const exact = res?.sessions?.find((row) => row?.key === key);
+    const model = typeof exact?.model === "string" ? exact.model.trim() : "";
+    return model || undefined;
+  } catch {
+    return undefined;
+  }
+}
+
 export function createSessionsSpawnTool(opts?: {
   agentSessionKey?: string;
   agentChannel?: GatewayMessageChannel;
@@ -92,7 +120,7 @@ export function createSessionsSpawnTool(opts?: {
       const modelOverride = readStringParam(params, "model");
       const thinkingOverrideRaw = readStringParam(params, "thinking");
       const cleanup =
-        params.cleanup === "keep" || params.cleanup === "delete" ? params.cleanup : "keep";
+        params.cleanup === "keep" || params.cleanup === "delete" ? params.cleanup : "delete";
       const requesterOrigin = normalizeDeliveryContext({
         channel: opts?.agentChannel,
         accountId: opts?.agentAccountId,
@@ -168,8 +196,13 @@ export function createSessionsSpawnTool(opts?: {
       const childSessionKey = `agent:${targetAgentId}:subagent:${crypto.randomUUID()}`;
       const spawnedByKey = requesterInternalKey;
       const targetAgentConfig = resolveAgentConfig(cfg, targetAgentId);
+      // Default: subagents inherit the requester's model selection unless explicitly overridden.
+      const inheritedModel = requesterInternalKey
+        ? await resolveSessionModel(requesterInternalKey)
+        : undefined;
       const resolvedModel =
         normalizeModelSelection(modelOverride) ??
+        inheritedModel ??
         normalizeModelSelection(targetAgentConfig?.subagents?.model) ??
         normalizeModelSelection(cfg.agents?.defaults?.subagents?.model);
 

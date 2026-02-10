@@ -24,6 +24,7 @@ import type { NodeHostConfig } from "./types.node-host.js";
 import type { PluginsConfig } from "./types.plugins.js";
 import type { SkillsConfig } from "./types.skills.js";
 import type { ToolsConfig } from "./types.tools.js";
+import type { VoiceConfig } from "./types.voice.js";
 
 export type OpenClawConfig = {
   meta?: {
@@ -96,7 +97,7 @@ export type OpenClawConfig = {
   canvasHost?: CanvasHostConfig;
   talk?: TalkConfig;
   gateway?: GatewayConfig;
-  memory?: MemoryConfig;
+  voice?: VoiceConfig;
 };
 
 export type ConfigValidationIssue = {

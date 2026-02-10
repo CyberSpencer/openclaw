@@ -30,10 +30,22 @@ import type {
   SessionsListResult,
   SkillStatusReport,
   StatusSummary,
-} from "./types.ts";
-import type { ChatAttachment, ChatQueueItem, CronFormState } from "./ui-types.ts";
-import type { NostrProfileFormState } from "./views/channels.nostr-profile-form.ts";
-import type { SessionLogEntry } from "./views/usage.ts";
+} from "./types";
+import type { ChatAttachment, ChatQueueItem, CronFormState } from "./ui-types";
+import type { EventLogEntry } from "./app-events";
+import type { SkillMessage } from "./controllers/skills";
+import type { ExecApprovalsFile, ExecApprovalsSnapshot } from "./controllers/exec-approvals";
+import type { DevicePairingList } from "./controllers/devices";
+import type { ExecApprovalRequest } from "./controllers/exec-approval";
+import type { NostrProfileFormState } from "./views/channels.nostr-profile-form";
+import type { VoiceState } from "./controllers/voice";
+import type { CommandPaletteAction } from "./command-palette";
+import type {
+  OrchestrationBoard,
+  OrchestrationCard,
+  OrchestrationLaneId,
+} from "./orchestrator-store";
+import type { CompactionStatus, ModelSelectionInfo } from "./app-tool-stream";
 
 export type AppViewState = {
   settings: UiSettings;
@@ -63,8 +75,17 @@ export type AppViewState = {
   compactionStatus: CompactionStatus | null;
   chatAvatarUrl: string | null;
   chatThinkingLevel: string | null;
+  chatModelSelection: ModelSelectionInfo | null;
+  compactionStatus: CompactionStatus | null;
   chatQueue: ChatQueueItem[];
-  chatManualRefreshInFlight: boolean;
+  chatThreadsLoading: boolean;
+  chatThreadsResult: SessionsListResult | null;
+  chatThreadsError: string | null;
+  chatThreadsQuery: string;
+  chatThreadsShowSubagents: boolean;
+  subagentMonitorLoading: boolean;
+  subagentMonitorResult: SessionsListResult | null;
+  subagentMonitorError: string | null;
   nodesLoading: boolean;
   nodes: Array<Record<string, unknown>>;
   chatNewMessagesBelow: boolean;
@@ -96,7 +117,19 @@ export type AppViewState = {
   configSaving: boolean;
   configApplying: boolean;
   updateRunning: boolean;
-  applySessionKey: string;
+  doctorRunning: boolean;
+  doctorResult: {
+    ok: boolean;
+    exitCode: number | null;
+    signal: string | null;
+    durationMs: number;
+    timedOut: boolean;
+    stdout: string;
+    stderr: string;
+  } | null;
+  doctorError: string | null;
+  gatewayRestartBusy: boolean;
+  gatewayRestartError: string | null;
   configSnapshot: ConfigSnapshot | null;
   configSchema: unknown;
   configSchemaVersion: string | null;
@@ -206,6 +239,19 @@ export type AppViewState = {
   debugCallParams: string;
   debugCallResult: string | null;
   debugCallError: string | null;
+  // Voice mode state
+  voiceBarVisible: boolean;
+  voiceBarExpanded: boolean;
+  voiceState: VoiceState;
+  memorySearchEnabled: boolean | null;
+  memorySearchBusy: boolean;
+  personaPlexRunning: boolean | null;
+  personaPlexBusy: boolean;
+  nvidiaRouterEnabled: boolean | null;
+  nvidiaRouterHealthy: boolean | null;
+  nvidiaRouterBusy: boolean;
+  sparkStatus: Record<string, unknown> | null;
+  sparkBusy: boolean;
   logsLoading: boolean;
   logsError: string | null;
   logsFile: string | null;
@@ -253,6 +299,7 @@ export type AppViewState = {
   handleToggleSkillEnabled: (key: string, enabled: boolean) => Promise<void>;
   handleUpdateSkillEdit: (key: string, value: string) => void;
   handleSaveSkillApiKey: (key: string, apiKey: string) => Promise<void>;
+  handleCronSchedulerToggle: (enabled: boolean) => Promise<void>;
   handleCronToggle: (jobId: string, enabled: boolean) => Promise<void>;
   handleCronRun: (jobId: string) => Promise<void>;
   handleCronRemove: (jobId: string) => Promise<void>;
@@ -268,18 +315,74 @@ export type AppViewState = {
   handleLoadLogs: () => Promise<void>;
   handleDebugCall: () => Promise<void>;
   handleRunUpdate: () => Promise<void>;
+  handleDoctorRun: (opts?: { deep?: boolean }) => Promise<void>;
+  handleGatewayRestart: () => Promise<void>;
   setPassword: (next: string) => void;
   setSessionKey: (next: string) => void;
   setChatMessage: (next: string) => void;
-  handleSendChat: (messageOverride?: string, opts?: { restoreDraft?: boolean }) => Promise<void>;
-  handleAbortChat: () => Promise<void>;
-  removeQueuedMessage: (id: string) => void;
-  handleChatScroll: (event: Event) => void;
-  resetToolStream: () => void;
-  resetChatScroll: () => void;
-  exportLogs: (lines: string[], label: string) => void;
-  handleLogsScroll: (event: Event) => void;
-  handleOpenSidebar: (content: string) => void;
-  handleCloseSidebar: () => void;
-  handleSplitRatioChange: (ratio: number) => void;
+  handleChatSend: () => Promise<void>;
+  handleChatAbort: () => Promise<void>;
+  handleChatNewThread: () => Promise<void>;
+  handleChatThreadsQueryChange: (next: string) => void;
+  handleChatThreadRename: (key: string) => Promise<void>;
+  handleChatThreadDelete: (key: string) => Promise<void>;
+  handleChatSelectQueueItem: (id: string) => void;
+  handleChatDropQueueItem: (id: string) => void;
+  handleChatClearQueue: () => void;
+  handleLogsFilterChange: (next: string) => void;
+  handleLogsLevelFilterToggle: (level: LogLevel) => void;
+  handleLogsAutoFollowToggle: (next: boolean) => void;
+  handleCallDebugMethod: (method: string, params: string) => Promise<void>;
+  // Voice mode handlers
+  toggleVoiceBar: () => void;
+  toggleVoiceBarExpanded: () => void;
+  handleVoiceStartConversation: () => void;
+  handleVoiceStopConversation: () => void;
+  handleVoiceRetry: () => void;
+  handleVoiceClose: () => void;
+  handleVoiceDriveOpenClawChange: (enabled: boolean) => void;
+  handleMemorySearchToggle: () => Promise<void>;
+  handleNvidiaRouterToggle: () => Promise<void>;
+  handlePersonaPlexPreload: () => Promise<void>;
+
+  // Command palette
+  commandPaletteOpen: boolean;
+  commandPaletteQuery: string;
+  commandPaletteIndex: number;
+  openCommandPalette: () => void;
+  closeCommandPalette: () => void;
+  getCommandPaletteActions: () => CommandPaletteAction[];
+  runCommandPaletteAction: (action: CommandPaletteAction) => void;
+
+  // Orchestrator (local browser state)
+  orchBoards: OrchestrationBoard[];
+  orchSelectedBoardId: string;
+  orchSelectedCardId: string | null;
+  orchDragOverLaneId: string | null;
+  orchBusyCardId: string | null;
+  orchTemplateQuery: string;
+  orchDraft: {
+    title: string;
+    task: string;
+    agentId: string;
+    runner: "subagent" | "codex";
+    model: string;
+    thinking: string;
+    timeoutSeconds: string;
+    cleanup: "keep" | "delete";
+    codexMode: "plan" | "apply" | "run";
+    codexShellAllowlist: string;
+    showAdvanced: boolean;
+  };
+  orchSelectCard: (cardId: string | null) => void;
+  orchCreateCard: (laneId?: OrchestrationLaneId) => void;
+  orchUpdateCard: (cardId: string, patch: Partial<OrchestrationCard>) => void;
+  orchMoveCard: (cardId: string, laneId: OrchestrationLaneId) => void;
+  orchDeleteCard: (cardId: string) => void;
+  orchDuplicateCard: (cardId: string) => void;
+  orchRunCard: (cardId: string) => Promise<void>;
+  orchCleanupCardSession: (cardId: string) => Promise<void>;
+  orchSetDraft: (patch: Partial<AppViewState["orchDraft"]>) => void;
+  orchAddDraftCard: (opts?: { run?: boolean }) => Promise<void> | void;
+  openChatSession: (sessionKey: string) => void;
 };

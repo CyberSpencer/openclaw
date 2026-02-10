@@ -98,6 +98,7 @@ import {
   ChatHistoryParamsSchema,
   ChatInjectParamsSchema,
   ChatSendParamsSchema,
+  ChatSteerParamsSchema,
   LogsTailParamsSchema,
   LogsTailResultSchema,
 } from "./logs-chat.js";
@@ -123,7 +124,7 @@ import {
   SessionsPreviewParamsSchema,
   SessionsResetParamsSchema,
   SessionsResolveParamsSchema,
-  SessionsUsageParamsSchema,
+  SessionsSpawnParamsSchema,
 } from "./sessions.js";
 import { PresenceEntrySchema, SnapshotSchema, StateVersionSchema } from "./snapshot.js";
 import {
@@ -175,7 +176,7 @@ export const ProtocolSchemas: Record<string, TSchema> = {
   SessionsResetParams: SessionsResetParamsSchema,
   SessionsDeleteParams: SessionsDeleteParamsSchema,
   SessionsCompactParams: SessionsCompactParamsSchema,
-  SessionsUsageParams: SessionsUsageParamsSchema,
+  SessionsSpawnParams: SessionsSpawnParamsSchema,
   ConfigGetParams: ConfigGetParamsSchema,
   ConfigSetParams: ConfigSetParamsSchema,
   ConfigApplyParams: ConfigApplyParamsSchema,
@@ -247,6 +248,7 @@ export const ProtocolSchemas: Record<string, TSchema> = {
   DevicePairResolvedEvent: DevicePairResolvedEventSchema,
   ChatHistoryParams: ChatHistoryParamsSchema,
   ChatSendParams: ChatSendParamsSchema,
+  ChatSteerParams: ChatSteerParamsSchema,
   ChatAbortParams: ChatAbortParamsSchema,
   ChatInjectParams: ChatInjectParamsSchema,
   ChatEvent: ChatEventSchema,

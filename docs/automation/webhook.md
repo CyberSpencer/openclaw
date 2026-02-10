@@ -120,14 +120,14 @@ Mapping options (summary):
 ## Examples
 
 ```bash
-curl -X POST http://127.0.0.1:18789/hooks/wake \
+curl -X POST http://127.0.0.1:32555/hooks/wake \
   -H 'Authorization: Bearer SECRET' \
   -H 'Content-Type: application/json' \
   -d '{"text":"New email received","mode":"now"}'
 ```
 
 ```bash
-curl -X POST http://127.0.0.1:18789/hooks/agent \
+curl -X POST http://127.0.0.1:32555/hooks/agent \
   -H 'x-openclaw-token: SECRET' \
   -H 'Content-Type: application/json' \
   -d '{"message":"Summarize inbox","name":"Email","wakeMode":"next-heartbeat"}'
@@ -138,7 +138,7 @@ curl -X POST http://127.0.0.1:18789/hooks/agent \
 Add `model` to the agent payload (or mapping) to override the model for that run:
 
 ```bash
-curl -X POST http://127.0.0.1:18789/hooks/agent \
+curl -X POST http://127.0.0.1:32555/hooks/agent \
   -H 'x-openclaw-token: SECRET' \
   -H 'Content-Type: application/json' \
   -d '{"message":"Summarize inbox","name":"Email","model":"openai/gpt-5.2-mini"}'
@@ -147,7 +147,7 @@ curl -X POST http://127.0.0.1:18789/hooks/agent \
 If you enforce `agents.defaults.models`, make sure the override model is included there.
 
 ```bash
-curl -X POST http://127.0.0.1:18789/hooks/gmail \
+curl -X POST http://127.0.0.1:32555/hooks/gmail \
   -H 'Authorization: Bearer SECRET' \
   -H 'Content-Type: application/json' \
   -d '{"source":"gmail","messages":[{"from":"Ada","subject":"Hello","snippet":"Hi"}]}'

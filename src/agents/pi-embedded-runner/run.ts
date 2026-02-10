@@ -1,10 +1,15 @@
 import fs from "node:fs/promises";
+import path from "node:path";
+import { spawn } from "node:child_process";
 import type { ThinkLevel } from "../../auto-reply/thinking.js";
 import type { RunEmbeddedPiAgentParams } from "./run/params.js";
 import type { EmbeddedPiAgentMeta, EmbeddedPiRunResult } from "./types.js";
 import { enqueueCommandInLane } from "../../process/command-queue.js";
 import { isMarkdownCapableMessageChannel } from "../../utils/message-channel.js";
+import { loadConfig } from "../../config/config.js";
 import { resolveOpenClawAgentDir } from "../agent-paths.js";
+import { resolveSessionAgentId } from "../agent-scope.js";
+import { redactSensitiveText } from "../../logging/redact.js";
 import {
   isProfileInCooldown,
   markAuthProfileFailure,
@@ -25,8 +30,9 @@ import {
   resolveAuthProfileOrder,
   type ResolvedProviderAuth,
 } from "../model-auth.js";
-import { normalizeProviderId } from "../model-selection.js";
+import { isCliProvider, normalizeProviderId } from "../model-selection.js";
 import { ensureOpenClawModelsJson } from "../models-config.js";
+import { resolveProviderEndpointConfig } from "../provider-endpoints.js";
 import {
   BILLING_ERROR_USER_MESSAGE,
   classifyFailoverReason,
@@ -40,12 +46,15 @@ import {
   parseImageSizeError,
   parseImageDimensionError,
   isRateLimitAssistantError,
-  isTimeoutErrorMessage,
+  isTransientNetworkErrorMessage,
   pickFallbackThinkingLevel,
   type FailoverReason,
 } from "../pi-embedded-helpers.js";
 import { normalizeUsage, type UsageLike } from "../usage.js";
-import { redactRunIdentifier, resolveRunWorkspaceDir } from "../workspace-run.js";
+import { runCliAgent } from "../cli-runner.js";
+import { getMemorySearchManager } from "../../memory/index.js";
+import { resolveMemorySearchConfig } from "../memory-search.js";
+
 import { compactEmbeddedPiSessionDirect } from "./compact.js";
 import { resolveGlobalLane, resolveSessionLane } from "./lanes.js";
 import { log } from "./logger.js";
@@ -74,65 +83,205 @@ function scrubAnthropicRefusalMagic(prompt: string): string {
   );
 }
 
-type UsageAccumulator = {
-  input: number;
-  output: number;
-  cacheRead: number;
-  cacheWrite: number;
-  total: number;
+type RouterDecision = {
+  target?: string;
+  mode?: string;
+  model?: string;
+  thinking?: string;
+  reason?: string;
+  sensitive?: boolean;
+  fallback_chain?: string[];
 };
 
-const createUsageAccumulator = (): UsageAccumulator => ({
-  input: 0,
-  output: 0,
-  cacheRead: 0,
-  cacheWrite: 0,
-  total: 0,
-});
-
-const hasUsageValues = (
-  usage: ReturnType<typeof normalizeUsage>,
-): usage is NonNullable<ReturnType<typeof normalizeUsage>> =>
-  !!usage &&
-  [usage.input, usage.output, usage.cacheRead, usage.cacheWrite, usage.total].some(
-    (value) => typeof value === "number" && Number.isFinite(value) && value > 0,
-  );
-
-const mergeUsageIntoAccumulator = (
-  target: UsageAccumulator,
-  usage: ReturnType<typeof normalizeUsage>,
-) => {
-  if (!hasUsageValues(usage)) {
-    return;
+async function buildMemoryPrelude(params: {
+  cfg?: RunEmbeddedPiAgentParams["config"];
+  agentId: string;
+  prompt: string;
+}): Promise<string> {
+  if (!params.cfg) {
+    return "";
   }
-  target.input += usage.input ?? 0;
-  target.output += usage.output ?? 0;
-  target.cacheRead += usage.cacheRead ?? 0;
-  target.cacheWrite += usage.cacheWrite ?? 0;
-  target.total +=
-    usage.total ??
-    (usage.input ?? 0) + (usage.output ?? 0) + (usage.cacheRead ?? 0) + (usage.cacheWrite ?? 0);
-};
+  const resolved = resolveMemorySearchConfig(params.cfg, params.agentId);
+  if (!resolved?.enabled) {
+    return "";
+  }
+  const { manager } = await getMemorySearchManager({
+    cfg: params.cfg,
+    agentId: params.agentId,
+  });
+  if (!manager) {
+    return "";
+  }
+  let results: Awaited<ReturnType<typeof manager.search>> = [];
+  try {
+    const maxResults = Math.min(20, resolved.query.maxResults ?? 20);
+    const minScore = Math.max(0.2, resolved.query.minScore ?? 0.2);
+    results = await manager.search(params.prompt, { maxResults, minScore });
+  } catch {
+    return "";
+  }
+  if (!results.length) {
+    return "";
+  }
+  const lines = results.map((entry, idx) => {
+    const snippet = redactSensitiveText(entry.snippet, { mode: "tools" })
+      .replace(/\s+/g, " ")
+      .trim();
+    const short = snippet.length > 500 ? `${snippet.slice(0, 497)}...` : snippet;
+    return `- ${idx + 1}. ${entry.path}:${entry.startLine}-${entry.endLine} (${entry.source}, score=${entry.score.toFixed(3)}) ${short}`;
+  });
 
-const toNormalizedUsage = (usage: UsageAccumulator) => {
-  const hasUsage =
-    usage.input > 0 ||
-    usage.output > 0 ||
-    usage.cacheRead > 0 ||
-    usage.cacheWrite > 0 ||
-    usage.total > 0;
-  if (!hasUsage) {
+  const snippetBlocks: string[] = [];
+  const topSnippets = results.slice(0, 6);
+  for (const entry of topSnippets) {
+    const lineCount = Math.min(12, Math.max(1, entry.endLine - entry.startLine + 1));
+    try {
+      const file = await manager.readFile({
+        relPath: entry.path,
+        from: entry.startLine,
+        lines: lineCount,
+      });
+      const cleaned = redactSensitiveText(file.text, { mode: "tools" }).trim();
+      if (cleaned) {
+        snippetBlocks.push(`### ${entry.path}:${entry.startLine}-${entry.endLine}`);
+        snippetBlocks.push(cleaned);
+      }
+    } catch {
+      continue;
+    }
+  }
+
+  const sections = ["## Memory Search Results", ...lines];
+  if (snippetBlocks.length > 0) {
+    sections.push("## Memory Snippets (top 6)");
+    sections.push(...snippetBlocks);
+  }
+  return sections.join("\n");
+}
+
+function parseRouterModel(raw?: string): { provider: string; modelId: string } | null {
+  if (!raw) {
+    return null;
+  }
+  const idx = raw.indexOf("/");
+  if (idx <= 0 || idx === raw.length - 1) {
+    return null;
+  }
+  return { provider: raw.slice(0, idx), modelId: raw.slice(idx + 1) };
+}
+
+function resolveRouterCliOverride(
+  decision: RouterDecision | null,
+  cfg?: RunEmbeddedPiAgentParams["config"],
+): { provider?: string; modelId?: string } {
+  const target = decision?.target?.trim().toLowerCase();
+  const model = decision?.model?.trim();
+  if (target === "cursor") {
+    const provider = "cursor-cli";
+    if (isCliProvider(provider, cfg)) {
+      return { provider, modelId: "default" };
+    }
+  }
+  if (model && !model.includes("/") && model.endsWith("-cli")) {
+    if (isCliProvider(model, cfg)) {
+      return { provider: model, modelId: "default" };
+    }
+  }
+  return {};
+}
+
+function mapRouterThinking(value?: string): ThinkLevel | undefined {
+  if (!value) {
     return undefined;
   }
-  const derivedTotal = usage.input + usage.output + usage.cacheRead + usage.cacheWrite;
-  return {
-    input: usage.input || undefined,
-    output: usage.output || undefined,
-    cacheRead: usage.cacheRead || undefined,
-    cacheWrite: usage.cacheWrite || undefined,
-    total: usage.total || derivedTotal || undefined,
-  };
-};
+  switch (value) {
+    case "none":
+      return "off";
+    case "minimal":
+      return "minimal";
+    case "low":
+      return "low";
+    case "medium":
+      return "medium";
+    case "high":
+      return "high";
+    case "xhigh":
+      return "xhigh";
+    default:
+      return undefined;
+  }
+}
+
+async function runModelRouter(params: {
+  workspaceDir: string;
+  prompt: string;
+  mode: "text" | "voice";
+  timeoutMs?: number;
+}): Promise<RouterDecision | null> {
+  const scriptPath = path.join(params.workspaceDir, "scripts", "route.sh");
+  let resolvedScriptPath: string;
+  try {
+    await fs.access(scriptPath);
+    const [realWorkspaceDir, realScriptPath] = await Promise.all([
+      fs.realpath(params.workspaceDir),
+      fs.realpath(scriptPath),
+    ]);
+    const rel = path.relative(realWorkspaceDir, realScriptPath);
+    if (rel.startsWith("..") || path.isAbsolute(rel)) {
+      log.warn("router script is not contained within workspaceDir; refusing to execute");
+      return null;
+    }
+    resolvedScriptPath = realScriptPath;
+  } catch {
+    return null;
+  }
+
+  const timeoutMs = params.timeoutMs ?? 2500;
+  return new Promise((resolve) => {
+    const child = spawn(resolvedScriptPath, ["--json", "--mode", params.mode], {
+      stdio: ["pipe", "pipe", "pipe"],
+      env: process.env,
+    });
+    let stdout = "";
+    let stderr = "";
+    const timer = setTimeout(() => {
+      child.kill();
+      resolve(null);
+    }, timeoutMs);
+
+    child.stdout.on("data", (chunk) => {
+      stdout += chunk.toString();
+    });
+    child.stderr.on("data", (chunk) => {
+      stderr += chunk.toString();
+    });
+    child.on("close", (code) => {
+      clearTimeout(timer);
+      if (code !== 0 || !stdout.trim()) {
+        if (stderr.trim()) {
+          log.warn(`router failed (${code}): ${stderr.trim().slice(0, 200)}`);
+        }
+        resolve(null);
+        return;
+      }
+      try {
+        const parsed = JSON.parse(stdout) as RouterDecision;
+        resolve(parsed);
+      } catch (err) {
+        log.warn(`router JSON parse failed: ${String(err).slice(0, 200)}`);
+        resolve(null);
+      }
+    });
+
+    try {
+      child.stdin.write(params.prompt);
+      child.stdin.end();
+    } catch {
+      clearTimeout(timer);
+      resolve(null);
+    }
+  });
+}
 
 export async function runEmbeddedPiAgent(
   params: RunEmbeddedPiAgentParams,
@@ -173,25 +322,99 @@ export async function runEmbeddedPiAgent(
       }
       const prevCwd = process.cwd();
 
-      const provider = (params.provider ?? DEFAULT_PROVIDER).trim() || DEFAULT_PROVIDER;
-      const modelId = (params.model ?? DEFAULT_MODEL).trim() || DEFAULT_MODEL;
+      const shouldApplyRouter = params.disableModelRouter !== true;
+      const routerDecision = shouldApplyRouter
+        ? await runModelRouter({
+            workspaceDir: resolvedWorkspace,
+            prompt: params.prompt,
+            mode: "text",
+          })
+        : null;
+      const routedThinkLevel = mapRouterThinking(routerDecision?.thinking);
+      const routedModel = parseRouterModel(routerDecision?.model);
+      const cliOverride = resolveRouterCliOverride(routerDecision, params.config);
+      const requestedProvider = (params.provider ?? DEFAULT_PROVIDER).trim() || DEFAULT_PROVIDER;
+      const requestedModelId = (params.model ?? DEFAULT_MODEL).trim() || DEFAULT_MODEL;
+
+      const provider =
+        (shouldApplyRouter
+          ? (cliOverride.provider ?? routedModel?.provider ?? requestedProvider)
+          : requestedProvider
+        ).trim() || DEFAULT_PROVIDER;
+      const modelId =
+        (shouldApplyRouter
+          ? (cliOverride.modelId ?? routedModel?.modelId ?? requestedModelId)
+          : requestedModelId
+        ).trim() || DEFAULT_MODEL;
+      const initialThinkLevel =
+        params.thinkLevel ?? (shouldApplyRouter ? routedThinkLevel : undefined) ?? "off";
+      const routerMode = shouldApplyRouter ? routerDecision?.mode?.trim().toLowerCase() : undefined;
+      const routerTarget = shouldApplyRouter
+        ? routerDecision?.target?.trim().toLowerCase()
+        : undefined;
+      const isCli = isCliProvider(provider, params.config);
+
+      if (routerTarget === "cursor" && !isCli) {
+        log.warn(
+          'router target "cursor" requested but no cursor-cli backend is configured, falling back to embedded LLM',
+        );
+      }
+
+      if (routerMode && routerMode !== "plan" && !isCli) {
+        log.warn(
+          `router mode "${routerMode}" requested but embedded runner only supports model overrides; continuing with ${provider}/${modelId}`,
+        );
+      }
+
+      if (isCli) {
+        if (routerDecision) {
+          log.info(
+            `router decision: ${routerDecision.reason ?? "unknown"} -> ${provider}/${modelId} (sensitive=${routerDecision.sensitive ? "yes" : "no"})`,
+          );
+        }
+        if (params.onAssistantMessageStart) {
+          await params.onAssistantMessageStart();
+        }
+        return runCliAgent({
+          sessionId: params.sessionId,
+          sessionKey: params.sessionKey,
+          sessionFile: params.sessionFile,
+          workspaceDir: resolvedWorkspace,
+          config: params.config,
+          prompt: params.prompt,
+          provider,
+          model: modelId,
+          thinkLevel: initialThinkLevel,
+          timeoutMs: params.timeoutMs,
+          runId: params.runId,
+          extraSystemPrompt: params.extraSystemPrompt,
+          ownerNumbers: params.ownerNumbers,
+          images: params.images,
+        });
+      }
       const agentDir = params.agentDir ?? resolveOpenClawAgentDir();
+      const baseCfg = params.config ?? loadConfig();
+      const { cfg: resolvedCfg } = await resolveProviderEndpointConfig({
+        cfg: baseCfg,
+        providerId: provider,
+      });
+      const effectiveCfg = resolvedCfg ?? baseCfg;
       const fallbackConfigured =
-        (params.config?.agents?.defaults?.model?.fallbacks?.length ?? 0) > 0;
-      await ensureOpenClawModelsJson(params.config, agentDir);
+        (effectiveCfg?.agents?.defaults?.model?.fallbacks?.length ?? 0) > 0;
+      await ensureOpenClawModelsJson(effectiveCfg, agentDir);
 
       const { model, error, authStorage, modelRegistry } = resolveModel(
         provider,
         modelId,
         agentDir,
-        params.config,
+        effectiveCfg,
       );
       if (!model) {
         throw new Error(error ?? `Unknown model: ${provider}/${modelId}`);
       }
 
       const ctxInfo = resolveContextWindowInfo({
-        cfg: params.config,
+        cfg: effectiveCfg,
         provider,
         modelId,
         modelContextWindow: model.contextWindow,
@@ -230,7 +453,7 @@ export async function runEmbeddedPiAgent(
         }
       }
       const profileOrder = resolveAuthProfileOrder({
-        cfg: params.config,
+        cfg: effectiveCfg,
         store: authStore,
         provider,
         preferredProfile: preferredProfileId,
@@ -245,11 +468,15 @@ export async function runEmbeddedPiAgent(
           : [undefined];
       let profileIndex = 0;
 
-      const initialThinkLevel = params.thinkLevel ?? "off";
       let thinkLevel = initialThinkLevel;
       const attemptedThinking = new Set<ThinkLevel>();
       let apiKeyInfo: ApiKeyInfo | null = null;
       let lastProfileId: string | undefined;
+      if (routerDecision && routedModel) {
+        log.info(
+          `router decision: ${routerDecision.reason ?? "unknown"} -> ${provider}/${modelId} (sensitive=${routerDecision.sensitive ? "yes" : "no"})`,
+        );
+      }
 
       const resolveAuthProfileFailoverReason = (params: {
         allInCooldown: boolean;
@@ -294,7 +521,7 @@ export async function runEmbeddedPiAgent(
       const resolveApiKeyForCandidate = async (candidate?: string) => {
         return getApiKeyForModel({
           model,
-          cfg: params.config,
+          cfg: effectiveCfg,
           profileId: candidate,
           store: authStore,
           agentDir,
@@ -383,11 +610,8 @@ export async function runEmbeddedPiAgent(
         }
       }
 
-      const MAX_OVERFLOW_COMPACTION_ATTEMPTS = 3;
-      let overflowCompactionAttempts = 0;
-      let toolResultTruncationAttempted = false;
-      const usageAccumulator = createUsageAccumulator();
-      let autoCompactionCount = 0;
+      let overflowCompactionAttempted = false;
+      let memoryPrelude: string | undefined;
       try {
         while (true) {
           attemptedThinking.add(thinkLevel);
@@ -395,6 +619,20 @@ export async function runEmbeddedPiAgent(
 
           const prompt =
             provider === "anthropic" ? scrubAnthropicRefusalMagic(params.prompt) : params.prompt;
+          if (memoryPrelude === undefined) {
+            const memoryAgentId = resolveSessionAgentId({
+              sessionKey: params.sessionKey,
+              config: params.config,
+            });
+            memoryPrelude = await buildMemoryPrelude({
+              cfg: params.config,
+              agentId: memoryAgentId,
+              prompt,
+            });
+          }
+          const mergedExtraPrompt = [params.extraSystemPrompt, memoryPrelude]
+            .filter((entry) => entry && String(entry).trim().length > 0)
+            .join("\n\n");
 
           const attempt = await runEmbeddedAttempt({
             sessionId: params.sessionId,
@@ -447,7 +685,7 @@ export async function runEmbeddedPiAgent(
             onReasoningStream: params.onReasoningStream,
             onToolResult: params.onToolResult,
             onAgentEvent: params.onAgentEvent,
-            extraSystemPrompt: params.extraSystemPrompt,
+            extraSystemPrompt: mergedExtraPrompt || params.extraSystemPrompt,
             streamParams: params.streamParams,
             ownerNumbers: params.ownerNumbers,
             enforceFinalTag: params.enforceFinalTag,
@@ -651,7 +889,7 @@ export async function runEmbeddedPiAgent(
               };
             }
             const promptFailoverReason = classifyFailoverReason(errorText);
-            if (promptFailoverReason && promptFailoverReason !== "timeout" && lastProfileId) {
+            if (promptFailoverReason && promptFailoverReason !== "network" && lastProfileId) {
               await markAuthProfileFailure({
                 store: authStore,
                 profileId: lastProfileId,
@@ -662,7 +900,7 @@ export async function runEmbeddedPiAgent(
             }
             if (
               isFailoverErrorMessage(errorText) &&
-              promptFailoverReason !== "timeout" &&
+              promptFailoverReason !== "network" &&
               (await advanceAuthProfile())
             ) {
               continue;
@@ -737,7 +975,7 @@ export async function runEmbeddedPiAgent(
           if (shouldRotate) {
             if (lastProfileId) {
               const reason =
-                timedOut || assistantFailoverReason === "timeout"
+                timedOut || assistantFailoverReason === "network"
                   ? "timeout"
                   : (assistantFailoverReason ?? "unknown");
               await markAuthProfileFailure({
@@ -785,7 +1023,7 @@ export async function runEmbeddedPiAgent(
                         : "LLM request failed.");
               const status =
                 resolveFailoverStatus(assistantFailoverReason ?? "unknown") ??
-                (isTimeoutErrorMessage(message) ? 408 : undefined);
+                (isTransientNetworkErrorMessage(message) ? 408 : undefined);
               throw new FailoverError(message, {
                 reason: assistantFailoverReason ?? "unknown",
                 provider,

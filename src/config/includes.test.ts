@@ -317,12 +317,12 @@ describe("real-world config patterns", () => {
     };
 
     const obj = {
-      gateway: { port: 18789 },
+      gateway: { port: 32555 },
       $include: ["./clients/mueller.json", "./clients/schmidt.json"],
     };
 
     expect(resolve(obj, files)).toEqual({
-      gateway: { port: 18789 },
+      gateway: { port: 32555 },
       agents: [
         { id: "mueller-screenshot", workspace: "~/clients/mueller/screenshot" },
         { id: "mueller-transcribe", workspace: "~/clients/mueller/transcribe" },
@@ -338,7 +338,7 @@ describe("real-world config patterns", () => {
   it("supports modular config structure", () => {
     const files = {
       [configPath("gateway.json")]: {
-        gateway: { port: 18789, bind: "loopback" },
+        gateway: { port: 32555, bind: "loopback" },
       },
       [configPath("channels", "whatsapp.json")]: {
         channels: { whatsapp: { dmPolicy: "pairing", allowFrom: ["+49123"] } },
@@ -353,7 +353,7 @@ describe("real-world config patterns", () => {
     };
 
     expect(resolve(obj, files)).toEqual({
-      gateway: { port: 18789, bind: "loopback" },
+      gateway: { port: 32555, bind: "loopback" },
       channels: { whatsapp: { dmPolicy: "pairing", allowFrom: ["+49123"] } },
       agents: { defaults: { sandbox: { mode: "all" } } },
     });

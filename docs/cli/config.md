@@ -43,7 +43,7 @@ Use `--json` to require JSON5 parsing.
 
 ```bash
 openclaw config set agents.defaults.heartbeat.every "0m"
-openclaw config set gateway.port 19001 --json
+openclaw config set gateway.port 55532 --json
 openclaw config set channels.whatsapp.groups '["*"]' --json
 ```
 

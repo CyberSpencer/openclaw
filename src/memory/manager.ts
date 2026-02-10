@@ -19,17 +19,7 @@ import { resolveMemorySearchConfig } from "../agents/memory-search.js";
 import { resolveSessionTranscriptsDirForAgent } from "../config/sessions/paths.js";
 import { createSubsystemLogger } from "../logging/subsystem.js";
 import { onSessionTranscriptUpdate } from "../sessions/transcript-events.js";
-import { resolveUserPath } from "../utils.js";
-import { runGeminiEmbeddingBatches, type GeminiBatchRequest } from "./batch-gemini.js";
-import {
-  OPENAI_BATCH_ENDPOINT,
-  type OpenAiBatchRequest,
-  runOpenAiEmbeddingBatches,
-} from "./batch-openai.js";
-import { type VoyageBatchRequest, runVoyageEmbeddingBatches } from "./batch-voyage.js";
-import { DEFAULT_GEMINI_EMBEDDING_MODEL } from "./embeddings-gemini.js";
-import { DEFAULT_OPENAI_EMBEDDING_MODEL } from "./embeddings-openai.js";
-import { DEFAULT_VOYAGE_EMBEDDING_MODEL } from "./embeddings-voyage.js";
+import { resolveUserPath, truncateUtf16Safe } from "../utils.js";
 import {
   createEmbeddingProvider,
   type EmbeddingProvider,
@@ -43,6 +33,7 @@ import {
   buildFileEntry,
   chunkMarkdown,
   ensureDir,
+  hashToDeterministicUuid,
   hashText,
   isMemoryPath,
   listMemoryFiles,
@@ -64,6 +55,22 @@ type MemoryIndexMeta = {
   chunkTokens: number;
   chunkOverlap: number;
   vectorDims?: number;
+};
+
+type QdrantConfig = {
+  url: string;
+  endpoints?: Array<{
+    url: string;
+    apiKey?: string;
+    timeoutMs?: number;
+    priority?: number;
+    healthUrl?: string;
+    healthTimeoutMs?: number;
+    healthCacheTtlMs?: number;
+  }>;
+  collection: string;
+  apiKey?: string;
+  timeoutMs: number;
 };
 
 type SessionFileEntry = {
@@ -101,20 +108,138 @@ const EMBEDDING_QUERY_TIMEOUT_REMOTE_MS = 60_000;
 const EMBEDDING_QUERY_TIMEOUT_LOCAL_MS = 5 * 60_000;
 const EMBEDDING_BATCH_TIMEOUT_REMOTE_MS = 2 * 60_000;
 const EMBEDDING_BATCH_TIMEOUT_LOCAL_MS = 10 * 60_000;
+const SQLITE_FALLBACK_DEPRECATION_TS = Date.parse("2026-03-02T00:00:00Z");
+const SQLITE_FALLBACK_DEPRECATION_LABEL = "March 2, 2026";
 
 const log = createSubsystemLogger("memory");
 
 const INDEX_CACHE = new Map<string, MemoryIndexManager>();
 
+const QDRANT_HEALTH_TTL_MS = 10_000;
+const QDRANT_HEALTH_TIMEOUT_MS = 1500;
+const qdrantHealthCache = new Map<string, { ok: boolean; checkedAt: number }>();
+
+type QdrantEndpointConfig = {
+  url: string;
+  apiKey?: string;
+  timeoutMs?: number;
+  priority?: number;
+  healthUrl?: string;
+  healthTimeoutMs?: number;
+  healthCacheTtlMs?: number;
+};
+
 const vectorToBlob = (embedding: number[]): Buffer =>
   Buffer.from(new Float32Array(embedding).buffer);
 
-export class MemoryIndexManager implements MemorySearchManager {
+function normalizeQdrantUrl(url: string): string {
+  return url.replace(/\/+$/, "");
+}
+
+async function checkQdrantEndpoint(
+  endpoint: QdrantEndpointConfig,
+  fallbackApiKey?: string,
+): Promise<boolean> {
+  const url = endpoint.healthUrl?.trim() || `${normalizeQdrantUrl(endpoint.url)}/collections`;
+  const timeoutMs = endpoint.healthTimeoutMs ?? QDRANT_HEALTH_TIMEOUT_MS;
+  const ttlMs = endpoint.healthCacheTtlMs ?? QDRANT_HEALTH_TTL_MS;
+  const cacheKey = endpoint.url;
+  const now = Date.now();
+  const cached = qdrantHealthCache.get(cacheKey);
+  if (cached && now - cached.checkedAt < ttlMs) {
+    return cached.ok;
+  }
+  let ok = false;
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    const apiKey = endpoint.apiKey ?? fallbackApiKey;
+    const headers = apiKey ? { "api-key": apiKey } : undefined;
+    const res = await fetch(url, { method: "GET", headers, signal: controller.signal });
+    ok = res.status === 200;
+  } catch (err) {
+    ok = false;
+    log.debug(`qdrant health check failed for ${endpoint.url}: ${String(err)}`);
+  } finally {
+    clearTimeout(timer);
+  }
+  qdrantHealthCache.set(cacheKey, { ok, checkedAt: now });
+  return ok;
+}
+
+function sortQdrantEndpoints(endpoints: QdrantEndpointConfig[]): QdrantEndpointConfig[] {
+  return [...endpoints].toSorted((a, b) => {
+    const aPriority = a.priority ?? 0;
+    const bPriority = b.priority ?? 0;
+    if (aPriority !== bPriority) {
+      return aPriority - bPriority;
+    }
+    return a.url.localeCompare(b.url);
+  });
+}
+
+async function resolveQdrantEndpoint(config: QdrantConfig): Promise<QdrantConfig | null> {
+  const endpoints = (config.endpoints ?? []).filter((entry) => entry.url?.trim());
+  if (endpoints.length === 0) {
+    return config;
+  }
+  const ordered = sortQdrantEndpoints(endpoints);
+  for (const endpoint of ordered) {
+    if (await checkQdrantEndpoint(endpoint, config.apiKey)) {
+      return {
+        ...config,
+        url: endpoint.url,
+        apiKey: endpoint.apiKey ?? config.apiKey,
+        timeoutMs: endpoint.timeoutMs ?? config.timeoutMs,
+      };
+    }
+  }
+  return null;
+}
+
+async function resolveStoreSettings(
+  settings: ResolvedMemorySearchConfig,
+): Promise<ResolvedMemorySearchConfig> {
+  if (settings.store.driver !== "auto" && settings.store.driver !== "qdrant") {
+    return settings;
+  }
+  const resolvedQdrant = await resolveQdrantEndpoint(settings.store.qdrant);
+  if (resolvedQdrant) {
+    return {
+      ...settings,
+      store: {
+        ...settings.store,
+        driver: "qdrant",
+        qdrant: resolvedQdrant,
+      },
+    };
+  }
+  if (settings.store.driver === "auto") {
+    log.warn("qdrant unavailable, falling back to sqlite memory store");
+    return {
+      ...settings,
+      store: {
+        ...settings.store,
+        driver: "sqlite",
+      },
+    };
+  }
+  return settings;
+}
+
+export class MemoryIndexManager {
   private readonly cacheKey: string;
   private readonly cfg: OpenClawConfig;
   private readonly agentId: string;
   private readonly workspaceDir: string;
   private readonly settings: ResolvedMemorySearchConfig;
+  private readonly storeDriver!: "sqlite" | "qdrant";
+  private readonly qdrant?: QdrantConfig;
+  private lastSuccessfulQdrantEndpoint: {
+    url: string;
+    apiKey?: string;
+    timeoutMs?: number;
+  } | null = null;
   private provider: EmbeddingProvider;
   private readonly requestedProvider: "openai" | "local" | "gemini" | "voyage" | "auto";
   private fallbackFrom?: "openai" | "local" | "gemini" | "voyage";
@@ -166,6 +291,7 @@ export class MemoryIndexManager implements MemorySearchManager {
   >();
   private sessionWarm = new Set<string>();
   private syncing: Promise<void> | null = null;
+  private sqliteFallbackWarned = false;
 
   static async get(params: {
     cfg: OpenClawConfig;
@@ -176,8 +302,9 @@ export class MemoryIndexManager implements MemorySearchManager {
     if (!settings) {
       return null;
     }
+    const resolvedSettings = await resolveStoreSettings(settings);
     const workspaceDir = resolveAgentWorkspaceDir(cfg, agentId);
-    const key = `${agentId}:${workspaceDir}:${JSON.stringify(settings)}`;
+    const key = `${agentId}:${workspaceDir}:${JSON.stringify(resolvedSettings)}`;
     const existing = INDEX_CACHE.get(key);
     if (existing) {
       return existing;
@@ -185,18 +312,18 @@ export class MemoryIndexManager implements MemorySearchManager {
     const providerResult = await createEmbeddingProvider({
       config: cfg,
       agentDir: resolveAgentDir(cfg, agentId),
-      provider: settings.provider,
-      remote: settings.remote,
-      model: settings.model,
-      fallback: settings.fallback,
-      local: settings.local,
+      provider: resolvedSettings.provider,
+      remote: resolvedSettings.remote,
+      model: resolvedSettings.model,
+      fallback: resolvedSettings.fallback,
+      local: resolvedSettings.local,
     });
     const manager = new MemoryIndexManager({
       cacheKey: key,
       cfg,
       agentId,
       workspaceDir,
-      settings,
+      settings: resolvedSettings,
       providerResult,
     });
     INDEX_CACHE.set(key, manager);
@@ -216,6 +343,10 @@ export class MemoryIndexManager implements MemorySearchManager {
     this.agentId = params.agentId;
     this.workspaceDir = params.workspaceDir;
     this.settings = params.settings;
+    this.storeDriver =
+      params.settings.store.driver === "auto" ? "sqlite" : params.settings.store.driver;
+    this.qdrant =
+      params.settings.store.driver === "qdrant" ? params.settings.store.qdrant : undefined;
     this.provider = params.providerResult.provider;
     this.requestedProvider = params.providerResult.requestedProvider;
     this.fallbackFrom = params.providerResult.fallbackFrom;
@@ -237,6 +368,9 @@ export class MemoryIndexManager implements MemorySearchManager {
       available: null,
       extensionPath: params.settings.store.vector.extensionPath,
     };
+    if (this.storeDriver === "qdrant" && this.vector.enabled) {
+      this.vector.extensionPath = undefined;
+    }
     const meta = this.readMeta();
     if (meta?.vectorDims) {
       this.vector.dims = meta.vectorDims;
@@ -318,6 +452,28 @@ export class MemoryIndexManager implements MemorySearchManager {
     queryVec: number[],
     limit: number,
   ): Promise<Array<MemorySearchResult & { id: string }>> {
+    if (this.storeDriver === "qdrant") {
+      try {
+        return await this.qdrantSearch(queryVec, limit);
+      } catch (err) {
+        const message = err instanceof Error ? err.message : String(err);
+        this.vector.available = false;
+        this.vector.loadError = message;
+        this.warnSqliteFallback(message);
+        log.warn(`qdrant search failed, falling back to local embeddings: ${message}`);
+        return (await searchVector({
+          db: this.db,
+          vectorTable: VECTOR_TABLE,
+          providerModel: this.provider.model,
+          queryVec,
+          limit,
+          snippetMaxChars: SNIPPET_MAX_CHARS,
+          ensureVectorReady: async () => false,
+          sourceFilterVec: this.buildSourceFilter("c"),
+          sourceFilterChunks: this.buildSourceFilter(),
+        })) as (MemorySearchResult & { id: string })[];
+      }
+    }
     const results = await searchVector({
       db: this.db,
       vectorTable: VECTOR_TABLE,
@@ -509,7 +665,7 @@ export class MemoryIndexManager implements MemorySearchManager {
         entry.chunks = row.c ?? 0;
         bySource.set(row.source, entry);
       }
-      return sources.map((source) => Object.assign({ source }, bySource.get(source)!));
+      return sources.map((source) => ({ source, ...bySource.get(source)! }));
     })();
     return {
       backend: "builtin",
@@ -517,7 +673,10 @@ export class MemoryIndexManager implements MemorySearchManager {
       chunks: chunks?.c ?? 0,
       dirty: this.dirty || this.sessionsDirty,
       workspaceDir: this.workspaceDir,
-      dbPath: this.settings.store.path,
+      dbPath:
+        this.storeDriver === "qdrant"
+          ? `qdrant:${this.lastSuccessfulQdrantEndpoint?.url ?? this.qdrant?.url ?? "unknown"}/collections/${this.qdrant?.collection ?? "unknown"}`
+          : this.settings.store.path,
       provider: this.provider.id,
       model: this.provider.model,
       requestedProvider: this.requestedProvider,
@@ -615,6 +774,12 @@ export class MemoryIndexManager implements MemorySearchManager {
     if (!this.vector.enabled) {
       return false;
     }
+    if (this.storeDriver === "qdrant") {
+      if (typeof dimensions === "number" && dimensions > 0) {
+        return await this.ensureQdrantCollection(dimensions);
+      }
+      return await this.probeQdrantAvailability();
+    }
     if (!this.vectorReady) {
       this.vectorReady = this.withTimeout(
         this.loadVectorExtension(),
@@ -700,6 +865,405 @@ export class MemoryIndexManager implements MemorySearchManager {
     const column = alias ? `${alias}.source` : "source";
     const placeholders = sources.map(() => "?").join(", ");
     return { sql: ` AND ${column} IN (${placeholders})`, params: sources };
+  }
+
+  private getQdrantConfig(): QdrantConfig {
+    if (!this.qdrant) {
+      throw new Error("Qdrant configuration missing");
+    }
+    return this.qdrant;
+  }
+
+  private qdrantUrlFor(baseUrl: string, pathname: string): string {
+    const base = baseUrl.trim().replace(/\/+$/, "");
+    const suffix = pathname.startsWith("/") ? pathname : `/${pathname}`;
+    return `${base}${suffix}`;
+  }
+
+  private qdrantHeadersFor(apiKey?: string): Record<string, string> {
+    const headers: Record<string, string> = { "Content-Type": "application/json" };
+    if (apiKey) {
+      headers["api-key"] = apiKey;
+    }
+    return headers;
+  }
+
+  private shouldFailoverQdrantStatus(status: number): boolean {
+    if (status >= 500 && status <= 599) {
+      return true;
+    }
+    return status === 408 || status === 429;
+  }
+
+  private async qdrantRequest<T>(
+    pathname: string,
+    options?: {
+      method?: string;
+      body?: unknown;
+      timeoutMs?: number;
+      allowNotFound?: boolean;
+    },
+  ): Promise<T | null> {
+    const cfg = this.getQdrantConfig();
+    const hasExplicitEndpoints = (cfg.endpoints ?? []).length > 0;
+    const endpoints: QdrantEndpointConfig[] = hasExplicitEndpoints
+      ? sortQdrantEndpoints((cfg.endpoints ?? []).filter((entry) => entry.url?.trim()))
+      : [{ url: cfg.url, apiKey: cfg.apiKey, timeoutMs: cfg.timeoutMs }];
+
+    const preferredUrl = this.lastSuccessfulQdrantEndpoint?.url;
+    const orderedEndpoints =
+      preferredUrl && endpoints.some((entry) => entry.url === preferredUrl)
+        ? [
+            endpoints.find((entry) => entry.url === preferredUrl)!,
+            ...endpoints.filter((entry) => entry.url !== preferredUrl),
+          ]
+        : endpoints;
+
+    const errors: string[] = [];
+    for (const endpoint of orderedEndpoints) {
+      // Prefer Spark whenever it is healthy (priority order + health cache TTL).
+      if (hasExplicitEndpoints) {
+        const ok = await checkQdrantEndpoint(endpoint, cfg.apiKey);
+        if (!ok) {
+          errors.push(`${endpoint.url}: unhealthy`);
+          continue;
+        }
+      }
+
+      const controller = new AbortController();
+      const timeoutMs = options?.timeoutMs ?? endpoint.timeoutMs ?? cfg.timeoutMs;
+      const timeout = setTimeout(() => controller.abort(), timeoutMs);
+      try {
+        const res = await fetch(this.qdrantUrlFor(endpoint.url, pathname), {
+          method: options?.method ?? "GET",
+          headers: this.qdrantHeadersFor(endpoint.apiKey ?? cfg.apiKey),
+          body: options?.body ? JSON.stringify(options.body) : undefined,
+          signal: controller.signal,
+        });
+
+        if (res.status === 404 && options?.allowNotFound) {
+          // 404 is a valid response, do not hide it by failing over.
+          this.lastSuccessfulQdrantEndpoint = {
+            url: endpoint.url,
+            apiKey: endpoint.apiKey ?? cfg.apiKey,
+            timeoutMs: endpoint.timeoutMs ?? cfg.timeoutMs,
+          };
+          return null;
+        }
+
+        if (!res.ok) {
+          const text = await res.text().catch(() => "");
+          const detail = `Qdrant ${res.status}: ${text.slice(0, 200)}`;
+          if (this.shouldFailoverQdrantStatus(res.status)) {
+            errors.push(`${endpoint.url}: ${detail}`);
+            continue;
+          }
+          throw new Error(detail);
+        }
+
+        this.lastSuccessfulQdrantEndpoint = {
+          url: endpoint.url,
+          apiKey: endpoint.apiKey ?? cfg.apiKey,
+          timeoutMs: endpoint.timeoutMs ?? cfg.timeoutMs,
+        };
+
+        const data = (await res.json()) as T;
+        return data;
+      } catch (err) {
+        const message = err instanceof Error ? err.message : String(err);
+        errors.push(`${endpoint.url}: ${message}`);
+      } finally {
+        clearTimeout(timeout);
+      }
+    }
+
+    const summary = errors.slice(-3).join("; ");
+    throw new Error(`Qdrant request failed for all endpoints: ${summary}`);
+  }
+
+  private async ensureQdrantCollection(dimensions: number): Promise<boolean> {
+    if (!this.vector.enabled) {
+      return false;
+    }
+    const cfg = this.getQdrantConfig();
+    const collectionPath = `/collections/${encodeURIComponent(cfg.collection)}`;
+    try {
+      const info = await this.qdrantRequest<{
+        result?: {
+          config?: { params?: { vectors?: { size?: number } } };
+        };
+      }>(collectionPath, { allowNotFound: true });
+      if (info?.result) {
+        const size = info.result.config?.params?.vectors?.size;
+        if (typeof size === "number") {
+          if (size !== dimensions) {
+            const message = `Qdrant collection ${cfg.collection} expects ${size} dims but embeddings are ${dimensions}`;
+            this.vector.available = false;
+            this.vector.loadError = message;
+            throw new Error(message);
+          }
+          this.vector.available = true;
+          this.vector.dims = size;
+          return true;
+        }
+        const message = `Qdrant collection ${cfg.collection} missing vector size`;
+        this.vector.available = false;
+        this.vector.loadError = message;
+        return false;
+      }
+      await this.qdrantRequest(collectionPath, {
+        method: "PUT",
+        body: {
+          vectors: {
+            size: dimensions,
+            distance: "Cosine",
+          },
+        },
+      });
+      this.vector.available = true;
+      this.vector.dims = dimensions;
+      return true;
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      this.vector.available = false;
+      this.vector.loadError = message;
+      return false;
+    }
+  }
+
+  private buildQdrantSourceFilter(): Record<string, unknown> | undefined {
+    const sources = Array.from(this.sources);
+    if (sources.length === 0) {
+      return undefined;
+    }
+    if (sources.length === 1) {
+      return {
+        must: [
+          {
+            key: "source",
+            match: { value: sources[0] },
+          },
+        ],
+      };
+    }
+    return {
+      should: sources.map((source) => ({
+        key: "source",
+        match: { value: source },
+      })),
+    };
+  }
+
+  private async qdrantSearch(
+    queryVec: number[],
+    limit: number,
+  ): Promise<Array<MemorySearchResult & { id: string }>> {
+    if (queryVec.length === 0 || limit <= 0) {
+      return [];
+    }
+    const cfg = this.getQdrantConfig();
+    const filter = this.buildQdrantSourceFilter();
+    const response = await this.qdrantRequest<{
+      result?:
+        | Array<{
+            id: string | number;
+            score: number;
+            payload?: Record<string, unknown>;
+          }>
+        | {
+            points?: Array<{
+              id: string | number;
+              score: number;
+              payload?: Record<string, unknown>;
+            }>;
+          };
+    }>(`/collections/${encodeURIComponent(cfg.collection)}/points/search`, {
+      method: "POST",
+      body: {
+        vector: queryVec,
+        limit,
+        with_payload: true,
+        filter,
+      },
+    });
+    const raw = Array.isArray(response?.result)
+      ? response?.result
+      : response?.result && "points" in response.result
+        ? (response.result.points ?? [])
+        : [];
+    return raw.map((point) => {
+      const payload = point.payload ?? {};
+      const text = typeof payload.text === "string" ? payload.text : "";
+      const path = typeof payload.path === "string" ? payload.path : "";
+      const source = typeof payload.source === "string" ? payload.source : "memory";
+      const startLine =
+        typeof payload.start_line === "number"
+          ? payload.start_line
+          : Number(payload.start_line) || 1;
+      const endLine =
+        typeof payload.end_line === "number"
+          ? payload.end_line
+          : Number(payload.end_line) || startLine;
+      return {
+        id: String(point.id),
+        path,
+        startLine,
+        endLine,
+        score: typeof point.score === "number" ? point.score : 0,
+        snippet: truncateUtf16Safe(text, SNIPPET_MAX_CHARS),
+        source: source as MemorySource,
+      };
+    });
+  }
+
+  private warnSqliteFallback(reason?: string): void {
+    if (this.sqliteFallbackWarned) {
+      return;
+    }
+    this.sqliteFallbackWarned = true;
+    const expired = Number.isFinite(SQLITE_FALLBACK_DEPRECATION_TS)
+      ? Date.now() >= SQLITE_FALLBACK_DEPRECATION_TS
+      : false;
+    const status = expired ? "deprecated and past due" : "deprecated soon";
+    const detail = reason ? ` Reason: ${reason}` : "";
+    log.warn(
+      `Qdrant search failed, falling back to sqlite embeddings. SQLite fallback is ${status} after ${SQLITE_FALLBACK_DEPRECATION_LABEL}.${detail}`,
+    );
+  }
+
+  private qdrantPathFilter(pathname: string, source: MemorySource) {
+    return {
+      must: [
+        { key: "path", match: { value: pathname } },
+        { key: "source", match: { value: source } },
+      ],
+    };
+  }
+
+  private async qdrantDeleteByPath(pathname: string, source: MemorySource): Promise<void> {
+    const cfg = this.getQdrantConfig();
+    await this.qdrantRequest(
+      `/collections/${encodeURIComponent(cfg.collection)}/points/delete?wait=true`,
+      {
+        method: "POST",
+        body: {
+          filter: this.qdrantPathFilter(pathname, source),
+        },
+      },
+    );
+  }
+
+  private async qdrantListPointIds(pathname: string, source: MemorySource): Promise<string[]> {
+    const cfg = this.getQdrantConfig();
+    const ids: string[] = [];
+    let offset: unknown = undefined;
+    while (true) {
+      const response = await this.qdrantRequest<{
+        result?: {
+          points?: Array<{ id: string | number }>;
+          next_page_offset?: unknown;
+        };
+      }>(`/collections/${encodeURIComponent(cfg.collection)}/points/scroll`, {
+        method: "POST",
+        body: {
+          filter: this.qdrantPathFilter(pathname, source),
+          limit: 256,
+          offset,
+          with_payload: false,
+          with_vectors: false,
+        },
+      });
+      const points = response?.result?.points ?? [];
+      for (const point of points) {
+        ids.push(String(point.id));
+      }
+      const next = response?.result?.next_page_offset;
+      if (next === null || next === undefined || points.length === 0) {
+        break;
+      }
+      offset = next;
+    }
+    return ids;
+  }
+
+  private async qdrantDeleteStalePoints(params: {
+    pathname: string;
+    source: MemorySource;
+    keepIds: Set<string>;
+    deleteAllIfEmpty: boolean;
+  }): Promise<void> {
+    const existingIds = await this.qdrantListPointIds(params.pathname, params.source);
+    if (existingIds.length === 0) {
+      return;
+    }
+    if (!params.deleteAllIfEmpty && params.keepIds.size === 0) {
+      return;
+    }
+    const staleIds = existingIds.filter((id) => !params.keepIds.has(id));
+    if (staleIds.length === 0) {
+      return;
+    }
+    const cfg = this.getQdrantConfig();
+    const batchSize = 256;
+    for (let i = 0; i < staleIds.length; i += batchSize) {
+      const batch = staleIds.slice(i, i + batchSize);
+      await this.qdrantRequest(
+        `/collections/${encodeURIComponent(cfg.collection)}/points/delete?wait=true`,
+        {
+          method: "POST",
+          body: { points: batch },
+        },
+      );
+    }
+  }
+
+  private async qdrantUpsert(
+    points: Array<{ id: string; vector: number[]; payload: Record<string, unknown> }>,
+  ): Promise<void> {
+    if (points.length === 0) {
+      return;
+    }
+    const cfg = this.getQdrantConfig();
+    const batchSize = 64;
+    for (let i = 0; i < points.length; i += batchSize) {
+      const batch = points.slice(i, i + batchSize);
+      await this.qdrantRequest(
+        `/collections/${encodeURIComponent(cfg.collection)}/points?wait=true`,
+        {
+          method: "PUT",
+          body: { points: batch },
+        },
+      );
+    }
+  }
+
+  private async probeQdrantAvailability(): Promise<boolean> {
+    if (!this.vector.enabled) {
+      return false;
+    }
+    const cfg = this.getQdrantConfig();
+    try {
+      const info = await this.qdrantRequest<{
+        result?: { config?: { params?: { vectors?: { size?: number } } } };
+      }>(`/collections/${encodeURIComponent(cfg.collection)}`, { allowNotFound: true });
+      if (!info?.result) {
+        this.vector.available = false;
+        this.vector.loadError = `Qdrant collection ${cfg.collection} not found`;
+        return false;
+      }
+      const size = info.result.config?.params?.vectors?.size;
+      if (typeof size === "number") {
+        this.vector.dims = size;
+      }
+      this.vector.available = true;
+      this.vector.loadError = undefined;
+      return true;
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      this.vector.available = false;
+      this.vector.loadError = message;
+      return false;
+    }
   }
 
   private openDatabase(): DatabaseSync {
@@ -1125,6 +1689,14 @@ export class MemoryIndexManager implements MemorySearchManager {
         continue;
       }
       this.db.prepare(`DELETE FROM files WHERE path = ? AND source = ?`).run(stale.path, "memory");
+      if (this.storeDriver === "qdrant") {
+        try {
+          await this.qdrantDeleteByPath(stale.path, "memory");
+        } catch (err) {
+          const message = err instanceof Error ? err.message : String(err);
+          log.warn(`qdrant delete failed for stale ${stale.path}: ${message}`);
+        }
+      }
       try {
         this.db
           .prepare(
@@ -1224,6 +1796,14 @@ export class MemoryIndexManager implements MemorySearchManager {
       this.db
         .prepare(`DELETE FROM files WHERE path = ? AND source = ?`)
         .run(stale.path, "sessions");
+      if (this.storeDriver === "qdrant") {
+        try {
+          await this.qdrantDeleteByPath(stale.path, "sessions");
+        } catch (err) {
+          const message = err instanceof Error ? err.message : String(err);
+          log.warn(`qdrant delete failed for stale ${stale.path}: ${message}`);
+        }
+      }
       try {
         this.db
           .prepare(
@@ -1279,7 +1859,8 @@ export class MemoryIndexManager implements MemorySearchManager {
       progress.report({
         completed: progress.completed,
         total: progress.total,
-        label: "Loading vector extension…",
+        label:
+          this.storeDriver === "qdrant" ? "Checking vector store…" : "Loading vector extension…",
       });
     }
     const vectorReady = await this.ensureVectorReady();
@@ -2323,8 +2904,10 @@ export class MemoryIndexManager implements MemorySearchManager {
       : await this.embedChunksInBatches(chunks);
     const sample = embeddings.find((embedding) => embedding.length > 0);
     const vectorReady = sample ? await this.ensureVectorReady(sample.length) : false;
+    const useSqliteVector = this.storeDriver === "sqlite" && vectorReady;
+    const useQdrant = this.storeDriver === "qdrant" && vectorReady;
     const now = Date.now();
-    if (vectorReady) {
+    if (useSqliteVector) {
       try {
         this.db
           .prepare(
@@ -2343,6 +2926,12 @@ export class MemoryIndexManager implements MemorySearchManager {
     this.db
       .prepare(`DELETE FROM chunks WHERE path = ? AND source = ?`)
       .run(entry.path, options.source);
+    const qdrantKeepIds = new Set<string>();
+    const qdrantPoints: Array<{
+      id: string;
+      vector: number[];
+      payload: Record<string, unknown>;
+    }> = [];
     for (let i = 0; i < chunks.length; i++) {
       const chunk = chunks[i];
       const embedding = embeddings[i] ?? [];
@@ -2372,13 +2961,36 @@ export class MemoryIndexManager implements MemorySearchManager {
           JSON.stringify(embedding),
           now,
         );
-      if (vectorReady && embedding.length > 0) {
+      if (useSqliteVector && embedding.length > 0) {
         try {
           this.db.prepare(`DELETE FROM ${VECTOR_TABLE} WHERE id = ?`).run(id);
         } catch {}
         this.db
           .prepare(`INSERT INTO ${VECTOR_TABLE} (id, embedding) VALUES (?, ?)`)
           .run(id, vectorToBlob(embedding));
+      }
+      if (useQdrant && embedding.length > 0) {
+        const qdrantId = hashToDeterministicUuid(id);
+        const payload: Record<string, unknown> = {
+          text: chunk.text,
+          path: entry.path,
+          source: options.source,
+          chunk_id: id,
+          start_line: chunk.startLine,
+          end_line: chunk.endLine,
+          ts: now,
+          model: this.provider.model,
+          provider: this.provider.id,
+        };
+        if (options.source === "sessions") {
+          payload.agent_id = this.agentId;
+        }
+        qdrantKeepIds.add(qdrantId);
+        qdrantPoints.push({
+          id: qdrantId,
+          vector: embedding,
+          payload,
+        });
       }
       if (this.fts.enabled && this.fts.available) {
         this.db
@@ -2395,6 +3007,41 @@ export class MemoryIndexManager implements MemorySearchManager {
             chunk.startLine,
             chunk.endLine,
           );
+      }
+    }
+    let qdrantUpsertOk = false;
+    if (useQdrant) {
+      if (qdrantPoints.length > 0) {
+        try {
+          await this.qdrantUpsert(qdrantPoints);
+          this.vector.available = true;
+          this.vector.loadError = undefined;
+          qdrantUpsertOk = true;
+        } catch (err) {
+          const message = err instanceof Error ? err.message : String(err);
+          this.vector.available = false;
+          this.vector.loadError = message;
+          log.warn(`qdrant upsert failed for ${entry.path}: ${message}`);
+        }
+      } else if (chunks.length === 0) {
+        // Empty file, allow stale deletion without any new upsert.
+        qdrantUpsertOk = true;
+      }
+    }
+
+    if (useQdrant && qdrantUpsertOk) {
+      try {
+        await this.qdrantDeleteStalePoints({
+          pathname: entry.path,
+          source: options.source,
+          keepIds: qdrantKeepIds,
+          deleteAllIfEmpty: chunks.length === 0,
+        });
+      } catch (err) {
+        const message = err instanceof Error ? err.message : String(err);
+        this.vector.available = false;
+        this.vector.loadError = message;
+        log.warn(`qdrant stale delete failed for ${entry.path}: ${message}`);
       }
     }
     this.db

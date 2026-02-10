@@ -1,4 +1,9 @@
 import { loadConfig } from "../config/config.js";
+import {
+  resolveAgentIdFromSessionKey,
+  resolveStorePath,
+  updateSessionStore,
+} from "../config/sessions.js";
 import { callGateway } from "../gateway/call.js";
 import { onAgentEvent } from "../infra/agent-events.js";
 import { type DeliveryContext, normalizeDeliveryContext } from "../utils/delivery-context.js";
@@ -139,6 +144,77 @@ function resolveSubagentWaitTimeoutMs(
   return resolveAgentTimeoutMs({ cfg, overrideSeconds: runTimeoutSeconds });
 }
 
+async function patchRequesterTaskPlanFromSubagent(params: {
+  requesterSessionKey: string;
+  childSessionKey: string;
+  childRunId: string;
+  outcome: SubagentRunOutcome;
+}) {
+  const requesterKey = params.requesterSessionKey.trim();
+  const childKey = params.childSessionKey.trim();
+  const runId = params.childRunId.trim();
+  if (!requesterKey || !childKey || !runId) {
+    return;
+  }
+
+  const cfg = loadConfig();
+  const agentId = resolveAgentIdFromSessionKey(requesterKey);
+  const storePath = resolveStorePath(cfg.session?.store, { agentId });
+  const nextStatus = params.outcome.status === "ok" ? "done" : "blocked";
+
+  try {
+    await updateSessionStore(storePath, (store) => {
+      const entry = store[requesterKey];
+      const plan = entry?.taskPlan as
+        | { id?: unknown; goal?: unknown; tasks?: unknown }
+        | null
+        | undefined;
+      const tasksRaw =
+        plan && typeof plan === "object" && Array.isArray(plan.tasks) ? plan.tasks : [];
+      if (!entry || !plan || tasksRaw.length === 0) {
+        return;
+      }
+
+      let mutated = false;
+      const nextTasks = tasksRaw.map((task) => {
+        if (!task || typeof task !== "object" || Array.isArray(task)) {
+          return task;
+        }
+        const t = task as Record<string, unknown>;
+        const assignedSessionKey =
+          typeof t.assignedSessionKey === "string" ? t.assignedSessionKey.trim() : "";
+        const assignedRunId = typeof t.assignedRunId === "string" ? t.assignedRunId.trim() : "";
+        const matches =
+          (assignedSessionKey && assignedSessionKey === childKey) ||
+          (assignedRunId && assignedRunId === runId);
+        if (!matches) {
+          return task;
+        }
+
+        const currentStatus = typeof t.status === "string" ? t.status.trim().toLowerCase() : "";
+        if (currentStatus === nextStatus) {
+          return task;
+        }
+        mutated = true;
+        return { ...t, status: nextStatus };
+      });
+
+      if (!mutated) {
+        return;
+      }
+
+      entry.taskPlan = {
+        ...(plan as Record<string, unknown>),
+        tasks: nextTasks,
+      } as typeof entry.taskPlan;
+      entry.updatedAt = Date.now();
+      store[requesterKey] = entry;
+    });
+  } catch {
+    // Best-effort
+  }
+}
+
 function startSweeper() {
   if (sweeper) {
     return;
@@ -219,6 +295,13 @@ function ensureListener() {
     }
     persistSubagentRuns();
 
+    void patchRequesterTaskPlanFromSubagent({
+      requesterSessionKey: entry.requesterSessionKey,
+      childSessionKey: entry.childSessionKey,
+      childRunId: entry.runId,
+      outcome: entry.outcome,
+    });
+
     if (!beginSubagentCleanup(evt.runId)) {
       return;
     }
@@ -248,9 +331,14 @@ function finalizeSubagentCleanup(runId: string, cleanup: "delete" | "keep", didA
   if (!entry) {
     return;
   }
-  if (!didAnnounce) {
-    // Allow retry on the next wake if announce was deferred or failed.
-    entry.cleanupHandled = false;
+  if (cleanup === "delete") {
+    if (!didAnnounce) {
+      // Allow retry on the next wake if the announce failed.
+      entry.cleanupHandled = false;
+      persistSubagentRuns();
+      return;
+    }
+    subagentRuns.delete(runId);
     persistSubagentRuns();
     return;
   }

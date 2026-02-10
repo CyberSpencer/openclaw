@@ -1,0 +1,18 @@
+Mission: <one sentence>
+
+Repo context:
+- Root: <path>
+- Relevant files/folders: <if known>
+- Constraints: <languages/frameworks, do/don’t change, etc>
+
+Acceptance criteria:
+- [ ] ...
+- [ ] ...
+- [ ] ...
+
+How to verify:
+- Commands: <exact test/lint/build commands>
+- Expected behavior: <what should happen>
+
+Non-goals:
+- ...

@@ -35,8 +35,8 @@ export function pickBeaconHost(beacon: GatewayBonjourBeacon): string | null {
 }
 
 export function pickGatewayPort(beacon: GatewayBonjourBeacon): number {
-  const port = beacon.gatewayPort ?? 18789;
-  return port > 0 ? port : 18789;
+  const port = beacon.gatewayPort ?? beacon.port ?? 32555;
+  return port > 0 ? port : 32555;
 }
 
 export function dedupeBeacons(beacons: GatewayBonjourBeacon[]): GatewayBonjourBeacon[] {
@@ -101,7 +101,7 @@ export function renderBeaconLines(beacon: GatewayBonjourBeacon, rich: boolean): 
     lines.push(`  ${colorize(rich, theme.muted, "tls")}: ${fingerprint}`);
   }
   if (typeof beacon.sshPort === "number" && beacon.sshPort > 0 && host) {
-    const ssh = `ssh -N -L 18789:127.0.0.1:18789 <user>@${host} -p ${beacon.sshPort}`;
+    const ssh = `ssh -N -L 32555:127.0.0.1:${gatewayPort} -p ${beacon.sshPort} <user>@${host}`;
     lines.push(`  ${colorize(rich, theme.muted, "ssh")}: ${colorize(rich, theme.command, ssh)}`);
   }
   return lines;

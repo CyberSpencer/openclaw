@@ -30,7 +30,7 @@ Availability: internal preview. The iOS app is not publicly distributed yet.
 1. Start the Gateway:
 
 ```bash
-openclaw gateway --port 18789
+openclaw gateway --port 32555
 ```
 
 2. In the iOS app, open Settings and pick a discovered gateway (or enable Manual Host and enter host/port).
@@ -62,7 +62,7 @@ See [Bonjour](/gateway/bonjour) for the CoreDNS example.
 
 ### Manual host/port
 
-In Settings, enable **Manual Host** and enter the gateway host + port (default `18789`).
+In Settings, enable **Manual Host** and enter the gateway host + port (default `32555`).
 
 ## Canvas + A2UI
 

@@ -33,6 +33,7 @@ function createProps(overrides: Partial<CronProps> = {}): CronProps {
     runs: [],
     onFormChange: () => undefined,
     onRefresh: () => undefined,
+    onToggleSchedulerEnabled: () => undefined,
     onAdd: () => undefined,
     onToggle: () => undefined,
     onRun: () => undefined,

@@ -68,7 +68,7 @@ Once clients accept tailnet DNS, iOS nodes can browse
 
 ### Gateway listener security (recommended)
 
-The Gateway WS port (default `18789`) binds to loopback by default. For LAN/tailnet
+The Gateway WS port (default `32555`) binds to loopback by default. For LAN/tailnet
 access, bind explicitly and keep auth enabled.
 
 For tailnet‑only setups:

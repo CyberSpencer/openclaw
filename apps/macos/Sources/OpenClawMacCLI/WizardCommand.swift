@@ -132,7 +132,7 @@ private func resolveWizardGatewayEndpoint(opts: WizardCliOptions, config: Gatewa
             mode: mode)
     }
 
-    let port = config.port ?? 18789
+    let port = config.port ?? 32555
     let host = "127.0.0.1"
     guard let url = URL(string: "ws://\(host):\(port)") else {
         throw WizardCliError.invalidUrl("ws://\(host):\(port)")

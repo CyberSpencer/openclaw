@@ -24,7 +24,7 @@ struct SettingsTab: View {
     @AppStorage("gateway.autoconnect") private var gatewayAutoConnect: Bool = false
     @AppStorage("gateway.manual.enabled") private var manualGatewayEnabled: Bool = false
     @AppStorage("gateway.manual.host") private var manualGatewayHost: String = ""
-    @AppStorage("gateway.manual.port") private var manualGatewayPort: Int = 18789
+    @AppStorage("gateway.manual.port") private var manualGatewayPort: Int = 32555
     @AppStorage("gateway.manual.tls") private var manualGatewayTLS: Bool = true
     @AppStorage("gateway.discovery.debugLogs") private var discoveryDebugLogsEnabled: Bool = false
     @AppStorage("canvas.debugStatusEnabled") private var canvasDebugStatusEnabled: Bool = false
@@ -178,7 +178,7 @@ struct SettingsTab: View {
 
                         Text(
                             "Use this when mDNS/Bonjour discovery is blocked. "
-                                + "Leave port empty for 443 on tailnet DNS (TLS) or 18789 otherwise.")
+                                + "The gateway WebSocket listens on port 32555 by default.")
                             .font(.footnote)
                             .foregroundStyle(.secondary)
 

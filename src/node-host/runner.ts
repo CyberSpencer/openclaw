@@ -20,6 +20,7 @@ import {
   evaluateShellAllowlist,
   requiresExecApproval,
   normalizeExecApprovals,
+  resolveTrustedPathEntries,
   recordAllowlistUse,
   resolveExecApprovals,
   resolveSafeBins,
@@ -588,7 +589,7 @@ export async function runNodeHost(opts: NodeHostRunOptions): Promise<void> {
     (isRemoteMode ? cfg.gateway?.remote?.password : cfg.gateway?.auth?.password);
 
   const host = gateway.host ?? "127.0.0.1";
-  const port = gateway.port ?? 18789;
+  const port = gateway.port ?? 32555;
   const scheme = gateway.tls ? "wss" : "ws";
   const url = `${scheme}://${host}:${port}`;
   const pathEnv = ensureNodePathEnv();
@@ -901,6 +902,7 @@ async function handleInvoke(
   const runId = params.runId?.trim() || crypto.randomUUID();
   const env = sanitizeEnv(params.env ?? undefined);
   const safeBins = resolveSafeBins(agentExec?.safeBins ?? cfg.tools?.exec?.safeBins);
+  const trustedPaths = resolveTrustedPathEntries(process.env);
   const bins = autoAllowSkills ? await skillBins.current() : new Set<string>();
   let analysisOk = false;
   let allowlistMatches: ExecAllowlistEntry[] = [];
@@ -911,6 +913,7 @@ async function handleInvoke(
       command: rawCommand,
       allowlist: approvals.allowlist,
       safeBins,
+      trustedPaths,
       cwd: params.cwd ?? undefined,
       env,
       skillBins: bins,
@@ -928,6 +931,7 @@ async function handleInvoke(
       analysis,
       allowlist: approvals.allowlist,
       safeBins,
+      trustedPaths,
       cwd: params.cwd ?? undefined,
       skillBins: bins,
       autoAllowSkills,

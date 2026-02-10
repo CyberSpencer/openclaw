@@ -147,6 +147,15 @@ export function hashText(value: string): string {
   return crypto.createHash("sha256").update(value).digest("hex");
 }
 
+export function hashToDeterministicUuid(value: string): string {
+  const hex = hashText(value).slice(0, 32).padEnd(32, "0").split("");
+  // Force RFC4122 version/variant bits so strict UUID parsers accept it.
+  hex[12] = "5";
+  const variantNibble = Number.parseInt(hex[16] ?? "0", 16);
+  hex[16] = ((variantNibble & 0x3) | 0x8).toString(16);
+  return `${hex.slice(0, 8).join("")}-${hex.slice(8, 12).join("")}-${hex.slice(12, 16).join("")}-${hex.slice(16, 20).join("")}-${hex.slice(20, 32).join("")}`;
+}
+
 export async function buildFileEntry(
   absPath: string,
   workspaceDir: string,

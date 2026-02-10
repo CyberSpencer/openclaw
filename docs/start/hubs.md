@@ -21,7 +21,7 @@ Use these hubs to discover every page, including deep dives and reference docs t
 - [Onboarding](/start/onboarding)
 - [Wizard](/start/wizard)
 - [Setup](/start/setup)
-- [Dashboard (local Gateway)](http://127.0.0.1:18789/)
+- [Dashboard (local Gateway)](http://127.0.0.1:32555/)
 - [Help](/help)
 - [Docs directory](/start/docs-directory)
 - [Configuration](/gateway/configuration)

@@ -5,12 +5,11 @@ read_when:
   - You want the browser Control UI and config editing
 title: "Web"
 ---
-
 # Web (Gateway)
 
 The Gateway serves a small **browser Control UI** (Vite + Lit) from the same port as the Gateway WebSocket:
 
-- default: `http://<host>:18789/`
+- default: `http://<host>:32555/`
 - optional prefix: set `gateway.controlUi.basePath` (e.g. `/openclaw`)
 
 Capabilities live in [Control UI](/web/control-ui).
@@ -29,8 +28,8 @@ You can control it via config:
 ```json5
 {
   gateway: {
-    controlUi: { enabled: true, basePath: "/openclaw" }, // basePath optional
-  },
+    controlUi: { enabled: true, basePath: "/openclaw" } // basePath optional
+  }
 }
 ```
 
@@ -44,8 +43,8 @@ Keep the Gateway on loopback and let Tailscale Serve proxy it:
 {
   gateway: {
     bind: "loopback",
-    tailscale: { mode: "serve" },
-  },
+    tailscale: { mode: "serve" }
+  }
 }
 ```
 
@@ -56,7 +55,6 @@ openclaw gateway
 ```
 
 Open:
-
 - `https://<magicdns>/` (or your configured `gateway.controlUi.basePath`)
 
 ### Tailnet bind + token
@@ -66,8 +64,8 @@ Open:
   gateway: {
     bind: "tailnet",
     controlUi: { enabled: true },
-    auth: { mode: "token", token: "your-token" },
-  },
+    auth: { mode: "token", token: "your-token" }
+  }
 }
 ```
 
@@ -78,8 +76,7 @@ openclaw gateway
 ```
 
 Open:
-
-- `http://<tailscale-ip>:18789/` (or your configured `gateway.controlUi.basePath`)
+- `http://<tailscale-ip>:32555/` (or your configured `gateway.controlUi.basePath`)
 
 ### Public internet (Funnel)
 
@@ -88,8 +85,8 @@ Open:
   gateway: {
     bind: "loopback",
     tailscale: { mode: "funnel" },
-    auth: { mode: "password" }, // or OPENCLAW_GATEWAY_PASSWORD
-  },
+    auth: { mode: "password" } // or OPENCLAW_GATEWAY_PASSWORD
+  }
 }
 ```
 

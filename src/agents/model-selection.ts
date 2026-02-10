@@ -419,6 +419,102 @@ export function resolveThinkingDefault(params: {
   return "off";
 }
 
+// ---------------------------------------------------------------------------
+// Secrets pre-flight: local provider detection & fallback model resolution
+// ---------------------------------------------------------------------------
+
+const PRIVATE_IPV4_RANGES = [/^10\./, /^172\.(1[6-9]|2\d|3[01])\./, /^192\.168\./];
+const RFC4193_ULA_RE = /^(?:fc|fd)[0-9a-f]{2}:/;
+
+function stripIpv6Zone(hostname: string): string {
+  // URL hostnames can include a zone identifier for IPv6 link-local addresses (e.g. fe80::1%lo0).
+  // Strip it so prefix checks behave predictably.
+  const idx = hostname.indexOf("%");
+  return idx === -1 ? hostname : hostname.slice(0, idx);
+}
+
+/**
+ * Returns true when {@link baseUrl} points at a local or LAN host.
+ * Covers localhost variants, `.local` mDNS names, and RFC 1918 private ranges
+ * (10.x, 172.16-31.x, 192.168.x) so that DGX and other LAN appliances are
+ * treated as safe-for-secrets destinations.
+ */
+export function isLocalProviderUrl(baseUrl: string): boolean {
+  try {
+    const hostRaw = new URL(baseUrl).hostname.toLowerCase();
+    const host = stripIpv6Zone(hostRaw);
+
+    if (
+      host === "localhost" ||
+      host === "0.0.0.0" ||
+      host === "::1" ||
+      host === "127.0.0.1" ||
+      host.startsWith("127.") ||
+      host.endsWith(".local")
+    ) {
+      return true;
+    }
+
+    if (PRIVATE_IPV4_RANGES.some((re) => re.test(host))) {
+      return true;
+    }
+
+    // RFC 4193 Unique Local Addresses (fc00::/7)
+    if (host.includes(":")) {
+      return RFC4193_ULA_RE.test(host);
+    }
+
+    return false;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Returns true when the given provider is considered "local" (safe for secrets).
+ * A provider is local if:
+ *  - it is a CLI provider, OR
+ *  - its configured baseUrl resolves to a local/LAN address.
+ */
+export function isLocalProvider(provider: string, cfg: OpenClawConfig): boolean {
+  if (isCliProvider(provider, cfg)) {
+    return true;
+  }
+  const providers = (cfg.models?.providers ?? {}) as Record<
+    string,
+    { baseUrl?: string } | undefined
+  >;
+  const normalized = normalizeProviderId(provider);
+  const providerCfg =
+    providers[provider] ??
+    Object.entries(providers).find(([key]) => normalizeProviderId(key) === normalized)?.[1];
+  if (!providerCfg?.baseUrl) {
+    return false;
+  }
+  return isLocalProviderUrl(providerCfg.baseUrl);
+}
+
+const SECRETS_DEFAULT_LOCAL_MODEL: ModelRef = {
+  provider: "ollama",
+  model: "nemotron-3-nano:30b",
+};
+
+/**
+ * Resolve the local model to route to when the prompt contains secrets.
+ * Checks `agents.defaults.secretsLocalModel` first, then falls back to
+ * `ollama/nemotron-3-nano:30b` (same default as the voice router).
+ */
+export function resolveSecretsLocalModel(cfg: OpenClawConfig): ModelRef {
+  const raw = (cfg.agents?.defaults as Record<string, unknown> | undefined)?.secretsLocalModel;
+  if (typeof raw === "string" && raw.trim()) {
+    const parsed = parseModelRef(raw, "ollama");
+    if (parsed) {
+      return parsed;
+    }
+  }
+  return SECRETS_DEFAULT_LOCAL_MODEL;
+}
+
 /**
  * Resolve the model configured for Gmail hook processing.
  * Returns null if hooks.gmail.model is not set.

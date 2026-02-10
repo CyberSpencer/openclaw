@@ -10,7 +10,7 @@ describe("extractAssistantText", () => {
         {
           type: "text",
           text: `<invoke name="Bash">
-<parameter name="command">netstat -tlnp | grep 18789</parameter>
+<parameter name="command">netstat -tlnp | grep 32555</parameter>
 </invoke>
 </minimax:tool_call>`,
         },

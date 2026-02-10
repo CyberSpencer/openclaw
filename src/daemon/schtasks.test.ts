@@ -100,14 +100,14 @@ describe("readScheduledTaskCommand", () => {
       await fs.mkdir(path.dirname(scriptPath), { recursive: true });
       await fs.writeFile(
         scriptPath,
-        ["@echo off", "node gateway.js --port 18789"].join("\r\n"),
+        ["@echo off", "node gateway.js --port 32555"].join("\r\n"),
         "utf8",
       );
 
       const env = { USERPROFILE: tmpDir, OPENCLAW_PROFILE: "default" };
       const result = await readScheduledTaskCommand(env);
       expect(result).toEqual({
-        programArguments: ["node", "gateway.js", "--port", "18789"],
+        programArguments: ["node", "gateway.js", "--port", "32555"],
       });
     } finally {
       await fs.rm(tmpDir, { recursive: true, force: true });
@@ -143,7 +143,7 @@ describe("readScheduledTaskCommand", () => {
       await fs.mkdir(path.dirname(scriptPath), { recursive: true });
       await fs.writeFile(
         scriptPath,
-        ["@echo off", "set NODE_ENV=production", "set PORT=18789", "node gateway.js"].join("\r\n"),
+        ["@echo off", "set NODE_ENV=production", "set PORT=32555", "node gateway.js"].join("\r\n"),
         "utf8",
       );
 
@@ -153,7 +153,7 @@ describe("readScheduledTaskCommand", () => {
         programArguments: ["node", "gateway.js"],
         environment: {
           NODE_ENV: "production",
-          PORT: "18789",
+          PORT: "32555",
         },
       });
     } finally {
@@ -225,7 +225,7 @@ describe("readScheduledTaskCommand", () => {
           "rem OpenClaw Gateway",
           "cd /d C:\\Projects\\openclaw",
           "set NODE_ENV=production",
-          "set OPENCLAW_PORT=18789",
+          "set OPENCLAW_PORT=32555",
           "node gateway.js --verbose",
         ].join("\r\n"),
         "utf8",
@@ -238,7 +238,7 @@ describe("readScheduledTaskCommand", () => {
         workingDirectory: "C:\\Projects\\openclaw",
         environment: {
           NODE_ENV: "production",
-          OPENCLAW_PORT: "18789",
+          OPENCLAW_PORT: "32555",
         },
       });
     } finally {

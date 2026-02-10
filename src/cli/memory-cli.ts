@@ -4,8 +4,7 @@ import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { resolveDefaultAgentId } from "../agents/agent-scope.js";
-import { loadConfig } from "../config/config.js";
-import { resolveStateDir } from "../config/paths.js";
+import { loadConfig, type MemorySearchConfig, type OpenClawConfig } from "../config/config.js";
 import { resolveSessionTranscriptsDirForAgent } from "../config/sessions/paths.js";
 import { setVerbose } from "../globals.js";
 import { getMemorySearchManager, type MemorySearchManagerResult } from "../memory/index.js";
@@ -41,6 +40,34 @@ type MemorySourceScan = {
   totalFiles: number | null;
   issues: string[];
 };
+
+function cloneConfig<T>(value: T): T {
+  return JSON.parse(JSON.stringify(value)) as T;
+}
+
+function disableMemorySearchAutoSync(cfg: OpenClawConfig, agentId: string): OpenClawConfig {
+  const clone = cloneConfig(cfg);
+  const defaults = clone.agents?.defaults?.memorySearch;
+  const agentsById = clone.agents as
+    | (Record<string, { memorySearch?: MemorySearchConfig } | undefined> & typeof clone.agents)
+    | undefined;
+  const overrides = agentsById?.[agentId]?.memorySearch;
+  const listEntry = clone.agents?.list?.find((entry) => entry.id === agentId);
+  const apply = (target?: MemorySearchConfig) => {
+    if (!target) {
+      return;
+    }
+    const sync = (target.sync ??= {});
+    sync.onSearch = false;
+    sync.onSessionStart = false;
+    sync.watch = false;
+    sync.intervalMinutes = 0;
+  };
+  apply(defaults);
+  apply(listEntry?.memorySearch);
+  apply(overrides);
+  return clone;
+}
 
 function formatSourceLabel(source: string, workspaceDir: string, agentId: string): string {
   if (source === "memory") {
@@ -253,8 +280,9 @@ export async function runMemoryStatus(opts: MemoryCommandOptions) {
   }> = [];
 
   for (const agentId of agentIds) {
+    const statusCfg = disableMemorySearchAutoSync(cfg, agentId);
     await withManager<MemoryManager>({
-      getManager: () => getMemorySearchManager({ cfg, agentId }),
+      getManager: () => getMemorySearchManager({ cfg: statusCfg, agentId }),
       onMissing: (error) => defaultRuntime.log(error ?? "Memory search disabled."),
       onCloseError: (err) =>
         defaultRuntime.error(`Memory manager close failed: ${formatErrorMessage(err)}`),
@@ -661,8 +689,9 @@ export function registerMemoryCli(program: Command) {
       ) => {
         const cfg = loadConfig();
         const agentId = resolveAgent(cfg, opts.agent);
+        const searchCfg = disableMemorySearchAutoSync(cfg, agentId);
         await withManager<MemoryManager>({
-          getManager: () => getMemorySearchManager({ cfg, agentId }),
+          getManager: () => getMemorySearchManager({ cfg: searchCfg, agentId }),
           onMissing: (error) => defaultRuntime.log(error ?? "Memory search disabled."),
           onCloseError: (err) =>
             defaultRuntime.error(`Memory manager close failed: ${formatErrorMessage(err)}`),

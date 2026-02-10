@@ -6,12 +6,12 @@ export const TAB_GROUPS = [
     label: "Control",
     tabs: ["overview", "channels", "instances", "sessions", "usage", "cron"],
   },
-  { label: "Agent", tabs: ["agents", "skills", "nodes"] },
-  { label: "Settings", tabs: ["config", "debug", "logs"] },
+  { label: "Agent", tabs: ["orchestrator", "skills", "nodes"] },
+  { label: "Settings", tabs: ["settings", "config", "debug", "logs"] },
 ] as const;
 
 export type Tab =
-  | "agents"
+  | "orchestrator"
   | "overview"
   | "channels"
   | "instances"
@@ -21,12 +21,13 @@ export type Tab =
   | "skills"
   | "nodes"
   | "chat"
+  | "settings"
   | "config"
   | "debug"
   | "logs";
 
 const TAB_PATHS: Record<Tab, string> = {
-  agents: "/agents",
+  orchestrator: "/orchestrator",
   overview: "/overview",
   channels: "/channels",
   instances: "/instances",
@@ -36,6 +37,7 @@ const TAB_PATHS: Record<Tab, string> = {
   skills: "/skills",
   nodes: "/nodes",
   chat: "/chat",
+  settings: "/settings",
   config: "/config",
   debug: "/debug",
   logs: "/logs",
@@ -128,6 +130,8 @@ export function iconForTab(tab: Tab): IconName {
       return "folder";
     case "chat":
       return "messageSquare";
+    case "orchestrator":
+      return "puzzle";
     case "overview":
       return "barChart";
     case "channels":
@@ -144,6 +148,8 @@ export function iconForTab(tab: Tab): IconName {
       return "zap";
     case "nodes":
       return "monitor";
+    case "settings":
+      return "sliders";
     case "config":
       return "settings";
     case "debug":
@@ -157,8 +163,8 @@ export function iconForTab(tab: Tab): IconName {
 
 export function titleForTab(tab: Tab) {
   switch (tab) {
-    case "agents":
-      return "Agents";
+    case "orchestrator":
+      return "Orchestrator";
     case "overview":
       return "Overview";
     case "channels":
@@ -177,6 +183,8 @@ export function titleForTab(tab: Tab) {
       return "Nodes";
     case "chat":
       return "Chat";
+    case "settings":
+      return "Settings";
     case "config":
       return "Config";
     case "debug":
@@ -190,8 +198,8 @@ export function titleForTab(tab: Tab) {
 
 export function subtitleForTab(tab: Tab) {
   switch (tab) {
-    case "agents":
-      return "Manage agent workspaces, tools, and identities.";
+    case "orchestrator":
+      return "Spawn sub-agents, track runs, and move work across lanes.";
     case "overview":
       return "Gateway status, entry points, and a fast health read.";
     case "channels":
@@ -210,6 +218,8 @@ export function subtitleForTab(tab: Tab) {
       return "Paired devices, capabilities, and command exposure.";
     case "chat":
       return "Direct gateway chat session for quick interventions.";
+    case "settings":
+      return "Control UI preferences and gateway runtime toggles.";
     case "config":
       return "Edit ~/.openclaw/openclaw.json safely.";
     case "debug":

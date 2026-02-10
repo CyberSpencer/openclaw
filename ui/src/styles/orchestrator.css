@@ -1,0 +1,480 @@
+/* ===========================================
+   Orchestrator (Multi-Agent Mission Control)
+   =========================================== */
+
+.orch-layout {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 380px;
+  gap: 16px;
+  align-items: start;
+}
+
+.orch-board {
+  position: relative;
+  overflow: hidden;
+  border-radius: var(--radius-xl);
+  border: 1px solid var(--border);
+  background: linear-gradient(180deg, var(--bg-elevated), var(--bg));
+  box-shadow: var(--shadow-md);
+  padding: 12px;
+  min-height: 520px;
+}
+
+.orch-board::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  opacity: 0.75;
+  background:
+    radial-gradient(700px 420px at 18% 8%, var(--accent-subtle), transparent 55%),
+    radial-gradient(540px 360px at 92% -8%, var(--accent-2-subtle), transparent 60%),
+    linear-gradient(var(--grid-line) 1px, transparent 1px),
+    linear-gradient(90deg, var(--grid-line) 1px, transparent 1px);
+  background-size: auto, auto, 36px 36px, 36px 36px;
+}
+
+.orch-board > * {
+  position: relative;
+  z-index: 1;
+}
+
+.orch-board-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-end;
+  gap: 12px;
+  padding: 6px 6px 10px;
+}
+
+.orch-board-title {
+  font-size: 15px;
+  font-weight: 700;
+  letter-spacing: -0.02em;
+  color: var(--text-strong);
+  line-height: 1.2;
+}
+
+.orch-board-sub {
+  margin-top: 4px;
+  font-size: 12px;
+  color: var(--muted);
+}
+
+.orch-columns {
+  display: flex;
+  gap: 12px;
+  overflow-x: auto;
+  padding: 6px;
+  margin: 0 -6px -6px;
+  scrollbar-width: none;
+  -webkit-overflow-scrolling: touch;
+}
+
+.orch-columns::-webkit-scrollbar {
+  display: none;
+}
+
+.orch-column {
+  min-width: 260px;
+  max-width: 340px;
+  flex: 0 0 auto;
+  border-radius: var(--radius-lg);
+  border: 1px solid var(--border);
+  background: var(--chrome);
+  box-shadow: inset 0 1px 0 var(--card-highlight);
+  padding: 10px;
+  transition: border-color var(--duration-fast) var(--ease-out);
+}
+
+.orch-column[data-lane="backlog"] {
+  --orch-accent: var(--muted);
+}
+.orch-column[data-lane="running"] {
+  --orch-accent: var(--accent);
+}
+.orch-column[data-lane="review"] {
+  --orch-accent: var(--warn);
+}
+.orch-column[data-lane="done"] {
+  --orch-accent: var(--ok);
+}
+.orch-column[data-lane="failed"] {
+  --orch-accent: var(--danger);
+}
+
+.orch-column::after {
+  content: "";
+  display: block;
+  height: 3px;
+  border-radius: 999px;
+  background: var(--orch-accent, var(--border));
+  opacity: 0.7;
+  margin-top: 10px;
+}
+
+.orch-column--drop {
+  border-color: var(--border-hover);
+  box-shadow: var(--shadow-glow);
+}
+
+.orch-column-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 10px;
+}
+
+.orch-column-title {
+  font-weight: 700;
+  letter-spacing: -0.02em;
+  line-height: 1.1;
+}
+
+.orch-column-meta {
+  margin-top: 4px;
+  font-size: 11px;
+  color: var(--muted);
+}
+
+.orch-card {
+  position: relative;
+  border-radius: var(--radius-lg);
+  border: 1px solid var(--border);
+  background: var(--card);
+  padding: 12px;
+  margin-top: 10px;
+  box-shadow: var(--shadow-sm), inset 0 1px 0 var(--card-highlight);
+  cursor: pointer;
+  transition:
+    transform var(--duration-fast) var(--ease-out),
+    border-color var(--duration-fast) var(--ease-out),
+    box-shadow var(--duration-fast) var(--ease-out);
+}
+
+.orch-card:hover {
+  transform: translateY(-1px);
+  border-color: var(--border-strong);
+  box-shadow: var(--shadow-md), inset 0 1px 0 var(--card-highlight);
+}
+
+.orch-card[aria-selected="true"] {
+  border-color: var(--accent);
+  box-shadow: var(--focus-glow);
+}
+
+.orch-card::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  pointer-events: none;
+  background: linear-gradient(
+    120deg,
+    transparent,
+    var(--accent-subtle),
+    transparent
+  );
+  opacity: 0;
+  transition: opacity var(--duration-normal) var(--ease-out);
+}
+
+.orch-card--running::before {
+  opacity: 0.25;
+}
+
+.orch-card-title {
+  font-weight: 700;
+  letter-spacing: -0.02em;
+  line-height: 1.2;
+}
+
+.orch-card-sub {
+  margin-top: 6px;
+  font-size: 12px;
+  color: var(--muted);
+  line-height: 1.45;
+  max-height: 54px;
+  overflow: hidden;
+}
+
+.orch-card-meta {
+  margin-top: 10px;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  align-items: center;
+}
+
+.orch-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 10px;
+  border-radius: var(--radius-full);
+  border: 1px solid var(--border);
+  background: var(--secondary);
+  font-size: 11px;
+  font-weight: 600;
+}
+
+.orch-badge .statusDot {
+  width: 6px;
+  height: 6px;
+}
+
+.orch-actions {
+  display: flex;
+  gap: 8px;
+  margin-top: 12px;
+}
+
+.orch-side {
+  position: sticky;
+  top: 70px;
+}
+
+.orch-side .card {
+  padding: 18px;
+}
+
+.orch-side-title {
+  font-size: 14px;
+  font-weight: 700;
+  letter-spacing: -0.02em;
+}
+
+.orch-side-sub {
+  margin-top: 4px;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.orch-divider {
+  height: 1px;
+  background: var(--border);
+  margin: 14px 0;
+}
+
+.orch-output {
+  margin-top: 10px;
+  border: 1px solid var(--border);
+  background: var(--bg-muted);
+  border-radius: var(--radius-md);
+  padding: 12px;
+  font-family: var(--mono);
+  font-size: 12px;
+  line-height: 1.55;
+  color: var(--text);
+  white-space: pre-wrap;
+  word-break: break-word;
+  max-height: 220px;
+  overflow: auto;
+}
+
+.orch-side-stack {
+  gap: 14px;
+}
+
+.orch-templates {
+  position: relative;
+  overflow: hidden;
+  background: linear-gradient(180deg, var(--bg-elevated), var(--bg));
+}
+
+.orch-templates::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  opacity: 0.7;
+  background:
+    radial-gradient(540px 220px at 18% 0%, var(--accent-subtle), transparent 60%),
+    radial-gradient(420px 240px at 92% 14%, var(--accent-2-subtle), transparent 62%);
+}
+
+.orch-templates > * {
+  position: relative;
+  z-index: 1;
+}
+
+.orch-templates__search {
+  margin-top: 12px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 12px;
+  border-radius: var(--radius-lg);
+  border: 1px solid var(--input);
+  background: var(--bg-muted);
+}
+
+.orch-templates__searchIcon {
+  width: 16px;
+  height: 16px;
+  color: var(--muted);
+}
+
+.orch-templates__searchIcon svg {
+  width: 16px;
+  height: 16px;
+}
+
+.orch-templates__searchInput {
+  flex: 1;
+  min-width: 0;
+  border: none;
+  background: transparent;
+  color: var(--text);
+  font-family: var(--font-body);
+  font-size: 13px;
+  outline: none;
+}
+
+.orch-templates__searchInput::placeholder {
+  color: var(--muted);
+}
+
+.orch-templates__clear {
+  flex: 0 0 auto;
+}
+
+.orch-templates__meta {
+  margin-top: 10px;
+  font-size: 11px;
+}
+
+.orch-templates__list {
+  margin-top: 10px;
+  display: grid;
+  gap: 10px;
+  max-height: 360px;
+  overflow: auto;
+  padding-right: 4px;
+}
+
+.orch-templates__empty {
+  padding: 10px 4px;
+}
+
+.orch-template {
+  display: grid;
+  grid-template-columns: 34px minmax(0, 1fr) auto;
+  gap: 10px;
+  align-items: start;
+  border-radius: var(--radius-lg);
+  border: 1px solid var(--border);
+  background: var(--card);
+  box-shadow: var(--shadow-sm), inset 0 1px 0 var(--card-highlight);
+  padding: 12px;
+  cursor: pointer;
+  transition:
+    transform var(--duration-fast) var(--ease-out),
+    border-color var(--duration-fast) var(--ease-out),
+    box-shadow var(--duration-fast) var(--ease-out);
+}
+
+.orch-template:hover {
+  transform: translateY(-1px);
+  border-color: var(--border-strong);
+  box-shadow: var(--shadow-md), inset 0 1px 0 var(--card-highlight);
+}
+
+.orch-template:focus-visible {
+  outline: none;
+  border-color: var(--accent);
+  box-shadow: var(--focus-glow);
+}
+
+.orch-template__icon {
+  width: 34px;
+  height: 34px;
+  border-radius: var(--radius-md);
+  border: 1px solid var(--border);
+  background: linear-gradient(180deg, var(--accent-subtle), transparent);
+  color: var(--accent);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  box-shadow: inset 0 1px 0 var(--card-highlight);
+}
+
+.orch-template__icon svg {
+  width: 18px;
+  height: 18px;
+}
+
+.orch-template__title {
+  font-weight: 700;
+  letter-spacing: -0.02em;
+  line-height: 1.15;
+}
+
+.orch-template__desc {
+  margin-top: 4px;
+  font-size: 12px;
+  color: var(--muted);
+  line-height: 1.4;
+}
+
+.orch-template__tags {
+  margin-top: 10px;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  align-items: center;
+}
+
+.orch-template__tags .pill {
+  font-size: 10px;
+  padding: 4px 9px;
+}
+
+.orch-template__actions {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  align-items: stretch;
+}
+
+.orch-template__actions .btn {
+  justify-content: center;
+  white-space: nowrap;
+}
+
+.orch-template__actions .btn svg {
+  width: 14px;
+  height: 14px;
+}
+
+@media (max-width: 520px) {
+  .orch-template {
+    grid-template-columns: 34px minmax(0, 1fr);
+  }
+
+  .orch-template__actions {
+    grid-column: 1 / -1;
+    flex-direction: row;
+    justify-content: flex-end;
+  }
+}
+
+@media (max-width: 1100px) {
+  .orch-layout {
+    grid-template-columns: 1fr;
+  }
+  .orch-side {
+    position: static;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .orch-card,
+  .orch-card:hover {
+    transition: none !important;
+    transform: none !important;
+  }
+  .orch-board {
+    animation: none !important;
+  }
+}

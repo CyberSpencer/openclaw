@@ -125,18 +125,18 @@ struct LowCoverageHelperTests {
         #expect(listeners[1].command == "ssh")
 
         let okReport = PortGuardian._testBuildReport(
-            port: 18789,
+            port: 32555,
             mode: .local,
             listeners: [(pid: 1, command: "node", fullCommand: "node", user: "me")])
         #expect(okReport.offenders.isEmpty)
 
         let badReport = PortGuardian._testBuildReport(
-            port: 18789,
+            port: 32555,
             mode: .local,
             listeners: [(pid: 2, command: "python", fullCommand: "python", user: "me")])
         #expect(!badReport.offenders.isEmpty)
 
-        let emptyReport = PortGuardian._testBuildReport(port: 18789, mode: .local, listeners: [])
+        let emptyReport = PortGuardian._testBuildReport(port: 32555, mode: .local, listeners: [])
         #expect(emptyReport.summary.contains("Nothing is listening"))
     }
 

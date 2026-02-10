@@ -23,8 +23,9 @@ export function isBinaryThinkingProvider(provider?: string | null): boolean {
 
 export const XHIGH_MODEL_REFS = [
   "openai/gpt-5.2",
-  "openai-codex/gpt-5.3-codex",
+  "openai/gpt-5.3",
   "openai-codex/gpt-5.2-codex",
+  "openai-codex/gpt-5.3-codex",
   "openai-codex/gpt-5.1-codex",
   "github-copilot/gpt-5.2-codex",
   "github-copilot/gpt-5.2",
@@ -62,9 +63,7 @@ export function normalizeThinkLevel(raw?: string | null): ThinkLevel | undefined
   if (["mid", "med", "medium", "thinkharder", "think-harder", "harder"].includes(key)) {
     return "medium";
   }
-  if (
-    ["high", "ultra", "ultrathink", "think-hard", "thinkhardest", "highest", "max"].includes(key)
-  ) {
+  if (["high", "ultra", "ultrathink", "thinkhardest", "highest", "max"].includes(key)) {
     return "high";
   }
   if (["think"].includes(key)) {

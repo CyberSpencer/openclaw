@@ -2,7 +2,13 @@ import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { chunkMarkdown, listMemoryFiles, normalizeExtraMemoryPaths } from "./internal.js";
+
+import {
+  chunkMarkdown,
+  hashToDeterministicUuid,
+  listMemoryFiles,
+  normalizeExtraMemoryPaths,
+} from "./internal.js";
 
 describe("normalizeExtraMemoryPaths", () => {
   it("trims, resolves, and dedupes paths", () => {
@@ -121,5 +127,17 @@ describe("chunkMarkdown", () => {
     for (const chunk of chunks) {
       expect(chunk.text.length).toBeLessThanOrEqual(maxChars);
     }
+  });
+});
+
+describe("hashToDeterministicUuid", () => {
+  it("returns deterministic RFC4122-formatted UUID strings", () => {
+    const a = hashToDeterministicUuid("source:path:1:10:hash:model");
+    const b = hashToDeterministicUuid("source:path:1:10:hash:model");
+    const c = hashToDeterministicUuid("source:path:1:11:hash:model");
+
+    expect(a).toBe(b);
+    expect(a).not.toBe(c);
+    expect(a).toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-5[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/);
   });
 });

@@ -115,10 +115,10 @@
     "@larksuiteoapi/node-sdk": "^1.58.0",
     "@line/bot-sdk": "^10.6.0",
     "@lydell/node-pty": "1.2.0-beta.3",
-    "@mariozechner/pi-agent-core": "0.52.9",
-    "@mariozechner/pi-ai": "0.52.9",
-    "@mariozechner/pi-coding-agent": "0.52.9",
-    "@mariozechner/pi-tui": "0.52.9",
+    "@mariozechner/pi-agent-core": "0.52.8",
+    "@mariozechner/pi-ai": "0.52.8",
+    "@mariozechner/pi-coding-agent": "0.52.8",
+    "@mariozechner/pi-tui": "0.50.7",
     "@mozilla/readability": "^0.6.0",
     "@sinclair/typebox": "0.34.48",
     "@slack/bolt": "^4.6.0",
@@ -157,6 +157,9 @@
     "ws": "^8.19.0",
     "yaml": "^2.8.2",
     "zod": "^4.3.6"
+  },
+  "xDependencyNotes": {
+    "@mariozechner/pi-tui": "Pinned to 0.50.7 while the pi-* core libs are on 0.52.8; bumping pi-tui requires a coordinated upgrade + validation (keep lockfile stable in this PR)."
   },
   "devDependencies": {
     "@grammyjs/types": "^3.23.0",

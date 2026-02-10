@@ -20,6 +20,7 @@ export type CronProps = {
   runs: CronRunLogEntry[];
   onFormChange: (patch: Partial<CronFormState>) => void;
   onRefresh: () => void;
+  onToggleSchedulerEnabled: (enabled: boolean) => void;
   onAdd: () => void;
   onToggle: (job: CronJob, enabled: boolean) => void;
   onRun: (job: CronJob) => void;
@@ -85,7 +86,33 @@ export function renderCron(props: CronProps) {
           <button class="btn" ?disabled=${props.loading} @click=${props.onRefresh}>
             ${props.loading ? "Refreshing…" : "Refresh"}
           </button>
+          ${
+            props.status
+              ? html`
+                <button
+                  class=${`btn${props.status.enabled ? "" : " primary"}`}
+                  ?disabled=${props.busy}
+                  @click=${() => {
+                    const nextEnabled = !props.status?.enabled;
+                    if (
+                      props.status?.enabled &&
+                      typeof window !== "undefined" &&
+                      !window.confirm("Disable the cron scheduler? Jobs will not run automatically.")
+                    ) {
+                      return;
+                    }
+                    props.onToggleSchedulerEnabled(nextEnabled);
+                  }}
+                >
+                  ${props.status.enabled ? "Disable scheduler" : "Enable scheduler"}
+                </button>
+              `
+              : nothing
+          }
           ${props.error ? html`<span class="muted">${props.error}</span>` : nothing}
+        </div>
+        <div class="muted" style="margin-top: 10px;">
+          This edits <code>cron.enabled</code> and restarts the Gateway.
         </div>
       </div>
 
@@ -383,7 +410,20 @@ function renderJob(job: CronJob, props: CronProps) {
   const isSelected = props.runsJobId === job.id;
   const itemClass = `list-item list-item-clickable cron-job${isSelected ? " list-item-selected" : ""}`;
   return html`
-    <div class=${itemClass} @click=${() => props.onLoadRuns(job.id)}>
+    <div
+      class=${itemClass}
+      role="button"
+      tabindex="0"
+      aria-label=${`View run history for ${job.name}`}
+      @click=${() => props.onLoadRuns(job.id)}
+      @keydown=${(event: KeyboardEvent) => {
+        if (event.target !== event.currentTarget) return;
+        if (event.key === "Enter" || event.key === " ") {
+          event.preventDefault();
+          props.onLoadRuns(job.id);
+        }
+      }}
+    >
       <div class="list-main">
         <div class="list-title">${job.name}</div>
         <div class="list-sub">${formatCronSchedule(job)}</div>

@@ -5,7 +5,7 @@ describe("browser config", () => {
   it("defaults to enabled with loopback defaults and lobster-orange color", () => {
     const resolved = resolveBrowserConfig(undefined);
     expect(resolved.enabled).toBe(true);
-    expect(resolved.controlPort).toBe(18791);
+    expect(resolved.controlPort).toBe(32557);
     expect(resolved.color).toBe("#FF4500");
     expect(shouldStartLocalBrowserServer(resolved)).toBe(true);
     expect(resolved.cdpHost).toBe("127.0.0.1");
@@ -13,31 +13,31 @@ describe("browser config", () => {
     const profile = resolveProfile(resolved, resolved.defaultProfile);
     expect(profile?.name).toBe("chrome");
     expect(profile?.driver).toBe("extension");
-    expect(profile?.cdpPort).toBe(18792);
-    expect(profile?.cdpUrl).toBe("http://127.0.0.1:18792");
+    expect(profile?.cdpPort).toBe(32558);
+    expect(profile?.cdpUrl).toBe("http://127.0.0.1:32558");
 
     const openclaw = resolveProfile(resolved, "openclaw");
     expect(openclaw?.driver).toBe("openclaw");
-    expect(openclaw?.cdpPort).toBe(18800);
-    expect(openclaw?.cdpUrl).toBe("http://127.0.0.1:18800");
+    expect(openclaw?.cdpPort).toBe(32566);
+    expect(openclaw?.cdpUrl).toBe("http://127.0.0.1:32566");
     expect(resolved.remoteCdpTimeoutMs).toBe(1500);
     expect(resolved.remoteCdpHandshakeTimeoutMs).toBe(3000);
   });
 
   it("derives default ports from OPENCLAW_GATEWAY_PORT when unset", () => {
     const prev = process.env.OPENCLAW_GATEWAY_PORT;
-    process.env.OPENCLAW_GATEWAY_PORT = "19001";
+    process.env.OPENCLAW_GATEWAY_PORT = "55532";
     try {
       const resolved = resolveBrowserConfig(undefined);
-      expect(resolved.controlPort).toBe(19003);
+      expect(resolved.controlPort).toBe(55534);
       const chrome = resolveProfile(resolved, "chrome");
       expect(chrome?.driver).toBe("extension");
-      expect(chrome?.cdpPort).toBe(19004);
-      expect(chrome?.cdpUrl).toBe("http://127.0.0.1:19004");
+      expect(chrome?.cdpPort).toBe(55535);
+      expect(chrome?.cdpUrl).toBe("http://127.0.0.1:55535");
 
       const openclaw = resolveProfile(resolved, "openclaw");
-      expect(openclaw?.cdpPort).toBe(19012);
-      expect(openclaw?.cdpUrl).toBe("http://127.0.0.1:19012");
+      expect(openclaw?.cdpPort).toBe(55543);
+      expect(openclaw?.cdpUrl).toBe("http://127.0.0.1:55543");
     } finally {
       if (prev === undefined) {
         delete process.env.OPENCLAW_GATEWAY_PORT;
@@ -137,13 +137,13 @@ describe("browser config", () => {
   });
 
   it("rejects unsupported protocols", () => {
-    expect(() => resolveBrowserConfig({ cdpUrl: "ws://127.0.0.1:18791" })).toThrow(/must be http/i);
+    expect(() => resolveBrowserConfig({ cdpUrl: "ws://127.0.0.1:32557" })).toThrow(/must be http/i);
   });
 
   it("does not add the built-in chrome extension profile if the derived relay port is already used", () => {
     const resolved = resolveBrowserConfig({
       profiles: {
-        openclaw: { cdpPort: 18792, color: "#FF4500" },
+        openclaw: { cdpPort: 32558, color: "#FF4500" },
       },
     });
     expect(resolveProfile(resolved, "chrome")).toBe(null);

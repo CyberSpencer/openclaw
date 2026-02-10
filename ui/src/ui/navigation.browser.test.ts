@@ -160,7 +160,16 @@ describe("control UI routing", () => {
     expect(window.location.search).toBe("");
   });
 
-  it("strips password URL params without importing them", async () => {
+  it("hydrates token from URL hash and strips it", async () => {
+    const app = mountApp("/ui/overview#token=abc123");
+    await app.updateComplete;
+
+    expect(app.settings.token).toBe("abc123");
+    expect(window.location.pathname).toBe("/ui/overview");
+    expect(window.location.hash).toBe("");
+  });
+
+  it("hydrates password from URL params and strips it", async () => {
     const app = mountApp("/ui/overview?password=sekret");
     await app.updateComplete;
 

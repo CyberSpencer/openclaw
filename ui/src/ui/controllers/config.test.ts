@@ -41,18 +41,18 @@ describe("applyConfigSnapshot", () => {
     const state = createState();
     state.configFormMode = "form";
     state.configFormDirty = true;
-    state.configForm = { gateway: { mode: "local", port: 18789 } };
+    state.configForm = { gateway: { mode: "local", port: 32555 } };
     state.configRaw = "{\n}\n";
 
     applyConfigSnapshot(state, {
       config: { gateway: { mode: "remote", port: 9999 } },
       valid: true,
       issues: [],
-      raw: '{\n  "gateway": { "mode": "remote", "port": 9999 }\n}\n',
+      raw: "{\n  \"gateway\": { \"mode\": \"remote\", \"port\": 9999 }\n}\n",
     });
 
     expect(state.configRaw).toBe(
-      '{\n  "gateway": {\n    "mode": "local",\n    "port": 18789\n  }\n}\n',
+      "{\n  \"gateway\": {\n    \"mode\": \"local\",\n    \"port\": 32555\n  }\n}\n",
     );
   });
 
@@ -110,12 +110,12 @@ describe("updateConfigFormValue", () => {
       raw: "{}",
     };
 
-    updateConfigFormValue(state, ["gateway", "port"], 18789);
+    updateConfigFormValue(state, ["gateway", "port"], 32555);
 
     expect(state.configFormDirty).toBe(true);
     expect(state.configForm).toEqual({
       channels: { telegram: { botToken: "t" } },
-      gateway: { mode: "local", port: 18789 },
+      gateway: { mode: "local", port: 32555 },
     });
   });
 
@@ -128,10 +128,10 @@ describe("updateConfigFormValue", () => {
       raw: "{\n}\n",
     };
 
-    updateConfigFormValue(state, ["gateway", "port"], 18789);
+    updateConfigFormValue(state, ["gateway", "port"], 32555);
 
     expect(state.configRaw).toBe(
-      '{\n  "gateway": {\n    "mode": "local",\n    "port": 18789\n  }\n}\n',
+      "{\n  \"gateway\": {\n    \"mode\": \"local\",\n    \"port\": 32555\n  }\n}\n",
     );
   });
 });
@@ -144,7 +144,7 @@ describe("applyConfig", () => {
     state.client = { request } as unknown as ConfigState["client"];
     state.applySessionKey = "agent:main:whatsapp:dm:+15555550123";
     state.configFormMode = "raw";
-    state.configRaw = '{\n  agent: { workspace: "~/openclaw" }\n}\n';
+    state.configRaw = "{\n  agent: { workspace: \"~/openclaw\" }\n}\n";
     state.configSnapshot = {
       hash: "hash-123",
     };
@@ -152,7 +152,7 @@ describe("applyConfig", () => {
     await applyConfig(state);
 
     expect(request).toHaveBeenCalledWith("config.apply", {
-      raw: '{\n  agent: { workspace: "~/openclaw" }\n}\n',
+      raw: "{\n  agent: { workspace: \"~/openclaw\" }\n}\n",
       baseHash: "hash-123",
       sessionKey: "agent:main:whatsapp:dm:+15555550123",
     });

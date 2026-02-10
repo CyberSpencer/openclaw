@@ -19,9 +19,9 @@ The design goal is to keep all network discovery/advertising in the **Node Gatew
 ## Terms
 
 - **Gateway**: a single long-running gateway process that owns state (sessions, pairing, node registry) and runs channels. Most setups use one per host; isolated multi-gateway setups are possible.
-- **Gateway WS (control plane)**: the WebSocket endpoint on `127.0.0.1:18789` by default; can be bound to LAN/tailnet via `gateway.bind`.
+- **Gateway WS (control plane)**: the WebSocket endpoint on `127.0.0.1:32555` by default; can be bound to LAN/tailnet via `gateway.bind`.
 - **Direct WS transport**: a LAN/tailnet-facing Gateway WS endpoint (no SSH).
-- **SSH transport (fallback)**: remote control by forwarding `127.0.0.1:18789` over SSH.
+- **SSH transport (fallback)**: remote control by forwarding `127.0.0.1:32555` over SSH.
 - **Legacy TCP bridge (deprecated/removed)**: older node transport (see [Bridge protocol](/gateway/bridge-protocol)); no longer advertised for discovery.
 
 Protocol details:
@@ -61,7 +61,7 @@ Troubleshooting and beacon details: [Bonjour](/gateway/bonjour).
   - `role=gateway`
   - `lanHost=<hostname>.local`
   - `sshPort=22` (or whatever is advertised)
-  - `gatewayPort=18789` (Gateway WS + HTTP)
+  - `gatewayPort=32555` (Gateway WS + HTTP)
   - `gatewayTls=1` (only when TLS is enabled)
   - `gatewayTlsSha256=<sha256>` (only when TLS is enabled and fingerprint is available)
   - `canvasPort=18793` (default canvas host port; serves `/__openclaw__/canvas/`)

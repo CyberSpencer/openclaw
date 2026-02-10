@@ -30,10 +30,7 @@ import {
   type ModelRef,
 } from "../agents/model-selection.js";
 import { resolveModel } from "../agents/pi-embedded-runner/model.js";
-import { normalizeChannelId } from "../channels/plugins/index.js";
-import { logVerbose } from "../globals.js";
-import { isVoiceCompatibleAudio } from "../media/audio.js";
-import { CONFIG_DIR, resolveUserPath } from "../utils.js";
+import { resolveProviderEndpointConfig } from "../agents/provider-endpoints.js";
 
 const DEFAULT_TIMEOUT_MS = 30_000;
 const DEFAULT_TTS_MAX_LENGTH = 1500;
@@ -920,12 +917,17 @@ async function summarizeText(params: {
 
   const startTime = Date.now();
   const { ref } = resolveSummaryModelRef(cfg, config);
-  const resolved = resolveModel(ref.provider, ref.model, undefined, cfg);
+  const { cfg: resolvedCfg } = await resolveProviderEndpointConfig({
+    cfg,
+    providerId: ref.provider,
+  });
+  const effectiveCfg = resolvedCfg ?? cfg;
+  const resolved = resolveModel(ref.provider, ref.model, undefined, effectiveCfg);
   if (!resolved.model) {
     throw new Error(resolved.error ?? `Unknown summary model: ${ref.provider}/${ref.model}`);
   }
   const apiKey = requireApiKey(
-    await getApiKeyForModel({ model: resolved.model, cfg }),
+    await getApiKeyForModel({ model: resolved.model, cfg: effectiveCfg }),
     ref.provider,
   );
 

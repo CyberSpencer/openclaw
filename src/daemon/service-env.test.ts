@@ -214,7 +214,7 @@ describe("buildServiceEnvironment", () => {
   it("sets minimal PATH and gateway vars", () => {
     const env = buildServiceEnvironment({
       env: { HOME: "/home/user" },
-      port: 18789,
+      port: 32555,
       token: "secret",
     });
     expect(env.HOME).toBe("/home/user");
@@ -223,7 +223,7 @@ describe("buildServiceEnvironment", () => {
     } else {
       expect(env.PATH).toContain("/usr/bin");
     }
-    expect(env.OPENCLAW_GATEWAY_PORT).toBe("18789");
+    expect(env.OPENCLAW_GATEWAY_PORT).toBe("32555");
     expect(env.OPENCLAW_GATEWAY_TOKEN).toBe("secret");
     expect(env.OPENCLAW_SERVICE_MARKER).toBe("openclaw");
     expect(env.OPENCLAW_SERVICE_KIND).toBe("gateway");
@@ -237,7 +237,7 @@ describe("buildServiceEnvironment", () => {
   it("uses profile-specific unit and label", () => {
     const env = buildServiceEnvironment({
       env: { HOME: "/home/user", OPENCLAW_PROFILE: "work" },
-      port: 18789,
+      port: 32555,
     });
     expect(env.OPENCLAW_SYSTEMD_UNIT).toBe("openclaw-gateway-work.service");
     if (process.platform === "darwin") {

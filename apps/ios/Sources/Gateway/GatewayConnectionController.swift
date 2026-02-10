@@ -62,7 +62,7 @@ final class GatewayConnectionController {
         let token = GatewaySettingsStore.loadGatewayToken(instanceId: instanceId)
         let password = GatewaySettingsStore.loadGatewayPassword(instanceId: instanceId)
         guard let host = self.resolveGatewayHost(gateway) else { return }
-        let port = gateway.gatewayPort ?? 18789
+        let port = gateway.gatewayPort ?? 32555
         let tlsParams = self.resolveDiscoveredTLSParams(gateway: gateway)
         guard let url = self.buildGatewayURL(
             host: host,
@@ -192,6 +192,7 @@ final class GatewayConnectionController {
             guard !manualHost.isEmpty else { return }
 
             let manualPort = defaults.integer(forKey: "gateway.manual.port")
+            let resolvedPort = manualPort > 0 ? manualPort : 32555
             let manualTLS = defaults.bool(forKey: "gateway.manual.tls")
             let resolvedUseTLS = manualTLS || self.shouldForceTLS(host: manualHost)
             guard let resolvedPort = self.resolveManualPort(
@@ -260,15 +261,12 @@ final class GatewayConnectionController {
             guard let url = self.buildGatewayURL(host: host, port: port, useTLS: tlsParams?.required == true)
             else { return }
 
-            self.didAutoConnect = true
-            self.startAutoConnect(
-                url: url,
-                gatewayStableID: target.stableID,
-                tls: tlsParams,
-                token: token,
-                password: password)
-            return
-        }
+        guard let target = self.gateways.first(where: { $0.stableID == targetStableID }) else { return }
+        guard let host = self.resolveGatewayHost(target) else { return }
+        let port = target.gatewayPort ?? 32555
+        let tlsParams = self.resolveDiscoveredTLSParams(gateway: target)
+        guard let url = self.buildGatewayURL(host: host, port: port, useTLS: tlsParams?.required == true)
+        else { return }
 
         if self.gateways.count == 1, let gateway = self.gateways.first {
             guard let host = self.resolveGatewayHost(gateway) else { return }

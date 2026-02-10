@@ -2,4 +2,16 @@
 @import "./styles/layout.css";
 @import "./styles/layout.mobile.css";
 @import "./styles/components.css";
+@import "./styles/orchestrator.css";
 @import "./styles/config.css";
+
+/* Reduced motion: disable entrance animations for users who request it. */
+@media (prefers-reduced-motion: reduce) {
+  .shell {
+    animation: none !important;
+  }
+
+  .card {
+    animation: none !important;
+  }
+}

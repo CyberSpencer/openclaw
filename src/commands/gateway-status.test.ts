@@ -3,19 +3,19 @@ import { describe, expect, it, vi } from "vitest";
 const loadConfig = vi.fn(() => ({
   gateway: {
     mode: "remote",
-    remote: { url: "ws://remote.example:18789", token: "rtok" },
+    remote: { url: "ws://remote.example:32555", token: "rtok" },
     auth: { token: "ltok" },
   },
 }));
-const resolveGatewayPort = vi.fn(() => 18789);
+const resolveGatewayPort = vi.fn(() => 32555);
 const discoverGatewayBeacons = vi.fn(async () => []);
 const pickPrimaryTailnetIPv4 = vi.fn(() => "100.64.0.10");
 const sshStop = vi.fn(async () => {});
 const resolveSshConfig = vi.fn(async () => null);
 const startSshPortForward = vi.fn(async () => ({
   parsedTarget: { user: "me", host: "studio", port: 22 },
-  localPort: 18789,
-  remotePort: 18789,
+  localPort: 32555,
+  remotePort: 32555,
   pid: 123,
   stderr: [],
   stop: sshStop,
@@ -247,7 +247,7 @@ describe("gateway-status command", () => {
       loadConfig.mockReturnValueOnce({
         gateway: {
           mode: "remote",
-          remote: { url: "ws://peters-mac-studio-1.sheep-coho.ts.net:18789", token: "rtok" },
+          remote: { url: "ws://peters-mac-studio-1.sheep-coho.ts.net:32555", token: "rtok" },
         },
       });
       resolveSshConfig.mockResolvedValueOnce({
@@ -292,7 +292,7 @@ describe("gateway-status command", () => {
       loadConfig.mockReturnValueOnce({
         gateway: {
           mode: "remote",
-          remote: { url: "ws://studio.example:18789", token: "rtok" },
+          remote: { url: "ws://studio.example:32555", token: "rtok" },
         },
       });
       resolveSshConfig.mockResolvedValueOnce(null);
@@ -326,7 +326,7 @@ describe("gateway-status command", () => {
     loadConfig.mockReturnValueOnce({
       gateway: {
         mode: "remote",
-        remote: { url: "ws://studio.example:18789", token: "rtok" },
+        remote: { url: "ws://studio.example:32555", token: "rtok" },
       },
     });
     resolveSshConfig.mockResolvedValueOnce({

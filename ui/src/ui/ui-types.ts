@@ -12,6 +12,23 @@ export type ChatQueueItem = {
   refreshSessions?: boolean;
 };
 
+export type TaskPlanStatus = "todo" | "running" | "done" | "blocked" | "skipped";
+
+export type TaskPlanTask = {
+  id: string;
+  title: string;
+  detail?: string;
+  status?: TaskPlanStatus;
+  assignedSessionKey?: string;
+  assignedRunId?: string;
+};
+
+export type TaskPlan = {
+  id: string;
+  goal?: string;
+  tasks: TaskPlanTask[];
+};
+
 export const CRON_CHANNEL_LAST = "last";
 
 export type CronFormState = {

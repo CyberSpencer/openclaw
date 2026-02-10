@@ -1,27 +1,15 @@
-import type { OpenClawApp } from "./app.ts";
-import type { AgentsListResult } from "./types.ts";
-import { refreshChat } from "./app-chat.ts";
-import {
-  startLogsPolling,
-  stopLogsPolling,
-  startDebugPolling,
-  stopDebugPolling,
-} from "./app-polling.ts";
-import { scheduleChatScroll, scheduleLogsScroll } from "./app-scroll.ts";
-import { loadAgentIdentities, loadAgentIdentity } from "./controllers/agent-identity.ts";
-import { loadAgentSkills } from "./controllers/agent-skills.ts";
-import { loadAgents } from "./controllers/agents.ts";
-import { loadChannels } from "./controllers/channels.ts";
-import { loadConfig, loadConfigSchema } from "./controllers/config.ts";
-import { loadCronJobs, loadCronStatus } from "./controllers/cron.ts";
-import { loadDebug } from "./controllers/debug.ts";
-import { loadDevices } from "./controllers/devices.ts";
-import { loadExecApprovals } from "./controllers/exec-approvals.ts";
-import { loadLogs } from "./controllers/logs.ts";
-import { loadNodes } from "./controllers/nodes.ts";
-import { loadPresence } from "./controllers/presence.ts";
-import { loadSessions } from "./controllers/sessions.ts";
-import { loadSkills } from "./controllers/skills.ts";
+import { loadConfig, loadConfigSchema } from "./controllers/config";
+import { loadCronJobs, loadCronStatus } from "./controllers/cron";
+import { loadChannels } from "./controllers/channels";
+import { loadDebug } from "./controllers/debug";
+import { loadLogs } from "./controllers/logs";
+import { loadDevices } from "./controllers/devices";
+import { loadNodes } from "./controllers/nodes";
+import { loadExecApprovals } from "./controllers/exec-approvals";
+import { loadPresence } from "./controllers/presence";
+import { loadSessions } from "./controllers/sessions";
+import { loadAgents } from "./controllers/agents";
+import { loadSkills } from "./controllers/skills";
 import {
   inferBasePathFromPathname,
   normalizeBasePath,
@@ -54,6 +42,7 @@ type SettingsHost = {
   themeMedia: MediaQueryList | null;
   themeMediaHandler: ((event: MediaQueryListEvent) => void) | null;
   pendingGatewayUrl?: string | null;
+  refreshTopbarControls?: () => Promise<void> | void;
 };
 
 export function applySettings(host: SettingsHost, next: UiSettings) {
@@ -82,17 +71,17 @@ export function setLastActiveSessionKey(host: SettingsHost, next: string) {
 }
 
 export function applySettingsFromUrl(host: SettingsHost) {
-  if (!window.location.search && !window.location.hash) {
-    return;
-  }
-  const url = new URL(window.location.href);
-  const params = new URLSearchParams(url.search);
-  const hashParams = new URLSearchParams(url.hash.startsWith("#") ? url.hash.slice(1) : url.hash);
+  const params = new URLSearchParams(window.location.search);
+  const hashRaw = window.location.hash ? window.location.hash.replace(/^#/, "") : "";
+  const hashParams =
+    hashRaw && /[=&]/.test(hashRaw) && !hashRaw.startsWith("/")
+      ? new URLSearchParams(hashRaw)
+      : null;
 
-  const tokenRaw = params.get("token") ?? hashParams.get("token");
-  const passwordRaw = params.get("password") ?? hashParams.get("password");
-  const sessionRaw = params.get("session") ?? hashParams.get("session");
-  const gatewayUrlRaw = params.get("gatewayUrl") ?? hashParams.get("gatewayUrl");
+  const tokenRaw = params.get("token") ?? hashParams?.get("token") ?? null;
+  const passwordRaw = params.get("password") ?? hashParams?.get("password") ?? null;
+  const sessionRaw = params.get("session") ?? hashParams?.get("session") ?? null;
+  const gatewayUrlRaw = params.get("gatewayUrl") ?? hashParams?.get("gatewayUrl") ?? null;
   let shouldCleanUrl = false;
 
   if (tokenRaw != null) {
@@ -101,7 +90,7 @@ export function applySettingsFromUrl(host: SettingsHost) {
       applySettings(host, { ...host.settings, token });
     }
     params.delete("token");
-    hashParams.delete("token");
+    hashParams?.delete("token");
     shouldCleanUrl = true;
   }
 
@@ -111,7 +100,7 @@ export function applySettingsFromUrl(host: SettingsHost) {
       (host as { password: string }).password = password;
     }
     params.delete("password");
-    hashParams.delete("password");
+    hashParams?.delete("password");
     shouldCleanUrl = true;
   }
 
@@ -133,7 +122,7 @@ export function applySettingsFromUrl(host: SettingsHost) {
       host.pendingGatewayUrl = gatewayUrl;
     }
     params.delete("gatewayUrl");
-    hashParams.delete("gatewayUrl");
+    hashParams?.delete("gatewayUrl");
     shouldCleanUrl = true;
   }
 
@@ -141,8 +130,10 @@ export function applySettingsFromUrl(host: SettingsHost) {
     return;
   }
   url.search = params.toString();
-  const nextHash = hashParams.toString();
-  url.hash = nextHash ? `#${nextHash}` : "";
+  if (hashParams) {
+    const nextHash = hashParams.toString();
+    url.hash = nextHash ? `#${nextHash}` : "";
+  }
   window.history.replaceState({}, "", url.toString());
 }
 
@@ -182,46 +173,18 @@ export function setTheme(host: SettingsHost, next: ThemeMode, context?: ThemeTra
 }
 
 export async function refreshActiveTab(host: SettingsHost) {
-  if (host.tab === "overview") {
-    await loadOverview(host);
-  }
-  if (host.tab === "channels") {
-    await loadChannelsTab(host);
-  }
-  if (host.tab === "instances") {
-    await loadPresence(host as unknown as OpenClawApp);
-  }
-  if (host.tab === "sessions") {
-    await loadSessions(host as unknown as OpenClawApp);
-  }
-  if (host.tab === "cron") {
-    await loadCron(host);
-  }
-  if (host.tab === "skills") {
-    await loadSkills(host as unknown as OpenClawApp);
-  }
-  if (host.tab === "agents") {
+  if (host.tab === "overview") await loadOverview(host);
+  if (host.tab === "orchestrator") {
     await loadAgents(host as unknown as OpenClawApp);
-    await loadConfig(host as unknown as OpenClawApp);
-    const agentIds = host.agentsList?.agents?.map((entry) => entry.id) ?? [];
-    if (agentIds.length > 0) {
-      void loadAgentIdentities(host as unknown as OpenClawApp, agentIds);
-    }
-    const agentId =
-      host.agentsSelectedId ?? host.agentsList?.defaultId ?? host.agentsList?.agents?.[0]?.id;
-    if (agentId) {
-      void loadAgentIdentity(host as unknown as OpenClawApp, agentId);
-      if (host.agentsPanel === "skills") {
-        void loadAgentSkills(host as unknown as OpenClawApp, agentId);
-      }
-      if (host.agentsPanel === "channels") {
-        void loadChannels(host as unknown as OpenClawApp, false);
-      }
-      if (host.agentsPanel === "cron") {
-        void loadCron(host);
-      }
-    }
   }
+  if (host.tab === "settings") {
+    await host.refreshTopbarControls?.();
+  }
+  if (host.tab === "channels") await loadChannelsTab(host);
+  if (host.tab === "instances") await loadPresence(host as unknown as OpenClawApp);
+  if (host.tab === "sessions") await loadSessions(host as unknown as OpenClawApp);
+  if (host.tab === "cron") await loadCron(host);
+  if (host.tab === "skills") await loadSkills(host as unknown as OpenClawApp);
   if (host.tab === "nodes") {
     await loadNodes(host as unknown as OpenClawApp);
     await loadDevices(host as unknown as OpenClawApp);
@@ -274,6 +237,9 @@ export function applyResolvedTheme(host: SettingsHost, resolved: ResolvedTheme) 
   const root = document.documentElement;
   root.dataset.theme = resolved;
   root.style.colorScheme = resolved;
+  // Keep a `.dark` class in sync so utility ecosystems (including shadcn presets)
+  // can key off it without changing our existing `[data-theme]` selectors.
+  root.classList.toggle("dark", resolved === "dark");
 }
 
 export function attachThemeListener(host: SettingsHost) {

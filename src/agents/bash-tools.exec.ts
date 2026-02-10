@@ -14,6 +14,7 @@ import {
   maxAsk,
   minSecurity,
   requiresExecApproval,
+  resolveTrustedPathEntries,
   resolveSafeBins,
   recordAllowlistUse,
   resolveExecApprovals,
@@ -996,6 +997,7 @@ export function createExecTool(
         applyShellPath(env, shellPath);
       }
       applyPathPrepend(env, defaultPathPrepend);
+      const trustedPaths = resolveTrustedPathEntries(env);
 
       if (host === "node") {
         const approvals = resolveExecApprovals(agentId, { security, ask });
@@ -1049,6 +1051,7 @@ export function createExecTool(
           command: params.command,
           allowlist: [],
           safeBins: new Set(),
+          trustedPaths,
           cwd: workdir,
           env,
           platform: nodeInfo?.platform,
@@ -1077,6 +1080,7 @@ export function createExecTool(
                 command: params.command,
                 allowlist: resolved.allowlist,
                 safeBins: new Set(),
+                trustedPaths,
                 cwd: workdir,
                 env,
                 platform: nodeInfo?.platform,
@@ -1287,6 +1291,7 @@ export function createExecTool(
           command: params.command,
           allowlist: approvals.allowlist,
           safeBins,
+          trustedPaths,
           cwd: workdir,
           env,
           platform: process.platform,

@@ -27,6 +27,7 @@ describe("iconForTab", () => {
 
   it("returns stable icons for known tabs", () => {
     expect(iconForTab("chat")).toBe("messageSquare");
+    expect(iconForTab("orchestrator")).toBe("puzzle");
     expect(iconForTab("overview")).toBe("barChart");
     expect(iconForTab("channels")).toBe("link");
     expect(iconForTab("instances")).toBe("radio");
@@ -34,6 +35,7 @@ describe("iconForTab", () => {
     expect(iconForTab("cron")).toBe("loader");
     expect(iconForTab("skills")).toBe("zap");
     expect(iconForTab("nodes")).toBe("monitor");
+    expect(iconForTab("settings")).toBe("sliders");
     expect(iconForTab("config")).toBe("settings");
     expect(iconForTab("debug")).toBe("bug");
     expect(iconForTab("logs")).toBe("scrollText");
@@ -57,6 +59,7 @@ describe("titleForTab", () => {
 
   it("returns expected titles", () => {
     expect(titleForTab("chat")).toBe("Chat");
+    expect(titleForTab("orchestrator")).toBe("Orchestrator");
     expect(titleForTab("overview")).toBe("Overview");
     expect(titleForTab("cron")).toBe("Cron Jobs");
   });

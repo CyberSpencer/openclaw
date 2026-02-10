@@ -17,12 +17,13 @@ import { createSessionsListTool } from "./tools/sessions-list-tool.js";
 import { createSessionsSendTool } from "./tools/sessions-send-tool.js";
 import { createSessionsSpawnTool } from "./tools/sessions-spawn-tool.js";
 import { createTtsTool } from "./tools/tts-tool.js";
-import { createWebFetchTool, createWebSearchTool } from "./tools/web-tools.js";
+import { createOrchestrationPlanTool } from "./tools/orchestration-plan-tool.js";
 
 export function createOpenClawTools(options?: {
   sandboxBrowserBridgeUrl?: string;
   allowHostBrowserControl?: boolean;
   agentSessionKey?: string;
+  agentRunId?: string;
   agentChannel?: GatewayMessageChannel;
   agentAccountId?: string;
   /** Delivery target (e.g. telegram:group:123:topic:456) for topic/thread routing. */
@@ -89,6 +90,10 @@ export function createOpenClawTools(options?: {
         requireExplicitTarget: options?.requireExplicitMessageTarget,
       });
   const tools: AnyAgentTool[] = [
+    createOrchestrationPlanTool({
+      agentSessionKey: options?.agentSessionKey,
+      agentRunId: options?.agentRunId,
+    }),
     createBrowserTool({
       sandboxBridgeUrl: options?.sandboxBrowserBridgeUrl,
       allowHostControl: options?.allowHostBrowserControl,

@@ -22,7 +22,7 @@ Interactive onboarding wizard (local or remote Gateway setup).
 openclaw onboard
 openclaw onboard --flow quickstart
 openclaw onboard --flow manual
-openclaw onboard --mode remote --remote-url ws://gateway-host:18789
+openclaw onboard --mode remote --remote-url ws://gateway-host:32555
 ```
 
 Flow notes:

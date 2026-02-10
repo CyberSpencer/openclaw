@@ -14,6 +14,10 @@ import { healthHandlers } from "./server-methods/health.js";
 import { logsHandlers } from "./server-methods/logs.js";
 import { modelsHandlers } from "./server-methods/models.js";
 import { nodeHandlers } from "./server-methods/nodes.js";
+import { opsHandlers } from "./server-methods/ops.js";
+import { orchestratorHandlers } from "./server-methods/orchestrator.js";
+import { routerStatusHandlers } from "./server-methods/router-status.js";
+import { sparkStatusHandlers } from "./server-methods/spark-status.js";
 import { sendHandlers } from "./server-methods/send.js";
 import { sessionsHandlers } from "./server-methods/sessions.js";
 import { skillsHandlers } from "./server-methods/skills.js";
@@ -22,6 +26,7 @@ import { talkHandlers } from "./server-methods/talk.js";
 import { ttsHandlers } from "./server-methods/tts.js";
 import { updateHandlers } from "./server-methods/update.js";
 import { usageHandlers } from "./server-methods/usage.js";
+import { voiceHandlers } from "./server-methods/voice.js";
 import { voicewakeHandlers } from "./server-methods/voicewake.js";
 import { webHandlers } from "./server-methods/web.js";
 import { wizardHandlers } from "./server-methods/wizard.js";
@@ -62,6 +67,10 @@ const READ_METHODS = new Set([
   "agent.identity.get",
   "skills.status",
   "voicewake.get",
+  "voice.status",
+  "voice.config",
+  "voice.route",
+  "voice.personaplex.status",
   "sessions.list",
   "sessions.preview",
   "cron.list",
@@ -72,6 +81,8 @@ const READ_METHODS = new Set([
   "node.list",
   "node.describe",
   "chat.history",
+  "router.status",
+  "spark.status",
 ]);
 const WRITE_METHODS = new Set([
   "send",
@@ -84,10 +95,19 @@ const WRITE_METHODS = new Set([
   "tts.convert",
   "tts.setProvider",
   "voicewake.set",
+  "voice.process",
+  "voice.processText",
+  "voice.transcribe",
+  "voice.synthesize",
+  "voice.personaplex.start",
+  "voice.personaplex.stop",
+  "voice.personaplex.process",
   "node.invoke",
   "chat.send",
+  "chat.steer",
   "chat.abort",
   "browser.request",
+  "router.setEnabled",
 ]);
 
 function authorizeGatewayMethod(method: string, client: GatewayRequestOptions["client"]) {
@@ -164,11 +184,14 @@ function authorizeGatewayMethod(method: string, client: GatewayRequestOptions["c
 
 export const coreGatewayHandlers: GatewayRequestHandlers = {
   ...connectHandlers,
+  ...opsHandlers,
   ...logsHandlers,
   ...voicewakeHandlers,
+  ...voiceHandlers,
   ...healthHandlers,
   ...channelsHandlers,
   ...chatHandlers,
+  ...orchestratorHandlers,
   ...cronHandlers,
   ...deviceHandlers,
   ...execApprovalsHandlers,
@@ -183,6 +206,8 @@ export const coreGatewayHandlers: GatewayRequestHandlers = {
   ...systemHandlers,
   ...updateHandlers,
   ...nodeHandlers,
+  ...routerStatusHandlers,
+  ...sparkStatusHandlers,
   ...sendHandlers,
   ...usageHandlers,
   ...agentHandlers,
