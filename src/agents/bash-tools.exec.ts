@@ -815,6 +815,7 @@ export function createExecTool(
       : 1800;
   const defaultPathPrepend = normalizePathPrepend(defaults?.pathPrepend);
   const safeBins = resolveSafeBins(defaults?.safeBins);
+  const trustedPaths = resolveTrustedPathEntries(process.env);
   const notifyOnExit = defaults?.notifyOnExit !== false;
   const notifySessionKey = defaults?.sessionKey?.trim() || undefined;
   const approvalRunningNoticeMs = resolveApprovalRunningNoticeMs(defaults?.approvalRunningNoticeMs);

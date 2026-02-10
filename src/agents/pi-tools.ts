@@ -1,3 +1,4 @@
+import type { AgentToolResult } from "@mariozechner/pi-agent-core";
 import {
   codingTools,
   createEditTool,
@@ -5,12 +6,12 @@ import {
   createWriteTool,
   readTool,
 } from "@mariozechner/pi-coding-agent";
-import type { AgentToolResult } from "@mariozechner/pi-agent-core";
 import type { OpenClawConfig } from "../config/config.js";
 import type { ModelAuthMode } from "./model-auth.js";
 import type { AnyAgentTool } from "./pi-tools.types.js";
 import type { SandboxContext } from "./sandbox.js";
 import { logWarn } from "../logger.js";
+import { getGlobalHookRunner } from "../plugins/hook-runner-global.js";
 import { getPluginToolMeta } from "../plugins/tools.js";
 import { isSubagentSessionKey } from "../routing/session-key.js";
 import { resolveGatewayMessageChannel } from "../utils/message-channel.js";
@@ -53,9 +54,6 @@ import {
   resolveToolProfilePolicy,
   stripPluginOnlyAllowlist,
 } from "./tool-policy.js";
-import { getPluginToolMeta } from "../plugins/tools.js";
-import { getGlobalHookRunner } from "../plugins/hook-runner-global.js";
-import { logWarn } from "../logger.js";
 
 function isOpenAIProvider(provider?: string) {
   const normalized = provider?.trim().toLowerCase();
@@ -211,8 +209,6 @@ export function createOpenClawCodingTools(options?: {
   messageThreadId?: string | number;
   sandbox?: SandboxContext | null;
   sessionKey?: string;
-  /** Run id of the currently executing agent run (used for orchestration/telemetry tools). */
-  runId?: string;
   agentDir?: string;
   workspaceDir?: string;
   config?: OpenClawConfig;
@@ -420,7 +416,6 @@ export function createOpenClawCodingTools(options?: {
       sandboxBrowserBridgeUrl: sandbox?.browser?.bridgeUrl,
       allowHostBrowserControl: sandbox ? sandbox.browserAllowHostControl : true,
       agentSessionKey: options?.sessionKey,
-      agentRunId: options?.runId,
       agentChannel: resolveGatewayMessageChannel(options?.messageProvider),
       agentAccountId: options?.agentAccountId,
       agentTo: options?.messageTo,
