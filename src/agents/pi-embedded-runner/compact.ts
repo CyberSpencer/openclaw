@@ -41,6 +41,7 @@ import {
   resolveCompactionReserveTokensFloor,
 } from "../pi-settings.js";
 import { createOpenClawCodingTools } from "../pi-tools.js";
+import { resolveProviderEndpointConfig } from "../provider-endpoints.js";
 import { resolveSandboxContext } from "../sandbox.js";
 import { repairSessionFileIfNeeded } from "../session-file-repair.js";
 import { guardSessionManager } from "../session-tool-result-guard-wrapper.js";
@@ -121,12 +122,17 @@ export async function compactEmbeddedPiSessionDirect(
   const provider = (params.provider ?? DEFAULT_PROVIDER).trim() || DEFAULT_PROVIDER;
   const modelId = (params.model ?? DEFAULT_MODEL).trim() || DEFAULT_MODEL;
   const agentDir = params.agentDir ?? resolveOpenClawAgentDir();
-  await ensureOpenClawModelsJson(params.config, agentDir);
+  const { cfg: resolvedCfg } = await resolveProviderEndpointConfig({
+    cfg: params.config ?? {},
+    providerId: provider,
+  });
+  const effectiveCfg = resolvedCfg ?? params.config;
+  await ensureOpenClawModelsJson(effectiveCfg, agentDir);
   const { model, error, authStorage, modelRegistry } = resolveModel(
     provider,
     modelId,
     agentDir,
-    params.config,
+    effectiveCfg,
   );
   if (!model) {
     return {
@@ -138,7 +144,7 @@ export async function compactEmbeddedPiSessionDirect(
   try {
     const apiKeyInfo = await getApiKeyForModel({
       model,
-      cfg: params.config,
+      cfg: effectiveCfg,
       profileId: params.authProfileId,
       agentDir,
     });

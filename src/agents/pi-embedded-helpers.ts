@@ -29,7 +29,7 @@ export {
   isRawApiErrorPayload,
   isRateLimitAssistantError,
   isRateLimitErrorMessage,
-  isTimeoutErrorMessage,
+  isTransientNetworkErrorMessage,
   parseImageDimensionError,
   parseImageSizeError,
 } from "./pi-embedded-helpers/errors.js";

@@ -17,8 +17,10 @@ import { runWithModelFallback } from "../agents/model-fallback.js";
 import {
   buildAllowedModelSet,
   isCliProvider,
+  isLocalProvider,
   modelKey,
   resolveConfiguredModelRef,
+  resolveSecretsLocalModel,
   resolveThinkingDefault,
 } from "../agents/model-selection.js";
 import { runEmbeddedPiAgent } from "../agents/pi-embedded.js";
@@ -50,13 +52,13 @@ import {
   registerAgentRunContext,
 } from "../infra/agent-events.js";
 import { getRemoteSkillEligibility } from "../infra/skills-remote.js";
+import { getDefaultRedactPatterns, redactSensitiveText } from "../logging/redact.js";
 import { normalizeAgentId } from "../routing/session-key.js";
 import { defaultRuntime, type RuntimeEnv } from "../runtime.js";
 import { applyVerboseOverride } from "../sessions/level-overrides.js";
 import { applyModelOverrideToSessionEntry } from "../sessions/model-overrides.js";
 import { resolveSendPolicy } from "../sessions/send-policy.js";
 import { resolveMessageChannel } from "../utils/message-channel.js";
-import { getDefaultRedactPatterns, redactSensitiveText } from "../logging/redact.js";
 import { deliverAgentCommandResult } from "./agent/delivery.js";
 import { resolveAgentRunContext } from "./agent/run-context.js";
 import { updateSessionStoreAfterAgentRun } from "./agent/session-store.js";
@@ -341,6 +343,17 @@ export async function agentCommand(
       }
     }
 
+    // --- Layer 2: Pre-flight secrets check ---
+    // Detect once; reused by both pre-flight (here) and failover guard below.
+    const promptHasSecrets =
+      redactSensitiveText(body, { mode: "tools", patterns: getDefaultRedactPatterns() }) !== body;
+
+    if (promptHasSecrets && !isLocalProvider(provider, cfg)) {
+      const localRef = resolveSecretsLocalModel(cfg);
+      provider = localRef.provider;
+      model = localRef.model;
+    }
+
     if (!resolvedThinkLevel) {
       let catalogForThinking = modelCatalog ?? allowedModelCatalog;
       if (!catalogForThinking || catalogForThinking.length === 0) {
@@ -388,13 +401,9 @@ export async function agentCommand(
       );
       const spawnedBy = opts.spawnedBy ?? sessionEntry?.spawnedBy;
       // Safety: if the prompt appears to contain secrets, disable model fallback so we never
-      // accidentally spill to cloud providers during failover attempts (router is disabled on fallbacks).
+      // accidentally spill to cloud providers during failover attempts.
       let fallbacksOverride = resolveAgentModelFallbacksOverride(cfg, sessionAgentId);
-      const redacted = redactSensitiveText(body, {
-        mode: "tools",
-        patterns: getDefaultRedactPatterns(),
-      });
-      if (redacted !== body) {
+      if (promptHasSecrets) {
         fallbacksOverride = [];
       }
       const fallbackResult = await runWithModelFallback({

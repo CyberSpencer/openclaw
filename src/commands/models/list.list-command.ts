@@ -2,7 +2,7 @@ import type { Api, Model } from "@mariozechner/pi-ai";
 import type { RuntimeEnv } from "../../runtime.js";
 import type { ModelRow } from "./list.types.js";
 import { ensureAuthProfileStore } from "../../agents/auth-profiles.js";
-import { parseModelRef } from "../../agents/model-selection.js";
+import { isLocalProviderUrl, parseModelRef } from "../../agents/model-selection.js";
 import { loadConfig } from "../../config/config.js";
 import { resolveConfiguredEntries } from "./list.configured.js";
 import { loadModelRegistry, toModelRow } from "./list.registry.js";
@@ -48,22 +48,6 @@ export async function modelsListCommand(
 
   const rows: ModelRow[] = [];
 
-  const isLocalBaseUrl = (baseUrl: string) => {
-    try {
-      const url = new URL(baseUrl);
-      const host = url.hostname.toLowerCase();
-      return (
-        host === "localhost" ||
-        host === "127.0.0.1" ||
-        host === "0.0.0.0" ||
-        host === "::1" ||
-        host.endsWith(".local")
-      );
-    } catch {
-      return false;
-    }
-  };
-
   if (opts.all) {
     const sorted = [...models].toSorted((a, b) => {
       const p = a.provider.localeCompare(b.provider);
@@ -77,7 +61,7 @@ export async function modelsListCommand(
       if (providerFilter && model.provider.toLowerCase() !== providerFilter) {
         continue;
       }
-      if (opts.local && !isLocalBaseUrl(model.baseUrl)) {
+      if (opts.local && !isLocalProviderUrl(model.baseUrl)) {
         continue;
       }
       const key = modelKey(model.provider, model.id);
@@ -100,7 +84,7 @@ export async function modelsListCommand(
         continue;
       }
       const model = modelByKey.get(entry.key);
-      if (opts.local && model && !isLocalBaseUrl(model.baseUrl)) {
+      if (opts.local && model && !isLocalProviderUrl(model.baseUrl)) {
         continue;
       }
       if (opts.local && !model) {

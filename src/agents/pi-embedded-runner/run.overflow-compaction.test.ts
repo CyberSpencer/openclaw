@@ -152,7 +152,7 @@ vi.mock("../pi-embedded-helpers.js", async () => {
     formatAssistantErrorText: vi.fn(() => ""),
     parseImageSizeError: vi.fn(() => null),
     pickFallbackThinkingLevel: vi.fn(() => null),
-    isTimeoutErrorMessage: vi.fn(() => false),
+    isTransientNetworkErrorMessage: vi.fn(() => false),
     parseImageDimensionError: vi.fn(() => null),
   };
 });

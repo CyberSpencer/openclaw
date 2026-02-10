@@ -23,7 +23,7 @@ describe("classifyFailoverReason", () => {
     ).toBe("rate_limit");
     expect(classifyFailoverReason("invalid request format")).toBe("format");
     expect(classifyFailoverReason("credit balance too low")).toBe("billing");
-    expect(classifyFailoverReason("deadline exceeded")).toBe("timeout");
+    expect(classifyFailoverReason("deadline exceeded")).toBe("network");
     expect(classifyFailoverReason("string should match pattern")).toBe("format");
     expect(classifyFailoverReason("bad request")).toBeNull();
     expect(
