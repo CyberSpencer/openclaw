@@ -212,5 +212,8 @@
       "protobufjs",
       "sharp"
     ]
+  },
+  "xDependencyNotes": {
+    "@mariozechner/pi-tui": "Pinned to 0.50.7 while the pi-* core libs are on 0.52.8; bumping pi-tui requires a coordinated upgrade + validation (keep lockfile stable in this PR)."
   }
 }

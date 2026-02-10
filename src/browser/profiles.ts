@@ -1,7 +1,7 @@
 /**
  * CDP port allocation for browser profiles.
  *
- * Default port range: 18800-18899 (100 profiles max)
+ * Default port range: 32566-32665 (100 profiles max)
  * Ports are allocated once at profile creation and persisted in config.
  * Multi-instance: callers may pass an explicit range to avoid collisions.
  *
