@@ -512,10 +512,71 @@
 }
 
 .agent-subagent__title {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
   font-size: 13px;
   font-weight: 650;
   letter-spacing: -0.01em;
   color: var(--text);
+}
+
+.agent-subagent__dot {
+  width: 8px;
+  height: 8px;
+  border-radius: var(--radius-full);
+  flex: 0 0 auto;
+  background: color-mix(in srgb, var(--muted) 22%, transparent);
+  border: 1px solid color-mix(in srgb, var(--muted) 28%, var(--border));
+}
+
+.agent-subagent__dot--neutral {
+  background: color-mix(in srgb, var(--muted) 16%, transparent);
+  border-color: color-mix(in srgb, var(--muted) 20%, var(--border));
+}
+
+.agent-subagent__dot--todo {
+  background: transparent;
+  border-color: color-mix(in srgb, var(--muted) 30%, var(--border));
+}
+
+.agent-subagent__dot--running {
+  background: var(--accent);
+  border-color: color-mix(in srgb, var(--accent) 55%, var(--border));
+  box-shadow: 0 0 0 3px var(--accent-subtle);
+  animation: subagentPulse 1.2s ease-in-out infinite;
+}
+
+.agent-subagent__dot--done {
+  background: var(--ok);
+  border-color: color-mix(in srgb, var(--ok) 55%, var(--border));
+  box-shadow: 0 0 0 3px var(--ok-subtle);
+}
+
+.agent-subagent__dot--blocked {
+  background: var(--warn);
+  border-color: color-mix(in srgb, var(--warn) 55%, var(--border));
+  box-shadow: 0 0 0 3px var(--warn-subtle);
+}
+
+@keyframes subagentPulse {
+  0% {
+    box-shadow: 0 0 0 2px var(--accent-subtle);
+    opacity: 0.9;
+  }
+  70% {
+    box-shadow: 0 0 0 10px transparent;
+    opacity: 1;
+  }
+  100% {
+    box-shadow: 0 0 0 2px transparent;
+    opacity: 0.9;
+  }
+}
+
+.agent-subagent__titleText {
+  min-width: 0;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;

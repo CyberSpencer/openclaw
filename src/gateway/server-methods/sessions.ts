@@ -250,8 +250,14 @@ export const sessionsHandlers: GatewayRequestHandlers = {
     // Resolve default model selection for the child session.
     const targetAgentConfig = resolveAgentConfig(cfg, targetAgentId);
     const modelOverride = typeof p.model === "string" ? p.model.trim() : "";
+    const inheritedModel = (() => {
+      const { entry } = loadSessionEntry(requesterInternalKey);
+      const model = typeof entry?.model === "string" ? entry.model.trim() : "";
+      return model || undefined;
+    })();
     const resolvedModel =
       (modelOverride ? modelOverride : undefined) ??
+      inheritedModel ??
       normalizeModelSelection(targetAgentConfig?.subagents?.model) ??
       normalizeModelSelection(cfg.agents?.defaults?.subagents?.model);
 

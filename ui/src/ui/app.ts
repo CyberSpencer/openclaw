@@ -449,7 +449,7 @@ export class OpenClawApp extends LitElement {
     if (this.subagentMonitorPollTimer != null) return;
     this.subagentMonitorPollTimer = window.setInterval(() => {
       void loadSubagentMonitor(this, { quiet: true });
-    }, 1500);
+    }, 3000);
   }
 
   private stopSubagentMonitorPolling() {
@@ -474,7 +474,25 @@ export class OpenClawApp extends LitElement {
     }
 
     const runActive = Boolean(this.chatRunId) || this.chatStream !== null;
-    if (this.connected && runActive) this.startSubagentMonitorPolling();
+    const now = Date.now();
+    const tasks = this.chatTaskPlan?.tasks ?? [];
+    const hasSubagentTasks = tasks.some(
+      (task) => typeof task.assignedSessionKey === "string" && task.assignedSessionKey.trim(),
+    );
+    const planIncomplete =
+      hasSubagentTasks &&
+      tasks.some((task) => {
+        const status = typeof task.status === "string" ? task.status.trim().toLowerCase() : "todo";
+        return status !== "done" && status !== "skipped";
+      });
+    const subagents = this.subagentMonitorResult?.sessions ?? [];
+    const hasRecentSubagentActivity = subagents.some((s) => {
+      const updatedAt = typeof s.updatedAt === "number" ? s.updatedAt : 0;
+      return updatedAt > 0 && now - updatedAt < 60_000;
+    });
+
+    const shouldPoll = this.connected && (runActive || planIncomplete || hasRecentSubagentActivity);
+    if (shouldPoll) this.startSubagentMonitorPolling();
     else this.stopSubagentMonitorPolling();
   }
 

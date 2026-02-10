@@ -27,7 +27,9 @@ export async function loadSubagentMonitor(
     const params: Record<string, unknown> = {
       includeGlobal: false,
       includeUnknown: false,
-      includeDerivedTitles: true,
+      // Derived titles require transcript reads. Subagents already have labels,
+      // so keep this off to reduce churn while polling.
+      includeDerivedTitles: false,
       includeLastMessage: true,
       spawnedBy,
     };
@@ -42,4 +44,3 @@ export async function loadSubagentMonitor(
     state.subagentMonitorLoading = false;
   }
 }
-

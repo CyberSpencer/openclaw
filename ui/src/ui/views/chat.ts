@@ -597,6 +597,26 @@ function renderOrchestrationCard(props: ChatProps) {
   const tasks = Array.isArray(plan?.tasks) ? (plan?.tasks as TaskPlanTask[]) : [];
   const progress = computeTaskProgress(plan);
   const subagentByKey = new Map(subagents.map((s) => [s.key, s]));
+  const subagentStatusByKey = (() => {
+    const priority: Record<TaskPlanStatus, number> = {
+      running: 5,
+      blocked: 4,
+      todo: 3,
+      done: 2,
+      skipped: 1,
+    };
+    const map = new Map<string, TaskPlanStatus>();
+    for (const task of tasks) {
+      const key = (task.assignedSessionKey ?? "").trim();
+      if (!key) continue;
+      const status = normalizeTaskStatus(task.status);
+      const existing = map.get(key);
+      if (!existing || priority[status] > priority[existing]) {
+        map.set(key, status);
+      }
+    }
+    return map;
+  })();
 
   return html`
     <section class="card agent-orchestration" aria-label="Agent orchestration">
@@ -819,6 +839,17 @@ function renderOrchestrationCard(props: ChatProps) {
                         const updatedAt = typeof s.updatedAt === "number" ? s.updatedAt : null;
                         const preview = (s.lastMessagePreview ?? "").trim();
                         const hasPreview = Boolean(preview);
+                        const status = subagentStatusByKey.get(s.key);
+                        const dotStatus =
+                          status === "running"
+                            ? "running"
+                            : status === "blocked"
+                              ? "blocked"
+                              : status === "done" || status === "skipped"
+                                ? "done"
+                                : status === "todo"
+                                  ? "todo"
+                                  : "neutral";
                         return html`
                           <button
                             class="agent-subagent"
@@ -827,7 +858,13 @@ function renderOrchestrationCard(props: ChatProps) {
                             title="Open subagent session"
                           >
                             <div class="agent-subagent__main">
-                              <div class="agent-subagent__title">${label}</div>
+                              <div class="agent-subagent__title">
+                                <span
+                                  class="agent-subagent__dot agent-subagent__dot--${dotStatus}"
+                                  aria-hidden="true"
+                                ></span>
+                                <span class="agent-subagent__titleText">${label}</span>
+                              </div>
                               <div class="agent-subagent__sub">
                                 <div
                                   class="agent-subagent__preview ${hasPreview ? "" : "agent-subagent__preview--empty"}"
