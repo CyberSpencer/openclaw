@@ -103,9 +103,6 @@ export async function promptRemoteGatewayConfig(
             `ssh -N -L 18789:127.0.0.1:${port}${
               selectedBeacon.sshPort ? ` -p ${selectedBeacon.sshPort}` : ""
             } <user>@${host}`,
-
-              selectedBeacon.sshPort ? ` -p ${selectedBeacon.sshPort}` : ""
-            } <user>@${host}`,
             "Docs: https://docs.openclaw.ai/gateway/remote",
           ].join("\n"),
           "SSH tunnel",
