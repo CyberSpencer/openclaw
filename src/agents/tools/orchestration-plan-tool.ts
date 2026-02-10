@@ -149,20 +149,22 @@ export function createOrchestrationPlanTool(opts?: {
         return jsonResult({ status: "error", error: "plan required" });
       }
 
+      const requesterSessionKey = opts?.agentSessionKey?.trim() || "";
+
       emitAgentEvent({
         runId,
         stream: "orchestration",
-        sessionKey: opts?.agentSessionKey,
+        sessionKey: requesterSessionKey || undefined,
         data: { type: "task_plan", plan: normalized },
       });
 
       let persisted = false;
       let persistError: string | undefined;
-      if (opts?.agentSessionKey) {
+      if (requesterSessionKey) {
         try {
           await callGateway({
             method: "sessions.patch",
-            params: { key: opts.agentSessionKey, taskPlan: normalized },
+            params: { key: requesterSessionKey, taskPlan: normalized },
             timeoutMs: 10_000,
           });
           persisted = true;
@@ -171,9 +173,90 @@ export function createOrchestrationPlanTool(opts?: {
         }
       }
 
+      // Auto-delegate tasks to subagents when tasks are marked todo and have no assignment.
+      // This keeps orchestration deterministic: the plan is the source of truth for progress,
+      // and subagents are spawned directly from it.
+      const delegated: Array<{ taskId: string; childSessionKey: string; runId: string }> = [];
+      let delegatedPlan = normalized;
+
+      if (requesterSessionKey) {
+        const nextTasks = normalized.tasks.map((t) => ({ ...t }));
+        for (const task of nextTasks) {
+          const status = normalizeStatus(task.status);
+          const hasAssignment = Boolean((task.assignedSessionKey ?? "").trim());
+          if (status !== "todo" || hasAssignment) {
+            continue;
+          }
+
+          const label = task.title;
+          const prompt =
+            task.detail && task.detail.trim()
+              ? `${task.title}\n\n${task.detail}`.trim()
+              : task.title.trim();
+
+          try {
+            const res = await callGateway<{
+              status?: string;
+              childSessionKey?: string;
+              runId?: string;
+              warning?: string;
+            }>({
+              method: "sessions.spawn",
+              params: {
+                requesterSessionKey,
+                task: prompt,
+                label,
+                // Idempotent within the parent run.
+                idempotencyKey: `${runId}:${normalized.id}:${task.id}`,
+              },
+              timeoutMs: 10_000,
+            });
+            if (res?.status !== "accepted" || !res.childSessionKey || !res.runId) {
+              continue;
+            }
+            task.assignedSessionKey = res.childSessionKey;
+            task.assignedRunId = res.runId;
+            task.status = "running";
+            delegated.push({
+              taskId: task.id,
+              childSessionKey: res.childSessionKey,
+              runId: res.runId,
+            });
+          } catch {
+            // Best-effort: failing to spawn a subagent shouldn't break the parent run.
+          }
+        }
+
+        if (delegated.length > 0) {
+          delegatedPlan = { ...normalized, tasks: nextTasks };
+
+          emitAgentEvent({
+            runId,
+            stream: "orchestration",
+            sessionKey: requesterSessionKey,
+            data: { type: "task_plan", plan: delegatedPlan },
+          });
+
+          try {
+            await callGateway({
+              method: "sessions.patch",
+              params: { key: requesterSessionKey, taskPlan: delegatedPlan },
+              timeoutMs: 10_000,
+            });
+          } catch (err) {
+            // Keep the original persistError if it exists, otherwise attach this one.
+            if (!persistError) {
+              persistError = err instanceof Error ? err.message : String(err);
+            }
+          }
+        }
+      }
+
       return jsonResult({
         status: "ok",
         persisted,
+        delegated,
+        plan: delegatedPlan,
         ...(persistError ? { persistError } : {}),
       });
     },

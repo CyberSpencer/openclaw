@@ -245,7 +245,7 @@ export const sessionsHandlers: GatewayRequestHandlers = {
     const childSessionKey = `agent:${targetAgentId}:subagent:${randomUUID()}`;
     const spawnedByKey = requesterInternalKey;
     const label = typeof p.label === "string" ? p.label.trim() : "";
-    const cleanup = p.cleanup === "delete" || p.cleanup === "keep" ? p.cleanup : "keep";
+    const cleanup = p.cleanup === "delete" || p.cleanup === "keep" ? p.cleanup : "delete";
 
     // Resolve default model selection for the child session.
     const targetAgentConfig = resolveAgentConfig(cfg, targetAgentId);

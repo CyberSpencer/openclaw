@@ -122,7 +122,7 @@ export function createSessionsSpawnTool(opts?: {
       const modelOverride = readStringParam(params, "model");
       const thinkingOverrideRaw = readStringParam(params, "thinking");
       const cleanup =
-        params.cleanup === "keep" || params.cleanup === "delete" ? params.cleanup : "keep";
+        params.cleanup === "keep" || params.cleanup === "delete" ? params.cleanup : "delete";
       const requesterOrigin = normalizeDeliveryContext({
         channel: opts?.agentChannel,
         accountId: opts?.agentAccountId,

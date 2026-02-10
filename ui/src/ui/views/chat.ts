@@ -379,12 +379,49 @@ function buildTerminalItems(props: ChatProps): TerminalItem[] {
     return a.order - b.order;
   });
 
+  // Tool-call metadata is often emitted in a separate assistant message (toolUse) while the
+  // tool output is persisted as a distinct toolResult message. Build a lookup so the UI can
+  // render meaningful args/name even when only toolResult messages are present in history.
+  const toolCallsById = new Map<string, { toolName?: string; args?: unknown }>();
+  for (const entry of merged) {
+    const m = entry.message as Record<string, unknown>;
+    const topToolCallId =
+      typeof m.toolCallId === "string"
+        ? m.toolCallId.trim()
+        : typeof m.tool_call_id === "string"
+          ? m.tool_call_id.trim()
+          : "";
+    const content = m.content;
+    if (!Array.isArray(content)) continue;
+    for (const block of content) {
+      if (!block || typeof block !== "object" || Array.isArray(block)) continue;
+      const b = block as Record<string, unknown>;
+      const t = String(b.type ?? "").trim().toLowerCase();
+      const isToolCall =
+        t === "toolcall" || t === "tool_call" || t === "tooluse" || t === "tool_use";
+      if (!isToolCall) continue;
+      const idRaw = typeof b.id === "string" ? b.id : topToolCallId;
+      const id = typeof idRaw === "string" ? idRaw.trim() : "";
+      if (!id) continue;
+      const toolName = typeof b.name === "string" ? b.name.trim() : undefined;
+      const args = (b.args ?? b.arguments ?? b.parameters) as unknown;
+      const existing = toolCallsById.get(id);
+      if (existing) {
+        if (!existing.toolName && toolName) existing.toolName = toolName;
+        if (existing.args === undefined && args !== undefined) existing.args = args;
+      } else {
+        toolCallsById.set(id, { toolName, args });
+      }
+    }
+  }
+
   const items: TerminalItem[] = [];
   for (const entry of merged) {
     const normalized = normalizeMessage(entry.message);
     const role = normalizeRoleForGrouping(normalized.role);
 
     if (role === "tool") {
+      const raw = entry.message as Record<string, unknown>;
       const toolCall = normalized.content.find(
         (c) => String(c.type ?? "").toLowerCase() === "toolcall",
       );
@@ -392,9 +429,33 @@ function buildTerminalItems(props: ChatProps): TerminalItem[] {
         const t = String(c.type ?? "").toLowerCase();
         return t === "toolresult" || t === "tool_result";
       });
-      const toolName = toolCall?.name ?? toolResult?.name ?? "tool";
-      const args = toolCall?.args ?? {};
-      const output = typeof toolResult?.text === "string" ? toolResult.text : null;
+      const toolCallId =
+        typeof raw.toolCallId === "string"
+          ? raw.toolCallId.trim()
+          : typeof raw.tool_call_id === "string"
+            ? raw.tool_call_id.trim()
+            : "";
+      const mapped = toolCallId ? toolCallsById.get(toolCallId) : undefined;
+
+      const toolName =
+        toolCall?.name?.trim() ||
+        toolResult?.name?.trim() ||
+        (typeof raw.toolName === "string" ? raw.toolName.trim() : "") ||
+        (typeof raw.tool_name === "string" ? raw.tool_name.trim() : "") ||
+        mapped?.toolName?.trim() ||
+        "tool";
+
+      const args = toolCall?.args ?? mapped?.args ?? {};
+      const output = (() => {
+        if (typeof toolResult?.text === "string" && toolResult.text.trim()) {
+          return toolResult.text;
+        }
+        const rawText = extractTextCached(entry.message);
+        if (typeof rawText === "string" && rawText.trim()) {
+          return rawText;
+        }
+        return null;
+      })();
 
       items.push({
         kind: "tool",
@@ -724,6 +785,7 @@ function renderOrchestrationCard(props: ChatProps) {
                             const status = normalizeTaskStatus(task.status);
                             const assignedKey = (task.assignedSessionKey ?? "").trim();
                             const assigned = assignedKey ? subagentByKey.get(assignedKey) : undefined;
+                            const canOpenAssigned = Boolean(assigned);
                             const assignedLabel =
                               assigned?.label?.trim() ||
                               assigned?.derivedTitle?.trim() ||
@@ -750,8 +812,14 @@ function renderOrchestrationCard(props: ChatProps) {
                                           <button
                                             class="agent-task__assigned"
                                             type="button"
-                                            @click=${() => props.onSessionKeyChange(assignedKey)}
-                                            title="Open assigned subagent"
+                                            ?disabled=${!canOpenAssigned}
+                                            @click=${() => {
+                                              if (!canOpenAssigned) return;
+                                              props.onSessionKeyChange(assignedKey);
+                                            }}
+                                            title=${canOpenAssigned
+                                              ? "Open assigned subagent"
+                                              : "Assigned subagent was pruned"}
                                           >
                                             <span class="mono agent-task__assignedKey">
                                               ${assignedLabel}
@@ -759,6 +827,11 @@ function renderOrchestrationCard(props: ChatProps) {
                                             <span class="agent-task__assignedAge mono">
                                               ${formatAge(updatedAt)}
                                             </span>
+                                            ${
+                                              !canOpenAssigned
+                                                ? html`<span class="muted agent-task__assignedMissing">(pruned)</span>`
+                                                : nothing
+                                            }
                                           </button>
                                         `
                                       : nothing

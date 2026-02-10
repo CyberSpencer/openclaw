@@ -283,6 +283,12 @@
     transform var(--duration-fast) var(--ease-out);
 }
 
+.agent-task__assigned:disabled {
+  cursor: not-allowed;
+  opacity: 0.75;
+  transform: none;
+}
+
 .agent-task__assigned:hover {
   background: var(--bg-hover);
   border-color: var(--border);
@@ -310,6 +316,11 @@
 .agent-task__assignedAge {
   font-size: 10px;
   color: var(--muted);
+  flex: 0 0 auto;
+}
+
+.agent-task__assignedMissing {
+  font-size: 10px;
   flex: 0 0 auto;
 }
 

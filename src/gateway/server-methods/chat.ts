@@ -22,6 +22,7 @@ import {
   isChatStopCommandText,
   resolveChatRunExpiresAtMs,
 } from "../chat-abort.js";
+import { stopSubagentsForRequester } from "../../auto-reply/reply/abort.js";
 import { type ChatImageContent, parseMessageWithAttachments } from "../chat-attachments.js";
 import {
   ErrorCodes,
@@ -272,18 +273,29 @@ export const chatHandlers: GatewayRequestHandlers = {
       nodeSendToSession: context.nodeSendToSession,
     };
 
+    const { cfg } = loadSessionEntry(sessionKey);
+    const { stopped: stoppedSubagents } = stopSubagentsForRequester({
+      cfg,
+      requesterSessionKey: sessionKey,
+    });
+
     if (!runId) {
       const res = abortChatRunsForSessionKey(ops, {
         sessionKey,
         stopReason: "rpc",
       });
-      respond(true, { ok: true, aborted: res.aborted, runIds: res.runIds });
+      respond(true, {
+        ok: true,
+        aborted: res.aborted,
+        runIds: res.runIds,
+        stoppedSubagents,
+      });
       return;
     }
 
     const active = context.chatAbortControllers.get(runId);
     if (!active) {
-      respond(true, { ok: true, aborted: false, runIds: [] });
+      respond(true, { ok: true, aborted: false, runIds: [], stoppedSubagents });
       return;
     }
     if (active.sessionKey !== sessionKey) {
@@ -304,6 +316,7 @@ export const chatHandlers: GatewayRequestHandlers = {
       ok: true,
       aborted: res.aborted,
       runIds: res.aborted ? [runId] : [],
+      stoppedSubagents,
     });
   },
   "chat.steer": ({ params, respond, context }) => {
@@ -500,7 +513,12 @@ export const chatHandlers: GatewayRequestHandlers = {
         },
         { sessionKey: p.sessionKey, stopReason: "stop" },
       );
-      respond(true, { ok: true, aborted: res.aborted, runIds: res.runIds });
+      const { cfg } = loadSessionEntry(p.sessionKey);
+      const { stopped: stoppedSubagents } = stopSubagentsForRequester({
+        cfg,
+        requesterSessionKey: p.sessionKey,
+      });
+      respond(true, { ok: true, aborted: res.aborted, runIds: res.runIds, stoppedSubagents });
       return;
     }
 

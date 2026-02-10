@@ -62,7 +62,8 @@ function buildOrchestrationSection(params: { isMinimal: boolean; availableTools:
     "For non-trivial requests, treat orchestration as a first-class artifact:",
     "- Start by creating a short task plan (to-do list) and publish it with `orchestration_plan`.",
     "- Keep task statuses updated: todo, running, done, blocked, skipped.",
-    "- Delegate focused tasks to subagents (sessions_spawn) and record the child sessionKey as assignedSessionKey on that task.",
+    "- Mark tasks `todo` until assigned. The system will auto-spawn subagents for `todo` tasks with no assignedSessionKey, then patch the plan with assignedSessionKey + status=running.",
+    "- Only call sessions_spawn manually for truly ad-hoc work (and then record assignedSessionKey/assignedRunId on the task).",
     "- Update the plan as work completes; the Control UI renders progress from it.",
     "",
   ];
