@@ -331,14 +331,9 @@ function finalizeSubagentCleanup(runId: string, cleanup: "delete" | "keep", didA
   if (!entry) {
     return;
   }
-  if (cleanup === "delete") {
-    if (!didAnnounce) {
-      // Allow retry on the next wake if the announce failed.
-      entry.cleanupHandled = false;
-      persistSubagentRuns();
-      return;
-    }
-    subagentRuns.delete(runId);
+  if (!didAnnounce) {
+    // Allow retry on the next wake if announce was deferred or failed.
+    entry.cleanupHandled = false;
     persistSubagentRuns();
     return;
   }

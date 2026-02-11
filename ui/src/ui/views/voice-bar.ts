@@ -9,8 +9,8 @@
  */
 
 import { html, nothing } from "lit";
-import { icons } from "../icons";
-import type { VoiceState, VoiceCapabilities, VoiceTimings, ConversationPhase } from "../controllers/voice";
+import type { VoiceState, VoiceCapabilities, VoiceTimings } from "../controllers/voice.ts";
+import { icons } from "../icons.ts";
 
 export type VoiceBarProps = {
   state: VoiceState;
@@ -25,7 +25,9 @@ export type VoiceBarProps = {
 };
 
 function renderCapabilityIndicator(capabilities: VoiceCapabilities | null) {
-  if (!capabilities) return nothing;
+  if (!capabilities) {
+    return nothing;
+  }
 
   const items = [
     {
@@ -80,7 +82,9 @@ function renderCapabilityIndicator(capabilities: VoiceCapabilities | null) {
 }
 
 function renderTimings(timings: VoiceTimings | null) {
-  if (!timings) return nothing;
+  if (!timings) {
+    return nothing;
+  }
 
   const items = [
     { label: "STT", value: timings.sttMs },
@@ -105,7 +109,9 @@ function renderTimings(timings: VoiceTimings | null) {
 }
 
 function renderRecordingIndicator(isRecording: boolean) {
-  if (!isRecording) return nothing;
+  if (!isRecording) {
+    return nothing;
+  }
 
   return html`
     <div class="voice-bar__recording">
@@ -116,7 +122,9 @@ function renderRecordingIndicator(isRecording: boolean) {
 }
 
 function renderProcessingIndicator(isProcessing: boolean) {
-  if (!isProcessing) return nothing;
+  if (!isProcessing) {
+    return nothing;
+  }
 
   return html`
     <div class="voice-bar__processing">
@@ -127,7 +135,9 @@ function renderProcessingIndicator(isProcessing: boolean) {
 }
 
 function renderTranscription(transcription: string | null) {
-  if (!transcription) return nothing;
+  if (!transcription) {
+    return nothing;
+  }
 
   return html`
     <div class="voice-bar__transcription">
@@ -138,7 +148,9 @@ function renderTranscription(transcription: string | null) {
 }
 
 function renderResponse(response: string | null) {
-  if (!response) return nothing;
+  if (!response) {
+    return nothing;
+  }
 
   return html`
     <div class="voice-bar__response">
@@ -149,7 +161,9 @@ function renderResponse(response: string | null) {
 }
 
 function renderError(error: string | null, onRetry: () => void) {
-  if (!error) return nothing;
+  if (!error) {
+    return nothing;
+  }
 
   return html`
     <div class="voice-bar__error">
@@ -159,50 +173,10 @@ function renderError(error: string | null, onRetry: () => void) {
   `;
 }
 
-function getPhaseDisplay(phase: ConversationPhase, speechDetected: boolean): { text: string; cssClass: string } {
-  switch (phase) {
-    case "listening":
-      return {
-        text: speechDetected ? "Listening..." : "Speak now...",
-        cssClass: "voice-bar__status--listening",
-      };
-    case "processing":
-      return {
-        text: "Thinking...",
-        cssClass: "voice-bar__status--processing",
-      };
-    case "speaking":
-      return {
-        text: "Speaking...",
-        cssClass: "voice-bar__status--speaking",
-      };
-    default:
-      return {
-        text: "Ready",
-        cssClass: "voice-bar__status--ready",
-      };
-  }
-}
-
-function renderConversationStatus(state: VoiceState) {
-  if (!state.conversationActive) return nothing;
-  
-  const { text, cssClass } = getPhaseDisplay(state.phase, state.speechDetected);
-  
-  // Show audio level indicator when listening
-  const showLevel = state.phase === "listening" && state.speechDetected;
-  
-  return html`
-    <div class="voice-bar__conversation-status ${cssClass}">
-      <span class="voice-bar__status-indicator"></span>
-      <span class="voice-bar__status-text">${text}</span>
-      ${showLevel ? html`<span class="voice-bar__audio-level" style="width: ${Math.min(state.currentAudioLevel, 100)}%"></span>` : nothing}
-    </div>
-  `;
-}
-
 export function renderVoiceBar(props: VoiceBarProps) {
-  if (!props.visible) return nothing;
+  if (!props.visible) {
+    return nothing;
+  }
 
   const {
     state,
@@ -218,10 +192,10 @@ export function renderVoiceBar(props: VoiceBarProps) {
   const canStart = state.connected && state.enabled && !state.conversationActive;
   const isActive = state.conversationActive;
   const isRecording = isActive && state.phase === "listening";
-  
+
   // Simple toggle: start or stop conversation
   const mainButtonLabel = isActive ? "End Conversation" : "Start Conversation";
-  
+
   const handleMainClick = () => {
     if (isActive) {
       onStopConversation();
@@ -242,7 +216,7 @@ export function renderVoiceBar(props: VoiceBarProps) {
           ${expanded ? icons.chevronDown || "▼" : icons.chevronUp || "▲"}
         </button>
         <span class="voice-bar__title">Voice Conversation</span>
-        <span class="voice-bar__mode">${state.driveOpenClaw ? "Tools" : state.mode === "personaplex" ? "S2S" : state.mode}</span>
+        <span class="voice-bar__mode">${state.driveOpenClaw ? "Tools" : state.mode === "personaplex" ? "S2S" : state.mode === "spark" ? "Spark" : state.mode}</span>
         <button
           class="voice-bar__close"
           type="button"
@@ -266,20 +240,27 @@ export function renderVoiceBar(props: VoiceBarProps) {
         </button>
         
         <div class="voice-bar__status">
-          ${state.conversationActive && state.phase === "listening"
-            ? renderRecordingIndicator(true)
-            : nothing}
-          ${state.conversationActive && state.phase === "processing"
-            ? renderProcessingIndicator(true)
-            : nothing}
-          ${state.conversationActive && state.phase === "speaking"
-            ? html`<div class="voice-bar__processing">${icons.loader}<span>Speaking...</span></div>`
-            : nothing}
+          ${
+            state.conversationActive && state.phase === "listening"
+              ? renderRecordingIndicator(true)
+              : nothing
+          }
+          ${
+            state.conversationActive && state.phase === "processing"
+              ? renderProcessingIndicator(true)
+              : nothing
+          }
+          ${
+            state.conversationActive && state.phase === "speaking"
+              ? html`<div class="voice-bar__processing">${icons.loader}<span>Speaking...</span></div>`
+              : nothing
+          }
         </div>
       </div>
 
-      ${expanded
-        ? html`
+      ${
+        expanded
+          ? html`
             <div class="voice-bar__details">
               <label class="field checkbox voice-bar__parity-toggle">
                 <input
@@ -299,23 +280,24 @@ export function renderVoiceBar(props: VoiceBarProps) {
               ${renderError(state.error, onRetry)}
             </div>
           `
-        : nothing}
+          : nothing
+      }
 
-      ${!state.enabled
-        ? html`
-            <div class="voice-bar__disabled">
-              Voice mode is disabled. Enable it in settings.
-            </div>
-          `
-        : nothing}
+      ${
+        !state.enabled
+          ? html`
+              <div class="voice-bar__disabled">Voice mode is disabled. Enable it in settings.</div>
+            `
+          : nothing
+      }
 
-      ${!state.connected
-        ? html`
-            <div class="voice-bar__disconnected">
-              Not connected to gateway.
-            </div>
-          `
-        : nothing}
+      ${
+        !state.connected
+          ? html`
+              <div class="voice-bar__disconnected">Not connected to gateway.</div>
+            `
+          : nothing
+      }
     </div>
   `;
 }

@@ -1,7 +1,6 @@
 import { spawn } from "node:child_process";
-
-import { scheduleGatewaySigusr1Restart } from "../../infra/restart.js";
 import type { GatewayRequestHandlers } from "./types.js";
+import { scheduleGatewaySigusr1Restart } from "../../infra/restart.js";
 
 function readNumber(value: unknown): number | undefined {
   return typeof value === "number" && Number.isFinite(value) ? value : undefined;
@@ -71,7 +70,9 @@ async function runCommand(params: {
     );
 
     child.on("error", (err) => {
-      if (resolved) return;
+      if (resolved) {
+        return;
+      }
       resolved = true;
       clearTimeout(timer);
       const durationMs = Math.max(0, Date.now() - startedAt);
@@ -87,14 +88,16 @@ async function runCommand(params: {
     });
 
     child.on("close", (code, signal) => {
-      if (resolved) return;
+      if (resolved) {
+        return;
+      }
       resolved = true;
       clearTimeout(timer);
       const durationMs = Math.max(0, Date.now() - startedAt);
       resolve({
         ok: code === 0 && !timedOut,
         exitCode: typeof code === "number" ? code : null,
-        signal: (signal as NodeJS.Signals | null) ?? null,
+        signal: signal ?? null,
         durationMs,
         timedOut,
         stdout: stdout.trimEnd(),
@@ -121,7 +124,9 @@ export const opsHandlers: GatewayRequestHandlers = {
     const timeoutMs = timeoutMsRaw != null ? Math.max(1_000, Math.floor(timeoutMsRaw)) : 120_000;
     const deep = Boolean((params as { deep?: unknown }).deep);
     const args = ["doctor", "--non-interactive"];
-    if (deep) args.push("--deep");
+    if (deep) {
+      args.push("--deep");
+    }
 
     const result = await runCommand({
       command: "openclaw",

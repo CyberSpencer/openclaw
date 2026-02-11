@@ -34,6 +34,10 @@ export type ResolvedMemorySearchConfig = {
   store: {
     driver: "sqlite" | "qdrant" | "auto";
     path: string;
+    vector: {
+      enabled: boolean;
+      extensionPath?: string;
+    };
     qdrant: {
       url: string;
       endpoints?: Array<{
@@ -48,10 +52,6 @@ export type ResolvedMemorySearchConfig = {
       collection: string;
       apiKey?: string;
       timeoutMs: number;
-    };
-    vector: {
-      enabled: boolean;
-      extensionPath?: string;
     };
   };
   chunking: {
@@ -87,6 +87,7 @@ export type ResolvedMemorySearchConfig = {
 
 const DEFAULT_OPENAI_MODEL = "text-embedding-3-small";
 const DEFAULT_GEMINI_MODEL = "gemini-embedding-001";
+const DEFAULT_VOYAGE_MODEL = "voyage-4-large";
 const DEFAULT_CHUNK_TOKENS = 800;
 const DEFAULT_CHUNK_OVERLAP = 100;
 const DEFAULT_WATCH_DEBOUNCE_MS = 1500;
@@ -195,12 +196,12 @@ function mergeConfig(
     .map((value) => value.trim())
     .filter(Boolean);
   const extraPaths = Array.from(new Set(rawPaths));
-  const storeDriver = overrides?.store?.driver ?? defaults?.store?.driver ?? "qdrant";
   const vector = {
     enabled: overrides?.store?.vector?.enabled ?? defaults?.store?.vector?.enabled ?? true,
     extensionPath:
       overrides?.store?.vector?.extensionPath ?? defaults?.store?.vector?.extensionPath,
   };
+  const storeDriver = overrides?.store?.driver ?? defaults?.store?.driver ?? "qdrant";
   const qdrant = {
     url: overrides?.store?.qdrant?.url ?? defaults?.store?.qdrant?.url ?? "http://127.0.0.1:6333",
     endpoints:

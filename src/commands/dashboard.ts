@@ -31,18 +31,10 @@ export async function dashboardCommand(
     customBindHost,
     basePath,
   });
-  const authedUrl = (() => {
-    if (!token) {
-      return links.httpUrl;
-    }
-    try {
-      const url = new URL(links.httpUrl);
-      url.hash = `token=${encodeURIComponent(token)}`;
-      return url.toString();
-    } catch {
-      return `${links.httpUrl}#token=${encodeURIComponent(token)}`;
-    }
-  })();
+  // Prefer URL fragment to avoid leaking auth tokens via query params.
+  const dashboardUrl = token
+    ? `${links.httpUrl}#token=${encodeURIComponent(token)}`
+    : links.httpUrl;
 
   runtime.log(`Dashboard URL: ${dashboardUrl}`);
 

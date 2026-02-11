@@ -496,13 +496,13 @@ export function isLocalProvider(provider: string, cfg: OpenClawConfig): boolean 
 
 const SECRETS_DEFAULT_LOCAL_MODEL: ModelRef = {
   provider: "ollama",
-  model: "nemotron-3-nano:30b",
+  model: "gpt-oss:120b",
 };
 
 /**
  * Resolve the local model to route to when the prompt contains secrets.
  * Checks `agents.defaults.secretsLocalModel` first, then falls back to
- * `ollama/nemotron-3-nano:30b` (same default as the voice router).
+ * `ollama/gpt-oss:120b` (same default as the voice router).
  */
 export function resolveSecretsLocalModel(cfg: OpenClawConfig): ModelRef {
   const raw = (cfg.agents?.defaults as Record<string, unknown> | undefined)?.secretsLocalModel;

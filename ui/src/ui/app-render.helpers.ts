@@ -1,11 +1,10 @@
 import { html } from "lit";
-
-import type { AppViewState } from "./app-view-state";
-import { iconForTab, pathForTab, titleForTab, type Tab } from "./navigation";
-import { icons } from "./icons";
-import { refreshChat } from "./app-chat";
-import type { ThemeMode } from "./theme";
-import type { ThemeTransitionContext } from "./theme-transition";
+import type { AppViewState } from "./app-view-state.ts";
+import type { ThemeTransitionContext } from "./theme-transition.ts";
+import type { ThemeMode } from "./theme.ts";
+import { refreshChat } from "./app-chat.ts";
+import { icons } from "./icons.ts";
+import { iconForTab, pathForTab, titleForTab, type Tab } from "./navigation.ts";
 
 export function renderTab(state: AppViewState, tab: Tab) {
   const href = pathForTab(tab, state.basePath);

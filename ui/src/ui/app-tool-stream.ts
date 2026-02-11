@@ -1,5 +1,5 @@
-import { truncateText } from "./format";
-import type { TaskPlan } from "./ui-types";
+import type { TaskPlan } from "./ui-types.ts";
+import { truncateText } from "./format.ts";
 
 const TOOL_STREAM_LIMIT = 50;
 const TOOL_STREAM_THROTTLE_MS = 80;
@@ -229,17 +229,20 @@ export function handleAgentEvent(host: ToolStreamHost, payload?: AgentEventPaylo
 
   if (payload.stream === "orchestration") {
     const sessionKey = typeof payload.sessionKey === "string" ? payload.sessionKey : undefined;
-    const accept =
-      sessionKey
-        ? sessionKey === host.sessionKey
-        : host.chatRunId
-          ? payload.runId === host.chatRunId
-          : false;
-    if (!accept) return;
+    const accept = sessionKey
+      ? sessionKey === host.sessionKey
+      : host.chatRunId
+        ? payload.runId === host.chatRunId
+        : false;
+    if (!accept) {
+      return;
+    }
 
     const data = payload.data ?? {};
     const eventType = typeof data.type === "string" ? data.type : "";
-    if (eventType !== "task_plan") return;
+    if (eventType !== "task_plan") {
+      return;
+    }
 
     const plan = (data.plan as TaskPlan | null | undefined) ?? null;
     host.chatTaskPlan = plan;
@@ -248,14 +251,21 @@ export function handleAgentEvent(host: ToolStreamHost, payload?: AgentEventPaylo
 
   if (payload.stream === "model") {
     const sessionKey = typeof payload.sessionKey === "string" ? payload.sessionKey : undefined;
-    const accept =
-      sessionKey ? sessionKey === host.sessionKey : host.chatRunId ? payload.runId === host.chatRunId : false;
-    if (!accept) return;
+    const accept = sessionKey
+      ? sessionKey === host.sessionKey
+      : host.chatRunId
+        ? payload.runId === host.chatRunId
+        : false;
+    if (!accept) {
+      return;
+    }
 
     const data = payload.data ?? {};
     const provider = typeof data.provider === "string" ? data.provider : "";
     const model = typeof data.model === "string" ? data.model : "";
-    if (!provider || !model) return;
+    if (!provider || !model) {
+      return;
+    }
     const thinkLevel = typeof data.thinkLevel === "string" ? data.thinkLevel : undefined;
 
     host.chatModelSelection = {
@@ -269,9 +279,13 @@ export function handleAgentEvent(host: ToolStreamHost, payload?: AgentEventPaylo
     return;
   }
 
-  if (payload.stream !== "tool") return;
+  if (payload.stream !== "tool") {
+    return;
+  }
   const sessionKey = typeof payload.sessionKey === "string" ? payload.sessionKey : undefined;
-  if (sessionKey && sessionKey !== host.sessionKey) return;
+  if (sessionKey && sessionKey !== host.sessionKey) {
+    return;
+  }
   if (sessionKey && !host.chatRunId) {
     host.chatRunId = payload.runId;
   }

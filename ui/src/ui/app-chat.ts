@@ -1,21 +1,20 @@
+import type { OpenClawApp } from "./app.ts";
+import type { GatewayHelloOk } from "./gateway.ts";
+import type { SessionsListResult } from "./types.ts";
+import type { ChatAttachment, ChatQueueItem } from "./ui-types.ts";
+import { parseAgentSessionKey } from "../../../src/sessions/session-key-utils.js";
+import { scheduleChatScroll } from "./app-scroll.ts";
+import { setLastActiveSessionKey } from "./app-settings.ts";
+import { resetToolStream } from "./app-tool-stream.ts";
+import { loadChatThreads } from "./controllers/chat-threads.ts";
 import {
   abortChatRun,
   loadChatHistory,
   sendChatMessage,
   steerChatMessage,
-  type ChatSteerResult,
-} from "./controllers/chat";
-import { loadChatThreads } from "./controllers/chat-threads";
-import { generateUUID } from "./uuid";
-import { resetToolStream } from "./app-tool-stream";
-import { scheduleChatScroll } from "./app-scroll";
-import { setLastActiveSessionKey } from "./app-settings";
-import { normalizeBasePath } from "./navigation";
-import type { GatewayHelloOk } from "./gateway";
-import { parseAgentSessionKey } from "../../../src/sessions/session-key-utils.js";
-import type { OpenClawApp } from "./app";
-import type { ChatAttachment, ChatQueueItem } from "./ui-types";
-import type { SessionsListResult } from "./types";
+} from "./controllers/chat.ts";
+import { normalizeBasePath } from "./navigation.ts";
+import { generateUUID } from "./uuid.ts";
 
 export type ChatHost = {
   connected: boolean;
@@ -64,11 +63,7 @@ export async function handleAbortChat(host: ChatHost) {
   await abortChatRun(host as unknown as OpenClawApp);
 }
 
-function enqueueChatMessage(
-  host: ChatHost,
-  text: string,
-  attachments?: ChatAttachment[],
-) {
+function enqueueChatMessage(host: ChatHost, text: string, attachments?: ChatAttachment[]) {
   const trimmed = text.trim();
   const hasAttachments = Boolean(attachments && attachments.length > 0);
   if (!trimmed && !hasAttachments) {
@@ -132,9 +127,10 @@ async function steerChatMessageNow(
 ) {
   const res = await steerChatMessage(host as unknown as OpenClawApp, message);
   const ok = Boolean(res && res.ok);
-  const status = (res as ChatSteerResult | null)?.status ?? null;
+  const status = res?.status ?? null;
   if (ok && status && status !== "steered" && status !== "compacting") {
-    (host as unknown as { lastError: string | null }).lastError = `Steer not delivered (${status}).`;
+    (host as unknown as { lastError: string | null }).lastError =
+      `Steer not delivered (${status}).`;
   }
   if (!ok && opts?.previousDraft != null) {
     host.chatMessage = opts.previousDraft;
@@ -196,7 +192,8 @@ export async function handleSendChat(
   if (isChatBusy(host)) {
     // While a run is active, default to steering (injecting) text-only messages so Spencer can
     // correct/redirect mid-run. Attachments can't be steered today, so those fall back to queue.
-    const shouldQueue = Boolean(opts?.forceQueue) || messageOverride != null || attachmentsToSend.length > 0;
+    const shouldQueue =
+      Boolean(opts?.forceQueue) || messageOverride != null || attachmentsToSend.length > 0;
     if (shouldQueue) {
       enqueueChatMessage(host, message, attachmentsToSend);
       return;

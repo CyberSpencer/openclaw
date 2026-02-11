@@ -8,6 +8,7 @@
  * The traditional pipeline is only used when PersonaPlex is unavailable or fails.
  */
 
+import net from "node:net";
 import type {
   VoiceConfig,
   VoiceMode,
@@ -28,20 +29,19 @@ import {
   type LocalTtsResult,
 } from "./local-tts.js";
 import {
-  analyzeComplexity,
-  detectSensitiveData,
-  resolveRouterConfig,
-  routeVoiceRequest,
-  type RouterDecision,
-} from "./router.js";
-import {
   checkPersonaPlexDependencies,
   getPersonaPlexStatus,
   resolvePersonaPlexConfig,
   processWithPersonaPlex,
   selectPersonaPlexEndpoint,
 } from "./personaplex.js";
-import net from "node:net";
+import {
+  analyzeComplexity,
+  detectSensitiveData,
+  resolveRouterConfig,
+  routeVoiceRequest,
+  type RouterDecision,
+} from "./router.js";
 
 const DEFAULT_MODE: VoiceMode = "personaplex"; // PersonaPlex as default
 const DEFAULT_BUFFER_MS = 100;
@@ -287,6 +287,7 @@ async function runFallbackPipeline(params: {
   sessionId: string;
   startTime: number;
   overrides?: FallbackOverride;
+  skipTts?: boolean;
 }): Promise<VoiceProcessResult> {
   const timings: VoiceProcessResult["timings"] = { totalMs: 0 };
   let transcription = pickTextForRouting(params.transcription);
@@ -397,6 +398,18 @@ async function runFallbackPipeline(params: {
     };
   }
   timings.llmMs = Date.now() - llmStart;
+
+  if (params.skipTts) {
+    timings.totalMs = Date.now() - params.startTime;
+    return {
+      success: true,
+      sessionId: params.sessionId,
+      transcription,
+      response,
+      routerDecision,
+      timings,
+    };
+  }
 
   const ttsStart = Date.now();
   let ttsResult: LocalTtsResult;
@@ -579,5 +592,26 @@ export async function processTextToVoice(
     llmInvoke,
     sessionId,
     startTime,
+  });
+}
+
+/**
+ * Process text input (skip STT, skip TTS) through routing and LLM only.
+ * Useful when callers want to synthesize with an external TTS provider.
+ */
+export async function processTextForReply(
+  text: string,
+  config: ResolvedVoiceConfig,
+  llmInvoke: (text: string, model?: string, thinking?: string) => Promise<string>,
+): Promise<VoiceProcessResult> {
+  const sessionId = generateSessionId();
+  const startTime = Date.now();
+  return runFallbackPipeline({
+    transcription: text,
+    config,
+    llmInvoke,
+    sessionId,
+    startTime,
+    skipTts: true,
   });
 }

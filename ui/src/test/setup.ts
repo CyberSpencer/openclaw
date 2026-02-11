@@ -5,24 +5,49 @@ import { DOMParser, Node, parseHTML } from "linkedom";
 process.env.NODE_ENV = "production";
 (globalThis as unknown as { litDevMode?: boolean }).litDevMode = false;
 
-const { window } = parseHTML("<html><body></body></html>");
 const globalObj = globalThis as unknown as Record<string, unknown>;
+let window = globalObj.window as Window | undefined;
 
-globalObj.window = window;
-globalObj.document = window.document;
-globalObj.self = window;
+// Prefer a real DOM provided by the Vitest environment (e.g. happy-dom).
+// Fall back to LinkeDOM when running in plain Node.
+if (
+  !window ||
+  typeof window !== "object" ||
+  !(window as unknown as { document?: unknown }).document
+) {
+  ({ window } = parseHTML("<html><body></body></html>"));
+  globalObj.window = window;
+  globalObj.document = window.document;
+  globalObj.self = window;
+}
+
+// Ensure document/self are wired even if the environment only injected `window`.
+if (typeof globalObj.document === "undefined") {
+  globalObj.document = window.document;
+}
+if (typeof globalObj.self === "undefined") {
+  globalObj.self = window;
+}
 
 // Ensure the core DOM classes exist before importing anything that touches web components.
-globalObj.HTMLElement = window.HTMLElement as unknown;
-globalObj.Element = window.Element as unknown;
-globalObj.Node = window.Node as unknown;
+if (typeof globalObj.HTMLElement === "undefined") {
+  globalObj.HTMLElement = window.HTMLElement as unknown;
+}
+if (typeof globalObj.Element === "undefined") {
+  globalObj.Element = window.Element as unknown;
+}
+if (typeof globalObj.Node === "undefined") {
+  globalObj.Node = window.Node as unknown;
+}
 
 // Newer Node versions expose a read-only `navigator` on globalThis.
 // Only polyfill it when missing to avoid TypeErrors in the test harness.
 if (typeof globalThis.navigator === "undefined") {
   globalObj.navigator = window.navigator;
 }
-globalObj.customElements = window.customElements;
+if (typeof globalObj.customElements === "undefined") {
+  globalObj.customElements = window.customElements;
+}
 
 const sharedGlobals = [
   "HTMLElement",
@@ -44,6 +69,18 @@ for (const key of sharedGlobals) {
   // Prefer the linkedom implementation whenever the global is missing OR undefined.
   if ((globalObj[key] === undefined || !(key in globalObj)) && key in window) {
     globalObj[key] = window[key as keyof typeof window] as unknown;
+  }
+}
+
+// linkedom does not ship getComputedStyle, but some UI tests rely on it existing.
+// They will spy/mock it per-test as needed.
+if (typeof globalThis.getComputedStyle !== "function") {
+  const defaultGetComputedStyle = () => ({ overflowY: "auto" }) as unknown as CSSStyleDeclaration;
+  globalObj.getComputedStyle = defaultGetComputedStyle;
+  if (
+    typeof (window as unknown as { getComputedStyle?: unknown }).getComputedStyle !== "function"
+  ) {
+    (window as unknown as { getComputedStyle: unknown }).getComputedStyle = defaultGetComputedStyle;
   }
 }
 

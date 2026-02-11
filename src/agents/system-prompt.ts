@@ -53,6 +53,17 @@ function buildMemorySection(params: {
     "Before answering any user request: run memory_search on MEMORY.md + memory/*.md; then use memory_get to pull only the needed lines. If low confidence after search, say you checked.",
     "",
   ];
+  if (params.citationsMode === "off") {
+    lines.push(
+      "Citations are disabled: do not mention file paths or line numbers in replies unless the user explicitly asks.",
+    );
+  } else {
+    lines.push(
+      "Citations: include Source: <path#line> when it helps the user verify memory snippets.",
+    );
+  }
+  lines.push("");
+  return lines;
 }
 
 function buildOrchestrationSection(params: { isMinimal: boolean; availableTools: Set<string> }) {
@@ -72,17 +83,6 @@ function buildOrchestrationSection(params: { isMinimal: boolean; availableTools:
     "- Update the plan as work completes; the Control UI renders progress from it.",
     "",
   ];
-  if (params.citationsMode === "off") {
-    lines.push(
-      "Citations are disabled: do not mention file paths or line numbers in replies unless the user explicitly asks.",
-    );
-  } else {
-    lines.push(
-      "Citations: include Source: <path#line> when it helps the user verify memory snippets.",
-    );
-  }
-  lines.push("");
-  return lines;
 }
 
 function buildUserIdentitySection(ownerLine: string | undefined, isMinimal: boolean) {
@@ -383,7 +383,11 @@ export function buildAgentSystemPrompt(params: {
     isMinimal,
     readToolName,
   });
-  const memorySection = buildMemorySection({ isMinimal, availableTools });
+  const memorySection = buildMemorySection({
+    isMinimal,
+    availableTools,
+    citationsMode: params.memoryCitationsMode,
+  });
   const orchestrationSection = buildOrchestrationSection({ isMinimal, availableTools });
   const docsSection = buildDocsSection({
     docsPath: params.docsPath,

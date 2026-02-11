@@ -564,7 +564,7 @@ export async function runSubagentAnnounceFlow(params: {
     }
     // Only delete the subagent session after a successful announce (or enqueue) so we don't
     // lose transcripts when delivery fails and a retry/debug is needed.
-    if (params.cleanup === "delete" && didAnnounce) {
+    if (shouldDeleteChildSession && didAnnounce) {
       try {
         await callGateway({
           method: "sessions.delete",

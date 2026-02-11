@@ -173,6 +173,17 @@ export async function runAgentTurnWithFallback(params: {
             },
           });
 
+          // Emit a lifecycle event so UI clients can display the active model.
+          emitAgentEvent({
+            runId,
+            stream: "lifecycle",
+            data: {
+              phase: "model-selected",
+              provider,
+              model,
+            },
+          });
+
           if (isCliProvider(provider, params.followupRun.run.config)) {
             const startedAt = Date.now();
             emitAgentEvent({

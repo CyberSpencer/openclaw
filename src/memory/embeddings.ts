@@ -1,10 +1,10 @@
+import type { Llama, LlamaEmbeddingContext, LlamaModel } from "node-llama-cpp";
 import { spawn } from "node:child_process";
 import fsSync from "node:fs";
 import { fileURLToPath } from "node:url";
-
-import type { Llama, LlamaEmbeddingContext, LlamaModel } from "node-llama-cpp";
-import fsSync from "node:fs";
 import type { OpenClawConfig } from "../config/config.js";
+import { formatError } from "../gateway/server-utils.js";
+import { formatErrorMessage } from "../infra/errors.js";
 import { createSubsystemLogger } from "../logging/subsystem.js";
 import { resolveUserPath } from "../utils.js";
 import { createGeminiEmbeddingProvider, type GeminiEmbeddingClient } from "./embeddings-gemini.js";
@@ -422,7 +422,7 @@ async function createLocalEmbeddingProvider(
       const lockKey = resolvedKey ?? modelPath;
       return withContextLock(lockKey, async () => {
         const embedding = await ctx.getEmbeddingFor(text);
-        return Array.from(embedding.vector);
+        return sanitizeAndNormalizeEmbedding(Array.from(embedding.vector));
       });
     },
     embedBatch: async (texts) => {
@@ -432,7 +432,7 @@ async function createLocalEmbeddingProvider(
         const embeddings: number[][] = [];
         for (const text of texts) {
           const embedding = await ctx.getEmbeddingFor(text);
-          embeddings.push(Array.from(embedding.vector));
+          embeddings.push(sanitizeAndNormalizeEmbedding(Array.from(embedding.vector)));
         }
         return embeddings;
       });

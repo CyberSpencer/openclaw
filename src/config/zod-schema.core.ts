@@ -86,7 +86,7 @@ export const ModelProviderSchema = z
     endpoints: z.array(ModelProviderEndpointSchema).optional(),
     endpointStrategy: z.union([z.literal("ordered"), z.literal("health")]).optional(),
   })
-  .strict();
+  .passthrough();
 
 export const BedrockDiscoverySchema = z
   .object({

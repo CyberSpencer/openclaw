@@ -508,6 +508,8 @@ export async function agentCommand(
       }
     } catch (err) {
       if (!lifecycleEnded) {
+        // Emit lifecycle "error" so server-chat sends chat "error" with errorMessage
+        // and the Control UI can show a clear run-failed message instead of going Idle silently.
         emitAgentEvent({
           runId,
           stream: "lifecycle",

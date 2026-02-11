@@ -1,17 +1,20 @@
 import { html, nothing } from "lit";
-
-import type { AppViewState } from "../app-view-state";
-import { renderThemeToggle } from "../app-render.helpers";
-import { icons } from "../icons";
+import type { AppViewState } from "../app-view-state.ts";
+import { renderThemeToggle } from "../app-render.helpers.ts";
+import { icons } from "../icons.ts";
 
 function platformCommandKey(): string {
-  if (typeof navigator === "undefined") return "Ctrl";
+  if (typeof navigator === "undefined") {
+    return "Ctrl";
+  }
   const platform = navigator.platform || "";
   return /mac|iphone|ipad|ipod/i.test(platform) ? "Cmd" : "Ctrl";
 }
 
 function statusLabel(value: boolean | null | undefined, opts?: { on?: string; off?: string }) {
-  if (value == null) return "Unknown";
+  if (value == null) {
+    return "Unknown";
+  }
   return value ? (opts?.on ?? "On") : (opts?.off ?? "Off");
 }
 
@@ -29,7 +32,9 @@ function statusPill(value: boolean | null | undefined, opts?: { on?: string; off
 
 export function renderSettings(state: AppViewState) {
   const cmdKey = platformCommandKey();
-  const runtimeDisabledReason = !state.connected ? "Connect to the gateway to use runtime toggles." : null;
+  const runtimeDisabledReason = !state.connected
+    ? "Connect to the gateway to use runtime toggles."
+    : null;
   const focusDisabled = state.onboarding;
   const thinkingDisabled = state.onboarding;
 
@@ -78,7 +83,9 @@ export function renderSettings(state: AppViewState) {
                 .checked=${state.settings.chatShowThinking}
                 ?disabled=${thinkingDisabled}
                 @change=${(e: Event) => {
-                  if (thinkingDisabled) return;
+                  if (thinkingDisabled) {
+                    return;
+                  }
                   const next = (e.target as HTMLInputElement).checked;
                   state.applySettings({ ...state.settings, chatShowThinking: next });
                 }}
@@ -92,7 +99,9 @@ export function renderSettings(state: AppViewState) {
                 .checked=${state.settings.chatFocusMode}
                 ?disabled=${focusDisabled}
                 @change=${(e: Event) => {
-                  if (focusDisabled) return;
+                  if (focusDisabled) {
+                    return;
+                  }
                   const next = (e.target as HTMLInputElement).checked;
                   state.applySettings({ ...state.settings, chatFocusMode: next });
                 }}
@@ -124,8 +133,9 @@ export function renderSettings(state: AppViewState) {
                 .value=${String(splitRatio)}
                 @input=${(e: Event) => {
                   const next = Number((e.target as HTMLInputElement).value);
-                  (state as unknown as { handleSplitRatioChange?: (ratio: number) => void })
-                    .handleSplitRatioChange?.(next);
+                  (
+                    state as unknown as { handleSplitRatioChange?: (ratio: number) => void }
+                  ).handleSplitRatioChange?.(next);
                 }}
               />
               <div class="muted">Sidebar width: <span class="mono">${splitPercent}%</span></div>
@@ -141,9 +151,11 @@ export function renderSettings(state: AppViewState) {
 
           ${
             state.onboarding
-              ? html`<div class="callout warn" style="margin-top: 6px;">
-                  Onboarding mode is active, some UI toggles are disabled.
-                </div>`
+              ? html`
+                  <div class="callout warn" style="margin-top: 6px">
+                    Onboarding mode is active, some UI toggles are disabled.
+                  </div>
+                `
               : nothing
           }
         </div>
@@ -168,11 +180,13 @@ export function renderSettings(state: AppViewState) {
                 ?disabled=${!state.connected || state.memorySearchBusy}
                 @click=${() => state.handleMemorySearchToggle()}
               >
-                ${state.memorySearchBusy
-                  ? "Working..."
-                  : state.memorySearchEnabled === false
-                    ? "Enable"
-                    : "Disable"}
+                ${
+                  state.memorySearchBusy
+                    ? "Working..."
+                    : state.memorySearchEnabled === false
+                      ? "Enable"
+                      : "Disable"
+                }
               </button>
             </div>
           </div>
@@ -189,11 +203,13 @@ export function renderSettings(state: AppViewState) {
                 ?disabled=${!state.connected || state.nvidiaRouterBusy}
                 @click=${() => state.handleNvidiaRouterToggle()}
               >
-                ${state.nvidiaRouterBusy
-                  ? "Working..."
-                  : state.nvidiaRouterEnabled === false
-                    ? "Enable"
-                    : "Disable"}
+                ${
+                  state.nvidiaRouterBusy
+                    ? "Working..."
+                    : state.nvidiaRouterEnabled === false
+                      ? "Enable"
+                      : "Disable"
+                }
               </button>
             </div>
           </div>
@@ -261,8 +277,12 @@ export function renderSettings(state: AppViewState) {
             class="btn danger"
             ?disabled=${!state.connected || state.gatewayRestartBusy}
             @click=${() => {
-              const ok = confirm("Restart the gateway now? Connected clients will briefly disconnect.");
-              if (!ok) return;
+              const ok = confirm(
+                "Restart the gateway now? Connected clients will briefly disconnect.",
+              );
+              if (!ok) {
+                return;
+              }
               void state.handleGatewayRestart();
             }}
             title="Restart the gateway process"
@@ -271,28 +291,35 @@ export function renderSettings(state: AppViewState) {
           </button>
         </div>
 
-        ${state.gatewayRestartError
-          ? html`<div class="callout danger" style="margin-top: 12px;">
+        ${
+          state.gatewayRestartError
+            ? html`<div class="callout danger" style="margin-top: 12px;">
               ${state.gatewayRestartError}
             </div>`
-          : nothing}
+            : nothing
+        }
 
-        ${state.doctorError
-          ? html`<div class="callout danger" style="margin-top: 12px;">
+        ${
+          state.doctorError
+            ? html`<div class="callout danger" style="margin-top: 12px;">
               ${state.doctorError}
             </div>`
-          : nothing}
+            : nothing
+        }
 
-        ${state.doctorResult
-          ? html`<div class="callout" style="margin-top: 12px;">
+        ${
+          state.doctorResult
+            ? html`<div class="callout" style="margin-top: 12px;">
               <div class="muted">
                 Doctor: <span class="mono">${state.doctorResult.ok ? "ok" : "failed"}</span>
                 <span class="muted"> · </span>
                 <span class="mono">${Math.round(state.doctorResult.durationMs)}ms</span>
-                ${state.doctorResult.exitCode != null
-                  ? html`<span class="muted"> · </span>
+                ${
+                  state.doctorResult.exitCode != null
+                    ? html`<span class="muted"> · </span>
                       exit <span class="mono">${state.doctorResult.exitCode}</span>`
-                  : nothing}
+                    : nothing
+                }
               </div>
               <pre class="mono" style="margin-top: 10px; white-space: pre-wrap; max-height: 260px; overflow: auto;">${[
                 state.doctorResult.stdout,
@@ -301,7 +328,8 @@ export function renderSettings(state: AppViewState) {
                 .filter(Boolean)
                 .join("\n")}</pre>
             </div>`
-          : nothing}
+            : nothing
+        }
       </section>
     </section>
 

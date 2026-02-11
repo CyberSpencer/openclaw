@@ -2,10 +2,9 @@ import crypto from "node:crypto";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-
+import type { GatewayRequestHandlers } from "./types.js";
 import { resolveStateDir } from "../../config/paths.js";
 import { ErrorCodes, errorShape } from "../protocol/index.js";
-import type { GatewayRequestHandlers } from "./types.js";
 
 type OrchestrationLaneId = "backlog" | "running" | "review" | "done" | "failed" | (string & {});
 
@@ -115,8 +114,20 @@ async function readStoreFile(): Promise<
   try {
     raw = await fs.promises.readFile(storePath, "utf8");
   } catch (err) {
-    const message = String(err ?? "");
+    const errCode =
+      err && typeof err === "object" && "code" in err && typeof err.code === "string"
+        ? err.code
+        : "";
+    const message =
+      err instanceof Error
+        ? err.message
+        : typeof err === "string"
+          ? err
+          : errCode
+            ? `Error ${errCode}`
+            : "";
     if (
+      errCode === "ENOENT" ||
       message.includes("ENOENT") ||
       // node sometimes stringifies as: "Error: ENOENT: no such file or directory"
       message.includes("no such file or directory")

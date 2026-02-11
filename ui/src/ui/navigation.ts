@@ -2,6 +2,7 @@ import type { IconName } from "./icons.js";
 
 export const TAB_GROUPS = [
   { label: "Chat", tabs: ["chat"] },
+  { label: "DGX", tabs: ["dgx"] },
   {
     label: "Control",
     tabs: ["overview", "channels", "instances", "sessions", "usage", "cron"],
@@ -21,6 +22,7 @@ export type Tab =
   | "skills"
   | "nodes"
   | "chat"
+  | "dgx"
   | "settings"
   | "config"
   | "debug"
@@ -37,6 +39,7 @@ const TAB_PATHS: Record<Tab, string> = {
   skills: "/skills",
   nodes: "/nodes",
   chat: "/chat",
+  dgx: "/dgx",
   settings: "/settings",
   config: "/config",
   debug: "/debug",
@@ -148,6 +151,8 @@ export function iconForTab(tab: Tab): IconName {
       return "zap";
     case "nodes":
       return "monitor";
+    case "dgx":
+      return "server";
     case "settings":
       return "sliders";
     case "config":
@@ -183,6 +188,8 @@ export function titleForTab(tab: Tab) {
       return "Nodes";
     case "chat":
       return "Chat";
+    case "dgx":
+      return "DGX Spark";
     case "settings":
       return "Settings";
     case "config":
@@ -218,6 +225,8 @@ export function subtitleForTab(tab: Tab) {
       return "Paired devices, capabilities, and command exposure.";
     case "chat":
       return "Direct gateway chat session for quick interventions.";
+    case "dgx":
+      return "Voice pipeline, GPU, containers, and service health on DGX Spark.";
     case "settings":
       return "Control UI preferences and gateway runtime toggles.";
     case "config":

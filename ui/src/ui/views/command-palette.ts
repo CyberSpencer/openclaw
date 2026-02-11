@@ -1,15 +1,21 @@
 import { html, nothing } from "lit";
-
-import type { AppViewState } from "../app-view-state";
-import { type CommandPaletteAction } from "../command-palette";
-import { icons } from "../icons";
+import type { AppViewState } from "../app-view-state.ts";
+import { type CommandPaletteAction } from "../command-palette.ts";
+import { icons } from "../icons.ts";
 
 function renderShortcut(shortcut?: string) {
-  if (!shortcut) return nothing;
+  if (!shortcut) {
+    return nothing;
+  }
   return html`<span class="command-shortcut mono">${shortcut}</span>`;
 }
 
-function renderAction(action: CommandPaletteAction, index: number, selectedIndex: number, onRun: () => void) {
+function renderAction(
+  action: CommandPaletteAction,
+  index: number,
+  selectedIndex: number,
+  onRun: () => void,
+) {
   const active = index === selectedIndex;
   return html`
     <button
@@ -34,11 +40,15 @@ function renderAction(action: CommandPaletteAction, index: number, selectedIndex
 }
 
 export function renderCommandPalette(state: AppViewState) {
-  if (!state.commandPaletteOpen) return nothing;
+  if (!state.commandPaletteOpen) {
+    return nothing;
+  }
   const actions = state.getCommandPaletteActions();
   const selectedIndex = state.commandPaletteIndex;
   const cmdKey = (() => {
-    if (typeof navigator === "undefined") return "Ctrl K";
+    if (typeof navigator === "undefined") {
+      return "Ctrl K";
+    }
     const platform = navigator.platform || "";
     return /mac|iphone|ipad|ipod/i.test(platform) ? "Cmd K" : "Ctrl K";
   })();
@@ -53,7 +63,9 @@ export function renderCommandPalette(state: AppViewState) {
     return html`${groupHeader}${renderAction(action, idx, selectedIndex, () => state.runCommandPaletteAction(action))}`;
   });
 
-  const empty = html`<div class="command-empty">No results.</div>`;
+  const empty = html`
+    <div class="command-empty">No results.</div>
+  `;
 
   return html`
     <div
@@ -62,7 +74,9 @@ export function renderCommandPalette(state: AppViewState) {
       aria-modal="true"
       aria-label="Command palette"
       @click=${(e: MouseEvent) => {
-        if (e.target === e.currentTarget) state.closeCommandPalette();
+        if (e.target === e.currentTarget) {
+          state.closeCommandPalette();
+        }
       }}
     >
       <div class="command-dialog" @click=${(e: MouseEvent) => e.stopPropagation()}>

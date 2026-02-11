@@ -92,6 +92,8 @@ const BASE_METHODS = [
   "router.status",
   "router.setEnabled",
   "spark.status",
+  "spark.voice.stt",
+  "spark.voice.tts",
 ];
 
 export function listGatewayMethods(): string[] {

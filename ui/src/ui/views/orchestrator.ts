@@ -1,13 +1,5 @@
 import { html, nothing } from "lit";
-
-import type { AppViewState } from "../app-view-state";
-import { icons } from "../icons";
-import { truncateText } from "../format";
-import {
-  ORCHESTRATOR_TEMPLATES,
-  hydrateTemplatePrompt,
-  type OrchestratorTemplate,
-} from "../orchestrator-templates";
+import type { AppViewState } from "../app-view-state.ts";
 import type {
   OrchestrationBoard,
   OrchestrationCard,
@@ -15,7 +7,14 @@ import type {
   OrchestrationLaneId,
   OrchestrationRunner,
   CodexMode,
-} from "../orchestrator-store";
+} from "../orchestrator-store.ts";
+import { truncateText } from "../format.ts";
+import { icons } from "../icons.ts";
+import {
+  ORCHESTRATOR_TEMPLATES,
+  hydrateTemplatePrompt,
+  type OrchestratorTemplate,
+} from "../orchestrator-templates.ts";
 
 type OrchestratorHost = AppViewState & {
   orchBoards: OrchestrationBoard[];
@@ -55,7 +54,9 @@ const CODEX_MODES = ["plan", "apply", "run"] as const;
 
 function resolveBoard(state: OrchestratorHost): OrchestrationBoard | null {
   const boards = state.orchBoards ?? [];
-  if (boards.length === 0) return null;
+  if (boards.length === 0) {
+    return null;
+  }
   return boards.find((b) => b.id === state.orchSelectedBoardId) ?? boards[0] ?? null;
 }
 
@@ -63,20 +64,26 @@ function resolveSelectedCard(
   board: OrchestrationBoard | null,
   selectedId: string | null,
 ): OrchestrationCard | null {
-  if (!board || !selectedId) return null;
+  if (!board || !selectedId) {
+    return null;
+  }
   return board.cards.find((c) => c.id === selectedId) ?? null;
-}
-
-function laneCardCount(board: OrchestrationBoard, laneId: OrchestrationLaneId) {
-  return board.cards.filter((c) => c.laneId === laneId).length;
 }
 
 function cardStatusLabel(card: OrchestrationCard): string {
   const status = card.run?.status ?? "idle";
-  if (status === "accepted") return "Queued";
-  if (status === "running") return "Running";
-  if (status === "done") return "Done";
-  if (status === "error") return "Error";
+  if (status === "accepted") {
+    return "Queued";
+  }
+  if (status === "running") {
+    return "Running";
+  }
+  if (status === "done") {
+    return "Done";
+  }
+  if (status === "error") {
+    return "Error";
+  }
   return "Idle";
 }
 
@@ -87,13 +94,17 @@ function isCardRunning(card: OrchestrationCard): boolean {
 
 function cardPreviewText(card: OrchestrationCard): string {
   const last = card.run?.lastText?.trim();
-  if (last) return last;
+  if (last) {
+    return last;
+  }
   return card.task.trim();
 }
 
 function matchesTemplateQuery(tpl: OrchestratorTemplate, rawQuery: string): boolean {
   const query = rawQuery.trim().toLowerCase();
-  if (!query) return true;
+  if (!query) {
+    return true;
+  }
   const hay = `${tpl.title} ${tpl.description} ${tpl.tags.join(" ")}`.toLowerCase();
   return query
     .split(/\s+/g)
@@ -108,11 +119,21 @@ function applyTemplateToDraft(state: OrchestratorHost, tpl: OrchestratorTemplate
     task: prompt,
   };
 
-  if (tpl.agentId) patch.agentId = tpl.agentId;
-  if (tpl.model !== undefined) patch.model = tpl.model;
-  if (tpl.thinking !== undefined) patch.thinking = tpl.thinking;
-  if (tpl.timeoutSeconds !== undefined) patch.timeoutSeconds = String(tpl.timeoutSeconds);
-  if (tpl.cleanup !== undefined) patch.cleanup = tpl.cleanup;
+  if (tpl.agentId) {
+    patch.agentId = tpl.agentId;
+  }
+  if (tpl.model !== undefined) {
+    patch.model = tpl.model;
+  }
+  if (tpl.thinking !== undefined) {
+    patch.thinking = tpl.thinking;
+  }
+  if (tpl.timeoutSeconds !== undefined) {
+    patch.timeoutSeconds = String(tpl.timeoutSeconds);
+  }
+  if (tpl.cleanup !== undefined) {
+    patch.cleanup = tpl.cleanup;
+  }
 
   // If the template specifies any overrides, open Advanced by default.
   if (tpl.model || tpl.thinking || tpl.timeoutSeconds || tpl.cleanup) {
@@ -133,7 +154,8 @@ function renderTemplateLibrary(state: OrchestratorHost) {
   const q = state.orchTemplateQuery ?? "";
   const templates = ORCHESTRATOR_TEMPLATES.filter((tpl) => matchesTemplateQuery(tpl, q));
   const countLabel = templates.length === 1 ? "1 template" : `${templates.length} templates`;
-  const iconFor = (tpl: OrchestratorTemplate) => icons[tpl.icon as keyof typeof icons] ?? icons.scrollText;
+  const iconFor = (tpl: OrchestratorTemplate) =>
+    icons[tpl.icon as keyof typeof icons] ?? icons.scrollText;
 
   return html`
     <section class="card orch-templates">
@@ -151,8 +173,9 @@ function renderTemplateLibrary(state: OrchestratorHost) {
             state.orchTemplateQuery = (e.target as HTMLInputElement).value;
           }}
         />
-        ${q.trim()
-          ? html`
+        ${
+          q.trim()
+            ? html`
               <button
                 class="btn btn--icon btn--sm orch-templates__clear"
                 type="button"
@@ -165,7 +188,8 @@ function renderTemplateLibrary(state: OrchestratorHost) {
                 ${icons.x}
               </button>
             `
-          : nothing}
+            : nothing
+        }
       </div>
 
       <div class="orch-templates__meta muted">${countLabel}</div>
@@ -224,9 +248,13 @@ function renderTemplateLibrary(state: OrchestratorHost) {
             </div>
           `,
         )}
-        ${templates.length === 0
-          ? html`<div class="orch-templates__empty muted">No templates match this search.</div>`
-          : nothing}
+        ${
+          templates.length === 0
+            ? html`
+                <div class="orch-templates__empty muted">No templates match this search.</div>
+              `
+            : nothing
+        }
       </div>
     </section>
   `;
@@ -256,7 +284,9 @@ function renderLane(state: OrchestratorHost, board: OrchestrationBoard, lane: Or
         state.orchDragOverLaneId = null;
         const raw = e.dataTransfer?.getData("text/plain") ?? "";
         const cardId = raw.trim();
-        if (!cardId) return;
+        if (!cardId) {
+          return;
+        }
         state.orchMoveCard(cardId, lane.id);
       }}
     >
@@ -335,9 +365,11 @@ function renderLaunchpad(state: OrchestratorHost, board: OrchestrationBoard) {
       <section class="card">
         <div class="orch-side-title">${isCodex ? "Launch Codex CLI" : "Launch Sub-Agent"}</div>
         <div class="orch-side-sub">
-          ${isCodex
-            ? "Create a task card, then run it via Codex CLI inside an isolated git worktree."
-            : "Create a task card, then spawn it into an isolated sub-agent session."}
+          ${
+            isCodex
+              ? "Create a task card, then run it via Codex CLI inside an isolated git worktree."
+              : "Create a task card, then spawn it into an isolated sub-agent session."
+          }
         </div>
 
         <div class="stack" style="margin-top: 14px;">
@@ -461,7 +493,9 @@ function renderLaunchpad(state: OrchestratorHost, board: OrchestrationBoard) {
                             <select
                               .value=${state.orchDraft.thinking}
                               @change=${(e: Event) =>
-                                state.orchSetDraft({ thinking: (e.target as HTMLSelectElement).value })}
+                                state.orchSetDraft({
+                                  thinking: (e.target as HTMLSelectElement).value,
+                                })}
                             >
                               ${THINK_LEVELS.map(
                                 (level) =>
@@ -491,7 +525,10 @@ function renderLaunchpad(state: OrchestratorHost, board: OrchestrationBoard) {
                               .value=${state.orchDraft.cleanup}
                               @change=${(e: Event) =>
                                 state.orchSetDraft({
-                                  cleanup: (e.target as HTMLSelectElement).value === "delete" ? "delete" : "keep",
+                                  cleanup:
+                                    (e.target as HTMLSelectElement).value === "delete"
+                                      ? "delete"
+                                      : "keep",
                                 })}
                             >
                               <option value="keep">Keep session</option>
@@ -520,20 +557,28 @@ function renderLaunchpad(state: OrchestratorHost, board: OrchestrationBoard) {
             type="button"
             ?disabled=${!canLaunch}
             @click=${() => state.orchAddDraftCard({ run: true })}
-            title=${connected
-              ? (isCodex ? "Run task via Codex CLI" : "Spawn sub-agent run")
-              : "Connect to the gateway first"}
+            title=${
+              connected
+                ? isCodex
+                  ? "Run task via Codex CLI"
+                  : "Spawn sub-agent run"
+                : "Connect to the gateway first"
+            }
           >
             ${icons.zap}
             Launch
           </button>
         </div>
 
-        ${!connected
-          ? html`<div class="callout" style="margin-top: 6px;">
-              Connect the gateway in <span class="mono">Overview</span> to launch runs.
-            </div>`
-          : nothing}
+        ${
+          !connected
+            ? html`
+                <div class="callout" style="margin-top: 6px">
+                  Connect the gateway in <span class="mono">Overview</span> to launch runs.
+                </div>
+              `
+            : nothing
+        }
 
         <div class="orch-divider"></div>
 
@@ -550,13 +595,18 @@ function renderLaunchpad(state: OrchestratorHost, board: OrchestrationBoard) {
   `;
 }
 
-function renderInspector(state: OrchestratorHost, board: OrchestrationBoard, card: OrchestrationCard) {
+function renderInspector(
+  state: OrchestratorHost,
+  board: OrchestrationBoard,
+  card: OrchestrationCard,
+) {
   const agents = agentOptions(state);
   const running = isCardRunning(card);
   const busy = state.orchBusyCardId === card.id;
   const isCodex = (card.runner ?? "subagent") === "codex";
   const run = card.run;
-  const hasSession = Boolean(run?.sessionKey) && !String(run?.sessionKey ?? "").startsWith("codex:");
+  const hasSession =
+    Boolean(run?.sessionKey) && !String(run?.sessionKey ?? "").startsWith("codex:");
   const status = cardStatusLabel(card);
   const lastText = run?.lastText?.trim() || "";
   const cleanupStatus = run?.cleanup?.status ?? null;
@@ -565,9 +615,10 @@ function renderInspector(state: OrchestratorHost, board: OrchestrationBoard, car
     autoDelete || !hasSession || cleanupStatus === "pending" || busy || !state.connected;
 
   const laneOptions = board.lanes.map((lane) => ({ id: lane.id, title: lane.title }));
-  const timeoutValue = typeof card.timeoutSeconds === "number" && Number.isFinite(card.timeoutSeconds)
-    ? String(Math.max(0, Math.floor(card.timeoutSeconds)))
-    : "";
+  const timeoutValue =
+    typeof card.timeoutSeconds === "number" && Number.isFinite(card.timeoutSeconds)
+      ? String(Math.max(0, Math.floor(card.timeoutSeconds)))
+      : "";
 
   return html`
     <section class="card">
@@ -716,8 +767,9 @@ function renderInspector(state: OrchestratorHost, board: OrchestrationBoard, car
                         const raw = (e.target as HTMLInputElement).value;
                         const parsed = raw.trim() ? Number(raw) : NaN;
                         state.orchUpdateCard(card.id, {
-                          timeoutSeconds:
-                            Number.isFinite(parsed) ? Math.max(0, Math.floor(parsed)) : undefined,
+                          timeoutSeconds: Number.isFinite(parsed)
+                            ? Math.max(0, Math.floor(parsed))
+                            : undefined,
                         });
                       }}
                     />
@@ -743,7 +795,9 @@ function renderInspector(state: OrchestratorHost, board: OrchestrationBoard, car
                       <select
                         .value=${card.thinking ?? ""}
                         @change=${(e: Event) =>
-                          state.orchUpdateCard(card.id, { thinking: (e.target as HTMLSelectElement).value })}
+                          state.orchUpdateCard(card.id, {
+                            thinking: (e.target as HTMLSelectElement).value,
+                          })}
                       >
                         ${THINK_LEVELS.map(
                           (level) =>
@@ -764,8 +818,9 @@ function renderInspector(state: OrchestratorHost, board: OrchestrationBoard, car
                           const raw = (e.target as HTMLInputElement).value;
                           const parsed = raw.trim() ? Number(raw) : NaN;
                           state.orchUpdateCard(card.id, {
-                            timeoutSeconds:
-                              Number.isFinite(parsed) ? Math.max(0, Math.floor(parsed)) : undefined,
+                            timeoutSeconds: Number.isFinite(parsed)
+                              ? Math.max(0, Math.floor(parsed))
+                              : undefined,
                           });
                         }}
                       />
@@ -778,7 +833,8 @@ function renderInspector(state: OrchestratorHost, board: OrchestrationBoard, car
                       .value=${card.cleanup ?? "keep"}
                       @change=${(e: Event) =>
                         state.orchUpdateCard(card.id, {
-                          cleanup: (e.target as HTMLSelectElement).value === "delete" ? "delete" : "keep",
+                          cleanup:
+                            (e.target as HTMLSelectElement).value === "delete" ? "delete" : "keep",
                         })}
                     >
                       <option value="keep">Keep session</option>
@@ -803,9 +859,11 @@ function renderInspector(state: OrchestratorHost, board: OrchestrationBoard, car
                       <span class="statusDot ${run.status === "done" || run.status === "running" ? "ok" : ""}"></span>
                       <span>${status}</span>
                     </span>
-                    ${run.provider || run.model
-                      ? html`<span class="pill"><span class="mono">${run.provider ?? "?"}/${run.model ?? "?"}</span></span>`
-                      : nothing}
+                    ${
+                      run.provider || run.model
+                        ? html`<span class="pill"><span class="mono">${run.provider ?? "?"}/${run.model ?? "?"}</span></span>`
+                        : nothing
+                    }
                   </div>
 
                   <div class="muted">
@@ -821,11 +879,13 @@ function renderInspector(state: OrchestratorHost, board: OrchestrationBoard, car
                       type="button"
                       ?disabled=${!hasSession}
                       @click=${() => hasSession && state.openChatSession(run.sessionKey)}
-                      title=${hasSession
-                        ? "Open this run session in Chat"
-                        : isCodex
-                          ? "Codex CLI runs do not create chat sessions"
-                          : "No session available"}
+                      title=${
+                        hasSession
+                          ? "Open this run session in Chat"
+                          : isCodex
+                            ? "Codex CLI runs do not create chat sessions"
+                            : "No session available"
+                      }
                     >
                       ${icons.messageSquare}
                       Open Chat
@@ -835,38 +895,48 @@ function renderInspector(state: OrchestratorHost, board: OrchestrationBoard, car
                       type="button"
                       ?disabled=${cleanupDisabled}
                       @click=${() => state.orchCleanupCardSession(card.id)}
-                      title=${isCodex
-                        ? "Cleanup is only supported for sub-agent transcripts"
-                        : autoDelete
-                          ? "Auto-delete is enabled, cleanup is handled by the sub-agent handoff flow"
-                          : "Delete the sub-agent session transcript"}
+                      title=${
+                        isCodex
+                          ? "Cleanup is only supported for sub-agent transcripts"
+                          : autoDelete
+                            ? "Auto-delete is enabled, cleanup is handled by the sub-agent handoff flow"
+                            : "Delete the sub-agent session transcript"
+                      }
                     >
                       ${icons.trash ?? icons.x}
-                      ${autoDelete
-                        ? "Auto-delete"
-                        : cleanupStatus === "pending"
-                          ? "Cleaning…"
-                          : "Cleanup"}
+                      ${
+                        autoDelete
+                          ? "Auto-delete"
+                          : cleanupStatus === "pending"
+                            ? "Cleaning…"
+                            : "Cleanup"
+                      }
                     </button>
                   </div>
 
-                  ${run.warning
-                    ? html`<div class="callout" style="margin-top: 10px;">
+                  ${
+                    run.warning
+                      ? html`<div class="callout" style="margin-top: 10px;">
                         <div class="muted">Warning</div>
                         <div class="mono" style="margin-top: 6px; white-space: pre-wrap;">${run.warning}</div>
                       </div>`
-                    : nothing}
-                  ${run.error
-                    ? html`<div class="callout danger" style="margin-top: 10px;">
+                      : nothing
+                  }
+                  ${
+                    run.error
+                      ? html`<div class="callout danger" style="margin-top: 10px;">
                         <div class="muted">Error</div>
                         <div class="mono" style="margin-top: 6px; white-space: pre-wrap;">${run.error}</div>
                       </div>`
-                    : nothing}
+                      : nothing
+                  }
 
                   <div class="orch-output">${lastText || "No streamed output yet."}</div>
                 </div>
               `
-            : html`<div class="muted" style="margin-top: 12px;">Launch a run to see lifecycle + output here.</div>`
+            : html`
+                <div class="muted" style="margin-top: 12px">Launch a run to see lifecycle + output here.</div>
+              `
         }
       </div>
     </section>

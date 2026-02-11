@@ -98,6 +98,7 @@ export type OpenClawConfig = {
   talk?: TalkConfig;
   gateway?: GatewayConfig;
   voice?: VoiceConfig;
+  memory?: MemoryConfig;
 };
 
 export type ConfigValidationIssue = {

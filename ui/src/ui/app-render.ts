@@ -1,74 +1,11 @@
 import { html, nothing } from "lit";
 import type { AppViewState } from "./app-view-state.ts";
-import type { UsageState } from "./controllers/usage.ts";
 import { parseAgentSessionKey } from "../../../src/routing/session-key.js";
-import {
-  TAB_GROUPS,
-  iconForTab,
-  pathForTab,
-  subtitleForTab,
-  titleForTab,
-  type Tab,
-} from "./navigation";
-import { icons } from "./icons";
-import type { UiSettings } from "./storage";
-import type { ThemeMode } from "./theme";
-import type { ThemeTransitionContext } from "./theme-transition";
-import type {
-  ConfigSnapshot,
-  CronJob,
-  CronRunLogEntry,
-  CronStatus,
-  HealthSnapshot,
-  LogEntry,
-  LogLevel,
-  PresenceEntry,
-  ChannelsStatusSnapshot,
-  SessionsListResult,
-  SkillStatusReport,
-  StatusSummary,
-} from "./types";
-import type { ChatQueueItem, CronFormState } from "./ui-types";
-import { refreshChatAvatar } from "./app-chat";
-import { renderChat } from "./views/chat";
-import { renderConfig } from "./views/config";
-import { renderChannels } from "./views/channels";
-import { renderCron } from "./views/cron";
-import { renderDebug } from "./views/debug";
-import { renderInstances } from "./views/instances";
-import { renderLogs } from "./views/logs";
-import { renderNodes } from "./views/nodes";
-import { renderOrchestrator } from "./views/orchestrator";
-import { renderOverview } from "./views/overview";
-import { renderSessions } from "./views/sessions";
-import { renderSettings } from "./views/settings";
-import { renderChatThreadsNav } from "./views/chat-threads-nav";
-import { renderExecApprovalPrompt } from "./views/exec-approval";
-import { renderGatewayUrlConfirmation } from "./views/gateway-url-confirmation";
-import { renderCommandPalette } from "./views/command-palette";
-import {
-  approveDevicePairing,
-  loadDevices,
-  rejectDevicePairing,
-  revokeDeviceToken,
-  rotateDeviceToken,
-} from "./controllers/devices";
-import { renderSkills } from "./views/skills";
-import { renderChatControls, renderTab, renderThemeToggle } from "./app-render.helpers";
-import { loadChannels } from "./controllers/channels";
-import { loadPresence } from "./controllers/presence";
-import { deleteSession, loadSessions, patchSession } from "./controllers/sessions";
-import {
-  installSkill,
-  loadSkills,
-  saveSkillApiKey,
-  updateSkillEdit,
-  updateSkillEnabled,
-  type SkillMessage,
-} from "./controllers/skills";
-import { loadNodes } from "./controllers/nodes";
-import { loadChatHistory } from "./controllers/chat";
-import { loadSubagentMonitor } from "./controllers/subagent-monitor";
+import { refreshChatAvatar } from "./app-chat.ts";
+import { renderChatControls, renderTab, renderThemeToggle } from "./app-render.helpers.ts";
+import { loadChannels } from "./controllers/channels.ts";
+import { loadChatThreads } from "./controllers/chat-threads.ts";
+import { loadChatHistory } from "./controllers/chat.ts";
 import {
   applyConfig,
   loadConfig,
@@ -83,11 +20,48 @@ import {
   runCronJob,
   removeCronJob,
   addCronJob,
-} from "./controllers/cron";
-import { loadDebug, callDebugMethod } from "./controllers/debug";
-import { loadLogs } from "./controllers/logs";
-import { renderVoiceBar } from "./views/voice-bar";
-import { loadChatThreads } from "./controllers/chat-threads";
+} from "./controllers/cron.ts";
+import { loadDebug, callDebugMethod } from "./controllers/debug.ts";
+import {
+  approveDevicePairing,
+  loadDevices,
+  rejectDevicePairing,
+  revokeDeviceToken,
+  rotateDeviceToken,
+} from "./controllers/devices.ts";
+import { loadLogs } from "./controllers/logs.ts";
+import { loadNodes } from "./controllers/nodes.ts";
+import { loadPresence } from "./controllers/presence.ts";
+import { deleteSession, loadSessions, patchSession } from "./controllers/sessions.ts";
+import {
+  installSkill,
+  loadSkills,
+  saveSkillApiKey,
+  updateSkillEdit,
+  updateSkillEnabled,
+} from "./controllers/skills.ts";
+import { loadSubagentMonitor } from "./controllers/subagent-monitor.ts";
+import { icons } from "./icons.ts";
+import { TAB_GROUPS, subtitleForTab, titleForTab } from "./navigation.ts";
+import { renderChannels } from "./views/channels.ts";
+import { renderChatThreadsNav } from "./views/chat-threads-nav.ts";
+import { renderChat } from "./views/chat.ts";
+import { renderCommandPalette } from "./views/command-palette.ts";
+import { renderConfig } from "./views/config.ts";
+import { renderCron } from "./views/cron.ts";
+import { renderDebug } from "./views/debug.ts";
+import { renderDgx } from "./views/dgx.ts";
+import { renderExecApprovalPrompt } from "./views/exec-approval.ts";
+import { renderGatewayUrlConfirmation } from "./views/gateway-url-confirmation.ts";
+import { renderInstances } from "./views/instances.ts";
+import { renderLogs } from "./views/logs.ts";
+import { renderNodes } from "./views/nodes.ts";
+import { renderOrchestrator } from "./views/orchestrator.ts";
+import { renderOverview } from "./views/overview.ts";
+import { renderSessions } from "./views/sessions.ts";
+import { renderSettings } from "./views/settings.ts";
+import { renderSkills } from "./views/skills.ts";
+import { renderVoiceBar } from "./views/voice-bar.ts";
 
 const AVATAR_DATA_RE = /^data:/i;
 const AVATAR_HTTP_RE = /^https?:\/\//i;
@@ -108,6 +82,70 @@ function resolveAssistantAvatarUrl(state: AppViewState): string | undefined {
   return identity?.avatarUrl;
 }
 
+/**
+ * Classify the active model provider into a source category for the topbar indicator.
+ */
+function classifyModelSource(provider: string | null): {
+  label: string;
+  cssClass: string;
+} | null {
+  if (!provider) {
+    return null;
+  }
+  const p = provider.toLowerCase();
+  if (
+    p.startsWith("openai") ||
+    p.startsWith("anthropic") ||
+    p.startsWith("google") ||
+    p.startsWith("deepseek") ||
+    p.startsWith("mistral") ||
+    p.startsWith("xai") ||
+    p.startsWith("groq") ||
+    p.startsWith("together") ||
+    p.startsWith("fireworks") ||
+    p.startsWith("github-copilot") ||
+    p.includes("codex")
+  ) {
+    return { label: "Cloud", cssClass: "model-cloud" };
+  }
+  if (p.includes("spark") || p.includes("dgx")) {
+    return { label: "Spark", cssClass: "model-spark" };
+  }
+  if (p === "ollama" || p.includes("local") || p.includes("lmstudio")) {
+    return { label: "Local", cssClass: "model-local" };
+  }
+  return { label: provider, cssClass: "model-other" };
+}
+
+function renderModelPill(state: AppViewState) {
+  const provider = state.chatModelProvider;
+  const modelId = state.chatModelId;
+  if (!provider && !modelId) {
+    return nothing;
+  }
+
+  const source = classifyModelSource(provider);
+  if (!source) {
+    return nothing;
+  }
+
+  const shortModel = modelId
+    ? (modelId
+        .replace(/:latest$/, "")
+        .split("/")
+        .pop() ?? modelId)
+    : "";
+  const title = provider && modelId ? `${provider}/${modelId}` : (provider ?? modelId ?? "");
+
+  return html`
+    <div class="pill pill--model ${source.cssClass}" title="${title}">
+      <span class="statusDot ${source.cssClass}"></span>
+      <span>${source.label}</span>
+      ${shortModel ? html`<span class="mono">${shortModel}</span>` : nothing}
+    </div>
+  `;
+}
+
 export function renderApp(state: AppViewState) {
   const presenceCount = state.presenceEntries.length;
   const sessionsCount = state.sessionsResult?.count ?? null;
@@ -120,7 +158,9 @@ export function renderApp(state: AppViewState) {
   const chatAvatarUrl = state.chatAvatarUrl ?? assistantAvatarUrl ?? null;
   const topbarLogoSrc = `${state.basePath}/favicon.svg`;
   const cmdKey = (() => {
-    if (typeof navigator === "undefined") return "Ctrl K";
+    if (typeof navigator === "undefined") {
+      return "Ctrl K";
+    }
     const platform = navigator.platform || "";
     return /mac|iphone|ipad|ipod/i.test(platform) ? "Cmd K" : "Ctrl K";
   })();
@@ -148,6 +188,7 @@ export function renderApp(state: AppViewState) {
 
   return html`
     <div class="shell ${isChat ? "shell--chat" : ""} ${chatFocus ? "shell--chat-focus" : ""} ${state.settings.navCollapsed ? "shell--nav-collapsed" : ""} ${state.onboarding ? "shell--onboarding" : ""}">
+      <a class="skip-link" href="#main-content">Skip to content</a>
       <header class="topbar">
         <div class="topbar-left">
           <button
@@ -173,6 +214,7 @@ export function renderApp(state: AppViewState) {
           </div>
         </div>
         <div class="topbar-status">
+          ${renderModelPill(state)}
           <div class="pill">
             <span class="statusDot ${state.connected ? "ok" : ""}"></span>
             <span>Health</span>
@@ -192,17 +234,27 @@ export function renderApp(state: AppViewState) {
             class="pill topbar-action-btn topbar-action-btn--status"
             ?disabled=${!state.connected || state.memorySearchBusy}
             @click=${() => state.handleMemorySearchToggle()}
-            title="${state.memorySearchEnabled === false ? "Enable memory search" : "Disable memory search"}"
+            title="${(() => {
+              const base =
+                state.memorySearchEnabled === false
+                  ? "Enable memory search"
+                  : "Disable memory search";
+              return state.memoryStoreLabel ? `${base} (${state.memoryStoreLabel})` : base;
+            })()}"
             aria-label="${state.memorySearchEnabled === false ? "Enable memory search" : "Disable memory search"}"
           >
             <span class="statusDot ${state.memorySearchEnabled === false ? "" : "ok"}"></span>
             <span>Memory</span>
             <span class="mono">
-              ${state.memorySearchBusy
-                ? "..."
-                : state.memorySearchEnabled === false
-                  ? "Off"
-                  : "On"}
+              ${
+                state.memorySearchBusy
+                  ? "..."
+                  : state.memorySearchEnabled === false
+                    ? "Off"
+                    : state.memoryStoreLabel
+                      ? state.memoryStoreLabel
+                      : "On"
+              }
             </span>
           </button>
           <button
@@ -218,7 +270,7 @@ export function renderApp(state: AppViewState) {
           <button
             class="pill topbar-action-btn topbar-action-btn--status"
             ?disabled=${!state.connected || state.sparkBusy}
-            @click=${() => state.setTab("settings")}
+            @click=${() => state.setTab("dgx")}
             title=${sparkTitle}
             aria-label="DGX Spark status"
           >
@@ -268,17 +320,20 @@ export function renderApp(state: AppViewState) {
                   (state.chatThreadsShowSubagents = !state.chatThreadsShowSubagents),
                 onRenameChat: (key) => state.handleChatThreadRename(key),
                 onDeleteChat: (key) => state.handleChatThreadDelete(key),
-                onRefresh: () =>
-                  loadChatThreads(state, { search: state.chatThreadsQuery }),
+                onRefresh: () => loadChatThreads(state, { search: state.chatThreadsQuery }),
                 onToggleThinking: () => {
-                  if (state.onboarding) return;
+                  if (state.onboarding) {
+                    return;
+                  }
                   state.applySettings({
                     ...state.settings,
                     chatShowThinking: !state.settings.chatShowThinking,
                   });
                 },
                 onToggleFocusMode: () => {
-                  if (state.onboarding) return;
+                  if (state.onboarding) {
+                    return;
+                  }
                   state.applySettings({
                     ...state.settings,
                     chatFocusMode: !state.settings.chatFocusMode,
@@ -331,7 +386,7 @@ export function renderApp(state: AppViewState) {
           </div>
         </div>
       </aside>
-      <main class="content ${isChat ? "content--chat" : ""}">
+      <main id="main-content" class="content ${isChat ? "content--chat" : ""}" tabindex="-1">
         <section class="content-header">
           <div>
             ${state.tab === "usage" ? nothing : html`<div class="page-title">${titleForTab(state.tab)}</div>`}
@@ -343,11 +398,7 @@ export function renderApp(state: AppViewState) {
           </div>
         </section>
 
-        ${
-          state.tab === "orchestrator"
-            ? renderOrchestrator(state)
-            : nothing
-        }
+        ${state.tab === "orchestrator" ? renderOrchestrator(state) : nothing}
 
         ${
           state.tab === "overview"
@@ -362,6 +413,11 @@ export function renderApp(state: AppViewState) {
                 cronEnabled: state.cronStatus?.enabled ?? null,
                 cronNext,
                 lastChannelsRefresh: state.channelsLastSuccess,
+                systemStatusLoading: state.systemStatusLoading,
+                systemStatusError: state.systemStatusError,
+                routerStatus: state.routerStatus,
+                sparkStatus: state.sparkStatus,
+                personaplexStatus: state.personaplexStatus,
                 onSettingsChange: (next) => state.applySettings(next),
                 onPasswordChange: (next) => (state.password = next),
                 onSessionKeyChange: (next) => {
@@ -377,6 +433,17 @@ export function renderApp(state: AppViewState) {
                 },
                 onConnect: () => state.connect(),
                 onRefresh: () => state.loadOverview(),
+                onRouterSetEnabled: (enabled) => void state.handleRouterSetEnabled(enabled),
+              })
+            : nothing
+        }
+
+        ${
+          state.tab === "dgx"
+            ? renderDgx({
+                connected: state.connected,
+                sparkStatus: state.sparkStatus,
+                onRefresh: () => state.refreshSparkStatus(),
               })
             : nothing
         }
@@ -1198,92 +1265,114 @@ export function renderApp(state: AppViewState) {
 
         ${
           state.tab === "chat"
-            ? renderChat({
-                sessionKey: state.sessionKey,
-                onSessionKeyChange: (next) => {
-                  state.sessionKey = next;
-                  state.chatMessage = "";
-                  state.chatAttachments = [];
-                  state.chatStream = null;
-                  state.chatStreamStartedAt = null;
-                  state.chatRunId = null;
-                  state.chatModelSelection = null;
-                  state.chatTaskPlan = null;
-                  state.chatQueue = [];
-                  state.resetToolStream();
-                  state.resetChatScroll();
-                  state.applySettings({
-                    ...state.settings,
-                    sessionKey: next,
-                    lastActiveSessionKey: next,
-                  });
-                  void state.loadAssistantIdentity();
-                  void loadChatHistory(state);
-                  void refreshChatAvatar(state);
-                },
-                thinkingLevel: state.chatThinkingLevel,
-                showThinking,
-                loading: state.chatLoading,
-                sending: state.chatSending,
-                compactionStatus: state.compactionStatus,
-                assistantAvatarUrl: chatAvatarUrl,
-                messages: state.chatMessages,
-                toolMessages: state.chatToolMessages,
-                stream: state.chatStream,
-                streamStartedAt: state.chatStreamStartedAt,
-                modelSelection: state.chatModelSelection,
-                taskPlan: state.chatTaskPlan,
-                draft: state.chatMessage,
-                queue: state.chatQueue,
-                connected: state.connected,
-                canSend: state.connected,
-                disabledReason: chatDisabledReason,
-                error: state.lastError,
-                sessions: state.chatThreadsResult,
-                subagentMonitorLoading: state.subagentMonitorLoading,
-                subagentMonitorResult: state.subagentMonitorResult,
-                subagentMonitorError: state.subagentMonitorError,
-                onSubagentRefresh: () =>
-                  loadSubagentMonitor(state, { quiet: false }),
-                focusMode: chatFocus,
-                onRefresh: () => {
-                  state.resetToolStream();
-                  return Promise.all([
-                    loadChatHistory(state),
-                    loadChatThreads(state, { search: state.chatThreadsQuery }),
-                    refreshChatAvatar(state),
-                  ]);
-                },
-                onToggleFocusMode: () => {
-                  if (state.onboarding) {
-                    return;
-                  }
-                  state.applySettings({
-                    ...state.settings,
-                    chatFocusMode: !state.settings.chatFocusMode,
-                  });
-                },
-                onChatScroll: (event) => state.handleChatScroll(event),
-                onDraftChange: (next) => (state.chatMessage = next),
-                attachments: state.chatAttachments,
-                onAttachmentsChange: (next) => (state.chatAttachments = next),
-                onSend: () => state.handleSendChat(),
-                onQueue: () => state.handleSendChat(undefined, { forceQueue: true }),
-                canAbort: Boolean(state.chatRunId),
-                onAbort: () => void state.handleAbortChat(),
-                onQueueRemove: (id) => state.removeQueuedMessage(id),
-                onNewChat: () => state.handleChatNewThread(),
-                // Sidebar props for tool output viewing
-                sidebarOpen: state.sidebarOpen,
-                sidebarContent: state.sidebarContent,
-                sidebarError: state.sidebarError,
-                splitRatio: state.splitRatio,
-                onOpenSidebar: (content: string) => state.handleOpenSidebar(content),
-                onCloseSidebar: () => state.handleCloseSidebar(),
-                onSplitRatioChange: (ratio: number) => state.handleSplitRatioChange(ratio),
-                assistantName: state.assistantName,
-                assistantAvatar: state.assistantAvatar,
-              })
+            ? html`
+                ${
+                  state.ttsSpeaking && state.ttsProgress
+                    ? html`<div class="pill content-area-tts-status" role="status">${state.ttsProgress}</div>`
+                    : nothing
+                }
+                ${
+                  state.lastError
+                    ? html`<div class="callout danger content-area-run-error" role="alert">Run failed: ${state.lastError}</div>`
+                    : nothing
+                }
+                ${renderChat({
+                  sessionKey: state.sessionKey,
+                  onSessionKeyChange: (next) => {
+                    state.sessionKey = next;
+                    state.chatMessage = "";
+                    state.chatAttachments = [];
+                    state.chatStream = null;
+                    state.chatStreamStartedAt = null;
+                    state.chatRunId = null;
+                    state.chatModelSelection = null;
+                    state.chatTaskPlan = null;
+                    state.chatQueue = [];
+                    state.resetToolStream();
+                    state.resetChatScroll();
+                    state.applySettings({
+                      ...state.settings,
+                      sessionKey: next,
+                      lastActiveSessionKey: next,
+                    });
+                    void state.loadAssistantIdentity();
+                    void loadChatHistory(state);
+                    void refreshChatAvatar(state);
+                  },
+                  thinkingLevel: state.chatThinkingLevel,
+                  showThinking,
+                  loading: state.chatLoading,
+                  sending: state.chatSending,
+                  compactionStatus: state.compactionStatus,
+                  assistantAvatarUrl: chatAvatarUrl,
+                  messages: state.chatMessages,
+                  toolMessages: state.chatToolMessages,
+                  stream: state.chatStream,
+                  streamStartedAt: state.chatStreamStartedAt,
+                  modelSelection: state.chatModelSelection,
+                  taskPlan: state.chatTaskPlan,
+                  draft: state.chatMessage,
+                  queue: state.chatQueue,
+                  connected: state.connected,
+                  canSend: state.connected,
+                  disabledReason: chatDisabledReason,
+                  error: state.lastError,
+                  sessions: state.chatThreadsResult,
+                  subagentMonitorLoading: state.subagentMonitorLoading,
+                  subagentMonitorResult: state.subagentMonitorResult,
+                  subagentMonitorError: state.subagentMonitorError,
+                  onSubagentRefresh: () => loadSubagentMonitor(state, { quiet: false }),
+                  focusMode: chatFocus,
+                  onRefresh: () => {
+                    state.resetToolStream();
+                    return Promise.all([
+                      loadChatHistory(state),
+                      loadChatThreads(state, { search: state.chatThreadsQuery }),
+                      refreshChatAvatar(state),
+                    ]);
+                  },
+                  onToggleFocusMode: () => {
+                    if (state.onboarding) {
+                      return;
+                    }
+                    state.applySettings({
+                      ...state.settings,
+                      chatFocusMode: !state.settings.chatFocusMode,
+                    });
+                  },
+                  onChatScroll: (event) => state.handleChatScroll(event),
+                  onDraftChange: (next) => (state.chatMessage = next),
+                  attachments: state.chatAttachments,
+                  onAttachmentsChange: (next) => (state.chatAttachments = next),
+                  onSend: () => state.handleSendChat(),
+                  onQueue: () => state.handleSendChat(undefined, { forceQueue: true }),
+                  canAbort: Boolean(state.chatRunId),
+                  onAbort: () => void state.handleAbortChat(),
+                  onQueueRemove: (id) => state.removeQueuedMessage(id),
+                  onNewChat: () => state.handleChatNewThread(),
+                  // Sidebar props for tool output viewing
+                  sidebarOpen: state.sidebarOpen,
+                  sidebarContent: state.sidebarContent,
+                  sidebarError: state.sidebarError,
+                  splitRatio: state.splitRatio,
+                  onOpenSidebar: (content: string) => state.handleOpenSidebar(content),
+                  onCloseSidebar: () => state.handleCloseSidebar(),
+                  onSplitRatioChange: (ratio: number) => state.handleSplitRatioChange(ratio),
+                  assistantName: state.assistantName,
+                  assistantAvatar: state.assistantAvatar,
+                  // Spark voice mic + per-message speaker (from spark.status: voiceAvailable or active)
+                  sparkVoiceAvailable: Boolean(
+                    state.sparkStatus?.enabled &&
+                    (state.sparkStatus?.voiceAvailable ?? state.sparkStatus?.active),
+                  ),
+                  sparkMicRecording: state.sparkMicRecording ?? false,
+                  onMicClick: () => state.handleSparkMicClick?.(),
+                  onSpeakClick: (text) => void state.handleSpeakText?.(text),
+                  ttsSpeaking: state.ttsSpeaking ?? false,
+                  ttsProgress: state.ttsProgress ?? null,
+                  onStopSpeaking: () => state.handleStopSpeaking?.(),
+                })}
+              `
             : nothing
         }
 

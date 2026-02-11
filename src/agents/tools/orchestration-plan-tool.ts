@@ -1,8 +1,7 @@
 import { Type } from "@sinclair/typebox";
-
+import type { AnyAgentTool } from "./common.js";
 import { callGateway } from "../../gateway/call.js";
 import { emitAgentEvent } from "../../infra/agent-events.js";
-import type { AnyAgentTool } from "./common.js";
 import { jsonResult } from "./common.js";
 
 const TaskPlanStatusSchema = Type.Union([
@@ -43,7 +42,9 @@ const OrchestrationPlanToolSchema = Type.Object(
 );
 
 function normalizeStatus(value: unknown): string {
-  if (typeof value !== "string") return "todo";
+  if (typeof value !== "string") {
+    return "todo";
+  }
   const normalized = value.trim().toLowerCase();
   if (
     normalized === "todo" ||
@@ -63,16 +64,22 @@ function normalizePlan(value: unknown) {
   }
   const record = value as Record<string, unknown>;
   const id = typeof record.id === "string" ? record.id.trim() : "";
-  if (!id) return null;
+  if (!id) {
+    return null;
+  }
   const goal = typeof record.goal === "string" ? record.goal.trim() : undefined;
   const rawTasks = Array.isArray(record.tasks) ? record.tasks : [];
   const tasks = rawTasks
     .map((task) => {
-      if (!task || typeof task !== "object" || Array.isArray(task)) return null;
+      if (!task || typeof task !== "object" || Array.isArray(task)) {
+        return null;
+      }
       const t = task as Record<string, unknown>;
       const taskId = typeof t.id === "string" ? t.id.trim() : "";
       const title = typeof t.title === "string" ? t.title.trim() : "";
-      if (!taskId || !title) return null;
+      if (!taskId || !title) {
+        return null;
+      }
       const detail = typeof t.detail === "string" ? t.detail.trim() : undefined;
       const status = normalizeStatus(t.status);
       const assignedSessionKey =

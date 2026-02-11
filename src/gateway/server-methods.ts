@@ -17,10 +17,11 @@ import { nodeHandlers } from "./server-methods/nodes.js";
 import { opsHandlers } from "./server-methods/ops.js";
 import { orchestratorHandlers } from "./server-methods/orchestrator.js";
 import { routerStatusHandlers } from "./server-methods/router-status.js";
-import { sparkStatusHandlers } from "./server-methods/spark-status.js";
 import { sendHandlers } from "./server-methods/send.js";
 import { sessionsHandlers } from "./server-methods/sessions.js";
 import { skillsHandlers } from "./server-methods/skills.js";
+import { sparkStatusHandlers } from "./server-methods/spark-status.js";
+import { sparkVoiceHandlers } from "./server-methods/spark-voice.js";
 import { systemHandlers } from "./server-methods/system.js";
 import { talkHandlers } from "./server-methods/talk.js";
 import { ttsHandlers } from "./server-methods/tts.js";
@@ -102,6 +103,8 @@ const WRITE_METHODS = new Set([
   "voice.personaplex.start",
   "voice.personaplex.stop",
   "voice.personaplex.process",
+  "spark.voice.stt",
+  "spark.voice.tts",
   "node.invoke",
   "chat.send",
   "chat.steer",
@@ -208,6 +211,7 @@ export const coreGatewayHandlers: GatewayRequestHandlers = {
   ...nodeHandlers,
   ...routerStatusHandlers,
   ...sparkStatusHandlers,
+  ...sparkVoiceHandlers,
   ...sendHandlers,
   ...usageHandlers,
   ...agentHandlers,

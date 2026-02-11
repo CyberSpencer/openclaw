@@ -1,7 +1,7 @@
-import { extractText } from "../chat/message-extract";
-import type { GatewayBrowserClient } from "../gateway";
-import { generateUUID } from "../uuid";
-import type { ChatAttachment, TaskPlan } from "../ui-types";
+import type { GatewayBrowserClient } from "../gateway.ts";
+import type { ChatAttachment, TaskPlan } from "../ui-types.ts";
+import { extractText } from "../chat/message-extract.ts";
+import { generateUUID } from "../uuid.ts";
 
 export type ChatState = {
   client: GatewayBrowserClient | null;
@@ -48,13 +48,13 @@ export async function loadChatHistory(state: ChatState) {
   state.chatLoading = true;
   state.lastError = null;
   try {
-    const res = (await state.client.request("chat.history", {
+    const res = await state.client.request("chat.history", {
       sessionKey: state.sessionKey,
       limit: 200,
-    })) as { messages?: unknown[]; thinkingLevel?: string | null; taskPlan?: TaskPlan | null };
+    });
     state.chatMessages = Array.isArray(res.messages) ? res.messages : [];
     state.chatThinkingLevel = res.thinkingLevel ?? null;
-    state.chatTaskPlan = (res.taskPlan as TaskPlan | null | undefined) ?? null;
+    state.chatTaskPlan = res.taskPlan ?? null;
   } catch (err) {
     state.lastError = String(err);
   } finally {
@@ -168,9 +168,13 @@ export async function steerChatMessage(
   state: ChatState,
   message: string,
 ): Promise<ChatSteerResult | null> {
-  if (!state.client || !state.connected) return null;
+  if (!state.client || !state.connected) {
+    return null;
+  }
   const msg = message.trim();
-  if (!msg) return null;
+  if (!msg) {
+    return null;
+  }
 
   const now = Date.now();
   const steerId = generateUUID();
@@ -189,11 +193,11 @@ export async function steerChatMessage(
   state.chatSending = true;
   state.lastError = null;
   try {
-    const res = (await state.client.request("chat.steer", {
+    const res = await state.client.request("chat.steer", {
       sessionKey: state.sessionKey,
       message: msg,
       idempotencyKey: steerId,
-    })) as ChatSteerResult | undefined;
+    });
     return res ?? null;
   } catch (err) {
     const error = String(err);
@@ -253,7 +257,9 @@ export function handleChatEvent(state: ChatState, payload?: ChatEventPayload) {
     if (!state.chatRunId) {
       state.chatRunId = payload.runId;
       state.chatStreamStartedAt = Date.now();
-      if (state.chatStream === null) state.chatStream = "";
+      if (state.chatStream === null) {
+        state.chatStream = "";
+      }
     }
     const next = extractText(payload.message);
     if (typeof next === "string") {
@@ -266,10 +272,12 @@ export function handleChatEvent(state: ChatState, payload?: ChatEventPayload) {
     state.chatStream = null;
     state.chatRunId = null;
     state.chatStreamStartedAt = null;
+    state.lastError = null;
   } else if (payload.state === "aborted") {
     state.chatStream = null;
     state.chatRunId = null;
     state.chatStreamStartedAt = null;
+    state.lastError = "Run was stopped.";
   } else if (payload.state === "error") {
     state.chatStream = null;
     state.chatRunId = null;

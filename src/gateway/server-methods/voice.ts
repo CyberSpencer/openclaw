@@ -10,13 +10,13 @@
  * - voice.synthesize: TTS only
  */
 
+import { CURRENT_SESSION_VERSION } from "@mariozechner/pi-coding-agent";
 import { randomUUID } from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
-
-import { CURRENT_SESSION_VERSION } from "@mariozechner/pi-coding-agent";
-import { loadConfig } from "../../config/config.js";
+import type { MsgContext } from "../../auto-reply/templating.js";
 import type { VoiceConfig } from "../../config/types.voice.js";
+import type { GatewayRequestHandlers } from "./types.js";
 import { resolveSessionAgentId } from "../../agents/agent-scope.js";
 import { resolveEffectiveMessagesConfig, resolveIdentityName } from "../../agents/identity.js";
 import { dispatchInboundMessage } from "../../auto-reply/dispatch.js";
@@ -25,17 +25,10 @@ import {
   extractShortModelName,
   type ResponsePrefixContext,
 } from "../../auto-reply/reply/response-prefix-template.js";
-import type { MsgContext } from "../../auto-reply/templating.js";
+import { loadConfig } from "../../config/config.js";
 import { INTERNAL_MESSAGE_CHANNEL } from "../../utils/message-channel.js";
-import {
-  resolveVoiceConfig,
-  checkVoiceCapabilities,
-  processVoiceInput,
-  processTextToVoice,
-} from "../../voice/voice.js";
 import { transcribeWithWhisper, resolveWhisperConfig } from "../../voice/local-stt.js";
 import { synthesizeWithLocalTts, resolveLocalTtsConfig } from "../../voice/local-tts.js";
-import { routeVoiceRequest, resolveRouterConfig } from "../../voice/router.js";
 import {
   resolvePersonaPlexConfig,
   selectPersonaPlexEndpoint,
@@ -44,10 +37,17 @@ import {
   processWithPersonaPlex,
   getPersonaPlexStatus,
 } from "../../voice/personaplex.js";
+import { routeVoiceRequest, resolveRouterConfig } from "../../voice/router.js";
+import {
+  resolveVoiceConfig,
+  checkVoiceCapabilities,
+  processVoiceInput,
+  processTextToVoice,
+  processTextForReply,
+} from "../../voice/voice.js";
 import { ErrorCodes, errorShape } from "../protocol/index.js";
-import { formatForLog } from "../ws-log.js";
 import { loadSessionEntry } from "../session-utils.js";
-import type { GatewayRequestHandlers } from "./types.js";
+import { formatForLog } from "../ws-log.js";
 
 /**
  * Get voice configuration from OpenClaw config.
@@ -461,6 +461,7 @@ export const voiceHandlers: GatewayRequestHandlers = {
    * Params:
    * - text: Text to process
    * - sessionKey: Optional session key for chat context
+   * - skipTts: Optional boolean, when true only routes + generates text (no local TTS)
    */
   "voice.processText": async ({ params, respond, context }) => {
     const text = typeof params.text === "string" ? params.text.trim() : "";
@@ -473,6 +474,7 @@ export const voiceHandlers: GatewayRequestHandlers = {
       return;
     }
 
+    const skipTts = params.skipTts === true;
     const sessionKey = typeof params.sessionKey === "string" ? params.sessionKey : "webchat-voice";
 
     try {
@@ -597,7 +599,9 @@ export const voiceHandlers: GatewayRequestHandlers = {
         return combinedReply;
       };
 
-      const result = await processTextToVoice(text, config, llmInvoke);
+      const result = skipTts
+        ? await processTextForReply(text, config, llmInvoke)
+        : await processTextToVoice(text, config, llmInvoke);
 
       if (result.success) {
         respond(true, {

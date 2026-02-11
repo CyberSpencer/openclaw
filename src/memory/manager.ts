@@ -9,7 +9,6 @@ import type { OpenClawConfig } from "../config/config.js";
 import type {
   MemoryEmbeddingProbeResult,
   MemoryProviderStatus,
-  MemorySearchManager,
   MemorySearchResult,
   MemorySource,
   MemorySyncProgressUpdate,
@@ -20,6 +19,16 @@ import { resolveSessionTranscriptsDirForAgent } from "../config/sessions/paths.j
 import { createSubsystemLogger } from "../logging/subsystem.js";
 import { onSessionTranscriptUpdate } from "../sessions/transcript-events.js";
 import { resolveUserPath, truncateUtf16Safe } from "../utils.js";
+import { type GeminiBatchRequest, runGeminiEmbeddingBatches } from "./batch-gemini.js";
+import {
+  type OpenAiBatchRequest,
+  OPENAI_BATCH_ENDPOINT,
+  runOpenAiEmbeddingBatches,
+} from "./batch-openai.js";
+import { type VoyageBatchRequest, runVoyageEmbeddingBatches } from "./batch-voyage.js";
+import { DEFAULT_GEMINI_EMBEDDING_MODEL } from "./embeddings-gemini.js";
+import { DEFAULT_OPENAI_EMBEDDING_MODEL } from "./embeddings-openai.js";
+import { DEFAULT_VOYAGE_EMBEDDING_MODEL } from "./embeddings-voyage.js";
 import {
   createEmbeddingProvider,
   type EmbeddingProvider,
@@ -203,7 +212,7 @@ async function resolveStoreSettings(
   if (settings.store.driver !== "auto" && settings.store.driver !== "qdrant") {
     return settings;
   }
-  const resolvedQdrant = await resolveQdrantEndpoint(settings.store.qdrant);
+  const resolvedQdrant = await resolveQdrantEndpoint(settings.store.qdrant as QdrantConfig);
   if (resolvedQdrant) {
     return {
       ...settings,

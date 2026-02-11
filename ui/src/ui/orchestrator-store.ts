@@ -1,4 +1,4 @@
-import { generateUUID } from "./uuid";
+import { generateUUID } from "./uuid.ts";
 
 const STORAGE_KEY = "openclaw.control.orchestrator.v1";
 
@@ -130,12 +130,16 @@ function normalizeRunner(value: unknown): OrchestrationRunner {
 }
 
 function normalizeCodexMode(value: unknown): CodexMode | undefined {
-  if (value === "plan" || value === "apply" || value === "run") return value;
+  if (value === "plan" || value === "apply" || value === "run") {
+    return value;
+  }
   return undefined;
 }
 
 function normalizeTags(value: unknown): string[] | undefined {
-  if (!Array.isArray(value)) return undefined;
+  if (!Array.isArray(value)) {
+    return undefined;
+  }
   const tags = value
     .map((t) => (typeof t === "string" ? t.trim() : ""))
     .filter(Boolean)
@@ -144,10 +148,14 @@ function normalizeTags(value: unknown): string[] | undefined {
 }
 
 function normalizeRun(value: unknown): OrchestrationCardRun | undefined {
-  if (!isRecord(value)) return undefined;
+  if (!isRecord(value)) {
+    return undefined;
+  }
   const runId = readString(value.runId).trim();
   const sessionKey = readString(value.sessionKey).trim();
-  if (!runId || !sessionKey) return undefined;
+  if (!runId || !sessionKey) {
+    return undefined;
+  }
   const statusRaw = readString(value.status, "idle");
   const status =
     statusRaw === "accepted" ||
@@ -164,7 +172,7 @@ function normalizeRun(value: unknown): OrchestrationCardRun | undefined {
           value.cleanup.status === "pending" ||
           value.cleanup.status === "done" ||
           value.cleanup.status === "error"
-            ? (value.cleanup.status as "pending" | "done" | "error")
+            ? value.cleanup.status
             : undefined,
         error: typeof value.cleanup.error === "string" ? value.cleanup.error : undefined,
       }
@@ -187,7 +195,9 @@ function normalizeRun(value: unknown): OrchestrationCardRun | undefined {
 }
 
 function normalizeCard(value: unknown): OrchestrationCard | null {
-  if (!isRecord(value)) return null;
+  if (!isRecord(value)) {
+    return null;
+  }
   const id = readString(value.id).trim() || generateUUID();
   const laneId = normalizeLaneId(value.laneId);
   const title = readString(value.title, "Untitled").trim() || "Untitled";
@@ -225,7 +235,9 @@ function normalizeCard(value: unknown): OrchestrationCard | null {
 }
 
 function normalizeBoard(value: unknown): OrchestrationBoard | null {
-  if (!isRecord(value)) return null;
+  if (!isRecord(value)) {
+    return null;
+  }
   const id = readString(value.id).trim() || "main";
   const title = readString(value.title, "Mission Control").trim() || "Mission Control";
   const now = Date.now();
@@ -236,7 +248,9 @@ function normalizeBoard(value: unknown): OrchestrationBoard | null {
     Array.isArray(value.lanes) && value.lanes.length
       ? value.lanes
           .map((lane) => {
-            if (!isRecord(lane)) return null;
+            if (!isRecord(lane)) {
+              return null;
+            }
             const laneId = normalizeLaneId(lane.id);
             const laneTitle = readString(lane.title).trim() || String(laneId);
             const desc = typeof lane.description === "string" ? lane.description : undefined;
@@ -248,15 +262,15 @@ function normalizeBoard(value: unknown): OrchestrationBoard | null {
   const seenLaneIds = new Set<string>();
   const uniqueLanes = lanes.filter((lane) => {
     const key = String(lane.id);
-    if (seenLaneIds.has(key)) return false;
+    if (seenLaneIds.has(key)) {
+      return false;
+    }
     seenLaneIds.add(key);
     return true;
   });
   const cards =
     Array.isArray(value.cards) && value.cards.length
-      ? value.cards
-          .map(normalizeCard)
-          .filter((card): card is OrchestrationCard => Boolean(card))
+      ? value.cards.map(normalizeCard).filter((card): card is OrchestrationCard => Boolean(card))
       : [];
   return { id, title, lanes: uniqueLanes, cards, createdAt, updatedAt };
 }
@@ -265,9 +279,13 @@ export function loadOrchestratorState(): OrchestratorState {
   const defaults = createDefaultOrchestratorState();
   try {
     const raw = localStorage.getItem(STORAGE_KEY);
-    if (!raw) return defaults;
+    if (!raw) {
+      return defaults;
+    }
     const parsed = JSON.parse(raw) as unknown;
-    if (!isRecord(parsed) || parsed.version !== 1) return defaults;
+    if (!isRecord(parsed) || parsed.version !== 1) {
+      return defaults;
+    }
     const boards =
       Array.isArray(parsed.boards) && parsed.boards.length
         ? parsed.boards
@@ -276,15 +294,18 @@ export function loadOrchestratorState(): OrchestratorState {
         : [];
     const usableBoards = boards.length ? boards : defaults.boards;
     const selectedRaw = readString(parsed.selectedBoardId, defaults.selectedBoardId).trim();
-    const selectedBoardId =
-      usableBoards.some((board) => board.id === selectedRaw) ? selectedRaw : usableBoards[0]!.id;
+    const selectedBoardId = usableBoards.some((board) => board.id === selectedRaw)
+      ? selectedRaw
+      : usableBoards[0].id;
     return { version: 1, selectedBoardId, boards: usableBoards };
   } catch {
     return defaults;
   }
 }
 
-export function saveOrchestratorState(state: Pick<OrchestratorState, "selectedBoardId" | "boards">) {
+export function saveOrchestratorState(
+  state: Pick<OrchestratorState, "selectedBoardId" | "boards">,
+) {
   const next: OrchestratorState = {
     version: 1,
     selectedBoardId: state.selectedBoardId,

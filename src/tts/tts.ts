@@ -31,6 +31,10 @@ import {
 } from "../agents/model-selection.js";
 import { resolveModel } from "../agents/pi-embedded-runner/model.js";
 import { resolveProviderEndpointConfig } from "../agents/provider-endpoints.js";
+import { normalizeChannelId } from "../channels/plugins/index.js";
+import { logVerbose } from "../globals.js";
+import { isVoiceCompatibleAudio } from "../media/audio.js";
+import { resolveUserPath, CONFIG_DIR } from "../utils.js";
 
 const DEFAULT_TIMEOUT_MS = 30_000;
 const DEFAULT_TTS_MAX_LENGTH = 1500;

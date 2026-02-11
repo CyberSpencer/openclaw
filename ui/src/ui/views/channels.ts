@@ -1,7 +1,4 @@
 import { html, nothing } from "lit";
-
-import { formatAgo } from "../format";
-import { icons } from "../icons";
 import type {
   ChannelAccountSnapshot,
   ChannelUiMetaEntry,
@@ -17,7 +14,9 @@ import type {
   WhatsAppStatus,
 } from "../types.ts";
 import type { ChannelKey, ChannelsChannelData, ChannelsProps } from "./channels.types.ts";
+import { formatAgo } from "../format.ts";
 import { formatRelativeTimestamp } from "../format.ts";
+import { icons } from "../icons.ts";
 import { renderChannelConfigSection } from "./channels.config.ts";
 import { renderDiscordCard } from "./channels.discord.ts";
 import { renderGoogleChatCard } from "./channels.googlechat.ts";
@@ -36,7 +35,9 @@ const RESET_LABEL_AFTER_MS = 1500;
 const RESET_ERROR_AFTER_MS = 2000;
 
 async function copyTextToClipboard(text: string): Promise<boolean> {
-  if (!text) return false;
+  if (!text) {
+    return false;
+  }
 
   try {
     await navigator.clipboard.writeText(text);
@@ -63,13 +64,17 @@ function renderCopySnapshotButton(text: string) {
         event.stopPropagation();
 
         const button = event.currentTarget as HTMLButtonElement | null;
-        if (!button || button.dataset.copying === "1") return;
+        if (!button || button.dataset.copying === "1") {
+          return;
+        }
 
         button.dataset.copying = "1";
         button.disabled = true;
 
         const copied = await copyTextToClipboard(text);
-        if (!button.isConnected) return;
+        if (!button.isConnected) {
+          return;
+        }
 
         delete button.dataset.copying;
         button.disabled = false;
@@ -77,7 +82,9 @@ function renderCopySnapshotButton(text: string) {
         if (!copied) {
           setCopyButtonLabel(button, ERROR_LABEL);
           window.setTimeout(() => {
-            if (!button.isConnected) return;
+            if (!button.isConnected) {
+              return;
+            }
             setCopyButtonLabel(button, COPY_LABEL);
           }, RESET_ERROR_AFTER_MS);
           return;
@@ -85,7 +92,9 @@ function renderCopySnapshotButton(text: string) {
 
         setCopyButtonLabel(button, COPIED_LABEL);
         window.setTimeout(() => {
-          if (!button.isConnected) return;
+          if (!button.isConnected) {
+            return;
+          }
           setCopyButtonLabel(button, COPY_LABEL);
         }, RESET_LABEL_AFTER_MS);
       }}
@@ -119,7 +128,9 @@ export function renderChannels(props: ChannelsProps) {
       }
       return a.order - b.order;
     });
-  const snapshotText = props.snapshot ? JSON.stringify(props.snapshot, null, 2) : "No snapshot yet.";
+  const snapshotText = props.snapshot
+    ? JSON.stringify(props.snapshot, null, 2)
+    : "No snapshot yet.";
 
   return html`
     <section class="grid grid-cols-2">

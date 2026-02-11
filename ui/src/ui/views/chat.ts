@@ -2,22 +2,15 @@ import { html, nothing, type TemplateResult } from "lit";
 import { ref } from "lit/directives/ref.js";
 import { repeat } from "lit/directives/repeat.js";
 import { unsafeHTML } from "lit/directives/unsafe-html.js";
-
-import type { SessionsListResult } from "../types";
-import type {
-  ChatAttachment,
-  ChatQueueItem,
-  TaskPlan,
-  TaskPlanStatus,
-  TaskPlanTask,
-} from "../ui-types";
-import type { ModelSelectionInfo } from "../app-tool-stream";
-import { icons } from "../icons";
-import { normalizeMessage, normalizeRoleForGrouping } from "../chat/message-normalizer";
-import { extractTextCached } from "../chat/message-extract";
-import { toSanitizedMarkdownHtml } from "../markdown";
-import { renderMarkdownSidebar } from "./markdown-sidebar";
-import "../components/resizable-divider";
+import type { ModelSelectionInfo } from "../app-tool-stream.ts";
+import type { SessionsListResult } from "../types.ts";
+import type { ChatAttachment, ChatQueueItem, TaskPlan, TaskPlanStatus } from "../ui-types.ts";
+import { extractTextCached } from "../chat/message-extract.ts";
+import { normalizeMessage, normalizeRoleForGrouping } from "../chat/message-normalizer.ts";
+import { icons } from "../icons.ts";
+import { toSanitizedMarkdownHtml } from "../markdown.ts";
+import { renderMarkdownSidebar } from "./markdown-sidebar.ts";
+import "../components/resizable-divider.ts";
 
 export type CompactionIndicatorStatus = {
   active: boolean;
@@ -81,6 +74,16 @@ export type ChatProps = {
   onCloseSidebar?: () => void;
   onSplitRatioChange?: (ratio: number) => void;
   onChatScroll?: (event: Event) => void;
+  // Spark voice mic
+  sparkVoiceAvailable?: boolean;
+  sparkMicRecording?: boolean;
+  onMicClick?: () => void;
+  // Per-message actions (speaker = DGX TTS, copy = clipboard)
+  onSpeakClick?: (text: string) => void;
+  // TTS playback progress and stop
+  ttsSpeaking?: boolean;
+  ttsProgress?: string | null;
+  onStopSpeaking?: () => void;
 };
 
 const COMPACTION_TOAST_DURATION_MS = 5000;
@@ -116,10 +119,18 @@ function computeTaskProgress(plan: TaskPlan | null | undefined): TaskProgress {
 }
 
 function taskStatusLabel(status: TaskPlanStatus): string {
-  if (status === "running") return "Running";
-  if (status === "done") return "Done";
-  if (status === "blocked") return "Blocked";
-  if (status === "skipped") return "Skipped";
+  if (status === "running") {
+    return "Running";
+  }
+  if (status === "done") {
+    return "Done";
+  }
+  if (status === "blocked") {
+    return "Blocked";
+  }
+  if (status === "skipped") {
+    return "Skipped";
+  }
   return "Todo";
 }
 
@@ -127,10 +138,18 @@ function renderTaskStatusIcon(status: TaskPlanStatus) {
   if (status === "running") {
     return html`<span class="agent-task__icon agent-spin">${icons.loader}</span>`;
   }
-  if (status === "done") return html`<span class="agent-task__icon">${icons.check}</span>`;
-  if (status === "blocked") return html`<span class="agent-task__icon">${icons.zap}</span>`;
-  if (status === "skipped") return html`<span class="agent-task__icon">${icons.x}</span>`;
-  return html`<span class="agent-task__dot" aria-hidden="true"></span>`;
+  if (status === "done") {
+    return html`<span class="agent-task__icon">${icons.check}</span>`;
+  }
+  if (status === "blocked") {
+    return html`<span class="agent-task__icon">${icons.zap}</span>`;
+  }
+  if (status === "skipped") {
+    return html`<span class="agent-task__icon">${icons.x}</span>`;
+  }
+  return html`
+    <span class="agent-task__dot" aria-hidden="true"></span>
+  `;
 }
 
 type TerminalItem =
@@ -166,7 +185,9 @@ function adjustTextareaHeight(el: HTMLTextAreaElement) {
 }
 
 function formatClock(ts: number | null) {
-  if (!ts) return "";
+  if (!ts) {
+    return "";
+  }
   return new Date(ts).toLocaleTimeString([], {
     hour: "2-digit",
     minute: "2-digit",
@@ -175,22 +196,34 @@ function formatClock(ts: number | null) {
 }
 
 function formatAge(ts: number | null): string {
-  if (!ts) return "";
+  if (!ts) {
+    return "";
+  }
   const deltaMs = Date.now() - ts;
-  if (deltaMs < 0) return "0s";
+  if (deltaMs < 0) {
+    return "0s";
+  }
   const sec = Math.floor(deltaMs / 1000);
-  if (sec < 60) return `${Math.max(1, sec)}s`;
+  if (sec < 60) {
+    return `${Math.max(1, sec)}s`;
+  }
   const min = Math.floor(sec / 60);
-  if (min < 60) return `${min}m`;
+  if (min < 60) {
+    return `${min}m`;
+  }
   const hr = Math.floor(min / 60);
-  if (hr < 24) return `${hr}h`;
+  if (hr < 24) {
+    return `${hr}h`;
+  }
   const day = Math.floor(hr / 24);
   return `${day}d`;
 }
 
 function truncate(text: string, maxChars: number) {
   const raw = text ?? "";
-  if (raw.length <= maxChars) return raw;
+  if (raw.length <= maxChars) {
+    return raw;
+  }
   const suffix = "...";
   const sliceTo = Math.max(0, maxChars - suffix.length);
   return `${raw.slice(0, sliceTo)}${suffix}`;
@@ -203,14 +236,16 @@ function extractImages(message: unknown): ImageBlock[] {
 
   if (Array.isArray(content)) {
     for (const block of content) {
-      if (typeof block !== "object" || block === null) continue;
+      if (typeof block !== "object" || block === null) {
+        continue;
+      }
       const b = block as Record<string, unknown>;
 
       if (b.type === "image") {
         // Gateway + UI format: { type:"image", source:{ type:"base64", media_type, data } }
         const source = b.source as Record<string, unknown> | undefined;
         if (source?.type === "base64" && typeof source.data === "string") {
-          const data = source.data as string;
+          const data = source.data;
           const mediaType = (source.media_type as string) || "image/png";
           const url = data.startsWith("data:") ? data : `data:${mediaType};base64,${data}`;
           images.push({ url });
@@ -341,7 +376,9 @@ function renderAttachmentPreview(props: ChatProps) {
 }
 
 function renderModelAttribution(selection: ModelSelectionInfo | null | undefined) {
-  if (!selection) return nothing;
+  if (!selection) {
+    return nothing;
+  }
   const modelFull = `${selection.provider}/${selection.model}`;
   const think =
     selection.thinkLevel && selection.thinkLevel !== "off" ? selection.thinkLevel : null;
@@ -356,8 +393,12 @@ function renderModelAttribution(selection: ModelSelectionInfo | null | undefined
 
 function readMessageTimestamp(message: unknown): number | null {
   const m = message as Record<string, unknown>;
-  if (typeof m.timestamp === "number") return m.timestamp;
-  if (typeof m.ts === "number") return m.ts;
+  if (typeof m.timestamp === "number") {
+    return m.timestamp;
+  }
+  if (typeof m.ts === "number") {
+    return m.ts;
+  }
   return null;
 }
 
@@ -386,9 +427,15 @@ function buildTerminalItems(props: ChatProps): TerminalItem[] {
   }
 
   merged.sort((a, b) => {
-    if (a.ts != null && b.ts != null) return a.ts - b.ts;
-    if (a.ts != null) return -1;
-    if (b.ts != null) return 1;
+    if (a.ts != null && b.ts != null) {
+      return a.ts - b.ts;
+    }
+    if (a.ts != null) {
+      return -1;
+    }
+    if (b.ts != null) {
+      return 1;
+    }
     return a.order - b.order;
   });
 
@@ -405,23 +452,35 @@ function buildTerminalItems(props: ChatProps): TerminalItem[] {
           ? m.tool_call_id.trim()
           : "";
     const content = m.content;
-    if (!Array.isArray(content)) continue;
+    if (!Array.isArray(content)) {
+      continue;
+    }
     for (const block of content) {
-      if (!block || typeof block !== "object" || Array.isArray(block)) continue;
+      if (!block || typeof block !== "object" || Array.isArray(block)) {
+        continue;
+      }
       const b = block as Record<string, unknown>;
-      const t = String(b.type ?? "").trim().toLowerCase();
+      const t = typeof b.type === "string" ? b.type.trim().toLowerCase() : "";
       const isToolCall =
         t === "toolcall" || t === "tool_call" || t === "tooluse" || t === "tool_use";
-      if (!isToolCall) continue;
+      if (!isToolCall) {
+        continue;
+      }
       const idRaw = typeof b.id === "string" ? b.id : topToolCallId;
       const id = typeof idRaw === "string" ? idRaw.trim() : "";
-      if (!id) continue;
+      if (!id) {
+        continue;
+      }
       const toolName = typeof b.name === "string" ? b.name.trim() : undefined;
-      const args = (b.args ?? b.arguments ?? b.parameters) as unknown;
+      const args = b.args ?? b.arguments ?? b.parameters;
       const existing = toolCallsById.get(id);
       if (existing) {
-        if (!existing.toolName && toolName) existing.toolName = toolName;
-        if (existing.args === undefined && args !== undefined) existing.args = args;
+        if (!existing.toolName && toolName) {
+          existing.toolName = toolName;
+        }
+        if (existing.args === undefined && args !== undefined) {
+          existing.args = args;
+        }
       } else {
         toolCallsById.set(id, { toolName, args });
       }
@@ -435,9 +494,10 @@ function buildTerminalItems(props: ChatProps): TerminalItem[] {
 
     if (role === "tool") {
       const raw = entry.message as Record<string, unknown>;
-      const toolCall = normalized.content.find(
-        (c) => String(c.type ?? "").toLowerCase() === "toolcall",
-      );
+      const toolCall = normalized.content.find((c) => {
+        const t = String(c.type ?? "").toLowerCase();
+        return t === "toolcall" || t === "tool_call";
+      });
       const toolResult = normalized.content.find((c) => {
         const t = String(c.type ?? "").toLowerCase();
         return t === "toolresult" || t === "tool_result";
@@ -458,7 +518,9 @@ function buildTerminalItems(props: ChatProps): TerminalItem[] {
         mapped?.toolName?.trim() ||
         "tool";
 
-      const args = toolCall?.args ?? mapped?.args ?? {};
+      const rawArgs =
+        (raw as { args?: unknown }).args ?? (raw as { arguments?: unknown }).arguments;
+      const args = toolCall?.args ?? rawArgs ?? mapped?.args ?? {};
       const output = (() => {
         if (typeof toolResult?.text === "string" && toolResult.text.trim()) {
           return toolResult.text;
@@ -484,7 +546,9 @@ function buildTerminalItems(props: ChatProps): TerminalItem[] {
     const rawText = extractTextCached(entry.message);
     const text = typeof rawText === "string" ? rawText.trim() : "";
     const images = extractImages(entry.message);
-    if (!text && images.length === 0) continue;
+    if (!text && images.length === 0) {
+      continue;
+    }
 
     const who =
       role === "user"
@@ -524,13 +588,84 @@ function buildTerminalItems(props: ChatProps): TerminalItem[] {
 }
 
 function renderTerminalEntry(props: ChatProps, item: TerminalItem): TemplateResult {
+  function renderAssistantActions(text: string, sparkAvailable: boolean) {
+    const hasText = typeof text === "string" && text.trim().length > 0;
+    if (!hasText) {
+      return nothing;
+    }
+    return html`
+      <div class="terminal-entry__actions">
+        <button
+          class="btn btn--icon btn--sm terminal-entry__action terminal-entry__action--copy"
+          type="button"
+          title="Copy message"
+          aria-label="Copy message"
+          @click=${async (e: Event) => {
+            const btn = e.currentTarget as HTMLButtonElement | null;
+            if (!btn || btn.dataset.copying === "1") {
+              return;
+            }
+            btn.dataset.copying = "1";
+            btn.disabled = true;
+            try {
+              await navigator.clipboard.writeText(text.trim());
+              if (!btn.isConnected) {
+                return;
+              }
+              btn.dataset.copied = "1";
+              btn.title = "Copied";
+              btn.setAttribute("aria-label", "Copied");
+              setTimeout(() => {
+                if (!btn.isConnected) {
+                  return;
+                }
+                delete btn.dataset.copied;
+                delete btn.dataset.copying;
+                btn.disabled = false;
+                btn.title = "Copy message";
+                btn.setAttribute("aria-label", "Copy message");
+              }, 1500);
+            } catch {
+              if (btn.isConnected) {
+                delete btn.dataset.copying;
+                btn.disabled = false;
+              }
+            }
+          }}
+        >
+          <span class="terminal-entry__action-icon" aria-hidden="true">
+            <span class="terminal-entry__action-icon-copy">${icons.copy}</span>
+            <span class="terminal-entry__action-icon-check">${icons.check}</span>
+          </span>
+        </button>
+        ${
+          sparkAvailable
+            ? html`
+              <button
+                class="btn btn--icon btn--sm terminal-entry__action"
+                type="button"
+                title="Speak with DGX TTS"
+                aria-label="Speak"
+                @click=${() => props.onSpeakClick?.(text.trim())}
+              >
+                ${icons.speaker}
+              </button>
+            `
+            : nothing
+        }
+      </div>
+    `;
+  }
+
   if (item.kind === "stream") {
+    const sparkAvailable = Boolean(props.sparkVoiceAvailable);
     return html`
       <div class="terminal-entry terminal-entry--assistant terminal-entry--streaming">
         <div class="terminal-entry__meta">
           <span class="terminal-entry__role">${item.who}</span>
           <span class="terminal-entry__time">${formatClock(item.ts)}</span>
           <span class="terminal-entry__badge">LIVE</span>
+          ${renderAssistantActions(item.text, sparkAvailable)}
         </div>
         <div class="terminal-entry__body">
           ${
@@ -555,7 +690,13 @@ ${item.text}<span class="terminal-cursor" aria-hidden="true"></span></pre>
       try {
         return JSON.stringify(item.args ?? {}, null, 2);
       } catch {
-        return String(item.args ?? "");
+        if (item.args == null) {
+          return "";
+        }
+        if (typeof item.args === "string") {
+          return item.args;
+        }
+        return "[unserializable args]";
       }
     })();
     const output = item.output ?? "";
@@ -567,20 +708,24 @@ ${item.text}<span class="terminal-cursor" aria-hidden="true"></span></pre>
           <span class="terminal-entry__role">TOOL</span>
           <span class="terminal-entry__time">${formatClock(item.ts)}</span>
           <span class="terminal-entry__toolName mono">${item.toolName}</span>
-          ${canOpen
-            ? html`
+          ${
+            canOpen
+              ? html`
                 <button
                   class="btn btn--sm terminal-entry__open"
                   type="button"
                   @click=${() => {
-                    if (!props.onOpenSidebar || !item.output) return;
+                    if (!props.onOpenSidebar || !item.output) {
+                      return;
+                    }
                     props.onOpenSidebar(`\`\`\`\n${item.output}\n\`\`\``);
                   }}
                 >
                   View
                 </button>
               `
-            : nothing}
+              : nothing
+          }
         </div>
         <div class="terminal-entry__body">
           <details class="terminal-details" open>
@@ -592,12 +737,20 @@ ${item.text}<span class="terminal-cursor" aria-hidden="true"></span></pre>
               ? html`
                   <details class="terminal-details">
                     <summary class="terminal-details__summary">
-                      Output ${outputPreview !== output ? html`<span class="muted">(truncated)</span>` : nothing}
+                      Output ${
+                        outputPreview !== output
+                          ? html`
+                              <span class="muted">(truncated)</span>
+                            `
+                          : nothing
+                      }
                     </summary>
                     <pre class="terminal-pre terminal-pre--code">${outputPreview}</pre>
                   </details>
                 `
-              : html`<div class="muted terminal-entry__muted">No output yet.</div>`
+              : html`
+                  <div class="muted terminal-entry__muted">No output yet.</div>
+                `
           }
         </div>
       </div>
@@ -618,11 +771,17 @@ ${item.text}<span class="terminal-cursor" aria-hidden="true"></span></pre>
       ? html`<div class="chat-text terminal-md">${unsafeHTML(toSanitizedMarkdownHtml(item.text))}</div>`
       : html`<pre class="terminal-pre">${item.text}</pre>`;
 
+  const assistantActions =
+    item.role === "assistant"
+      ? renderAssistantActions(item.text, Boolean(props.sparkVoiceAvailable))
+      : nothing;
+
   return html`
     <div class="terminal-entry terminal-entry--${roleClass}">
       <div class="terminal-entry__meta">
         <span class="terminal-entry__role">${item.who}</span>
         <span class="terminal-entry__time">${formatClock(item.ts)}</span>
+        ${assistantActions}
       </div>
       <div class="terminal-entry__body">
         ${
@@ -668,7 +827,7 @@ function renderOrchestrationCard(props: ChatProps) {
   const canRefresh = Boolean(props.onSubagentRefresh);
 
   const plan = props.taskPlan ?? null;
-  const tasks = Array.isArray(plan?.tasks) ? (plan?.tasks as TaskPlanTask[]) : [];
+  const tasks = plan?.tasks ?? [];
   const progress = computeTaskProgress(plan);
   const subagentByKey = new Map(subagents.map((s) => [s.key, s]));
   const subagentStatusByKey = (() => {
@@ -682,7 +841,9 @@ function renderOrchestrationCard(props: ChatProps) {
     const map = new Map<string, TaskPlanStatus>();
     for (const task of tasks) {
       const key = (task.assignedSessionKey ?? "").trim();
-      if (!key) continue;
+      if (!key) {
+        continue;
+      }
       const status = normalizeTaskStatus(task.status);
       const existing = map.get(key);
       if (!existing || priority[status] > priority[existing]) {
@@ -786,9 +947,11 @@ function renderOrchestrationCard(props: ChatProps) {
                         : nothing
                     }
                   </div>
-                  ${plan.goal
-                    ? html`<div class="agent-plan__goal muted">${plan.goal}</div>`
-                    : nothing}
+                  ${
+                    plan.goal
+                      ? html`<div class="agent-plan__goal muted">${plan.goal}</div>`
+                      : nothing
+                  }
                 </div>
                 ${
                   tasks.length > 0
@@ -797,7 +960,9 @@ function renderOrchestrationCard(props: ChatProps) {
                           ${tasks.map((task) => {
                             const status = normalizeTaskStatus(task.status);
                             const assignedKey = (task.assignedSessionKey ?? "").trim();
-                            const assigned = assignedKey ? subagentByKey.get(assignedKey) : undefined;
+                            const assigned = assignedKey
+                              ? subagentByKey.get(assignedKey)
+                              : undefined;
                             const canOpenAssigned = Boolean(assigned);
                             const assignedLabel =
                               assigned?.label?.trim() ||
@@ -827,12 +992,16 @@ function renderOrchestrationCard(props: ChatProps) {
                                             type="button"
                                             ?disabled=${!canOpenAssigned}
                                             @click=${() => {
-                                              if (!canOpenAssigned) return;
+                                              if (!canOpenAssigned) {
+                                                return;
+                                              }
                                               props.onSessionKeyChange(assignedKey);
                                             }}
-                                            title=${canOpenAssigned
-                                              ? "Open assigned subagent"
-                                              : "Assigned subagent was pruned"}
+                                            title=${
+                                              canOpenAssigned
+                                                ? "Open assigned subagent"
+                                                : "Assigned subagent was pruned"
+                                            }
                                           >
                                             <span class="mono agent-task__assignedKey">
                                               ${assignedLabel}
@@ -842,7 +1011,9 @@ function renderOrchestrationCard(props: ChatProps) {
                                             </span>
                                             ${
                                               !canOpenAssigned
-                                                ? html`<span class="muted agent-task__assignedMissing">(pruned)</span>`
+                                                ? html`
+                                                    <span class="muted agent-task__assignedMissing">(pruned)</span>
+                                                  `
                                                 : nothing
                                             }
                                           </button>
@@ -855,12 +1026,16 @@ function renderOrchestrationCard(props: ChatProps) {
                           })}
                         </div>
                       `
-                    : html`<div class="muted agent-plan__empty">No tasks yet.</div>`
+                    : html`
+                        <div class="muted agent-plan__empty">No tasks yet.</div>
+                      `
                 }
               </div>
             `
           : isStreaming
-            ? html`<div class="muted agent-plan__empty">Waiting for task plan...</div>`
+            ? html`
+                <div class="muted agent-plan__empty">Waiting for task plan...</div>
+              `
             : nothing
       }
 
@@ -874,10 +1049,10 @@ function renderOrchestrationCard(props: ChatProps) {
                     (item) => html`
                       <div class="agent-queue__item">
                         <div class="agent-queue__text">
-                          ${item.text ||
-                          (item.attachments?.length
-                            ? `Image (${item.attachments.length})`
-                            : "")}
+                          ${
+                            item.text ||
+                            (item.attachments?.length ? `Image (${item.attachments.length})` : "")
+                          }
                         </div>
                         <button
                           class="btn btn--sm agent-queue__remove"
@@ -909,11 +1084,17 @@ function renderOrchestrationCard(props: ChatProps) {
 
         ${
           !props.connected
-            ? html`<div class="muted">Connect to see subagents.</div>`
+            ? html`
+                <div class="muted">Connect to see subagents.</div>
+              `
             : subagentLoading && subagents.length === 0
-              ? html`<div class="muted">Loading subagents...</div>`
+              ? html`
+                  <div class="muted">Loading subagents...</div>
+                `
               : subagents.length === 0
-                ? html`<div class="muted">No subagents yet.</div>`
+                ? html`
+                    <div class="muted">No subagents yet.</div>
+                  `
                 : html`
                     <div class="agent-subagents__list">
                       ${subagents.map((s) => {
@@ -979,7 +1160,9 @@ function renderTerminalCard(props: ChatProps) {
   const canCompose = props.connected;
   const isRunning = props.stream !== null;
   const canAbort = Boolean(props.canAbort && props.onAbort);
-  const canQueue = Boolean(props.onQueue) && (props.draft.trim().length > 0 || (props.attachments?.length ?? 0) > 0);
+  const canQueue =
+    Boolean(props.onQueue) &&
+    (props.draft.trim().length > 0 || (props.attachments?.length ?? 0) > 0);
 
   const hasAttachments = (props.attachments?.length ?? 0) > 0;
   const composePlaceholder = props.connected
@@ -1002,7 +1185,13 @@ function renderTerminalCard(props: ChatProps) {
       aria-live="polite"
       @scroll=${props.onChatScroll}
     >
-      ${props.loading ? html`<div class="muted">Loading chat...</div>` : nothing}
+      ${
+        props.loading
+          ? html`
+              <div class="muted">Loading chat...</div>
+            `
+          : nothing
+      }
       ${repeat(
         buildTerminalItems(props),
         (item) => item.key,
@@ -1039,6 +1228,7 @@ function renderTerminalCard(props: ChatProps) {
           <div class="agent-terminal__subtitle muted">
             ${isRunning ? "Streaming" : "Ready"} · <span class="mono">${props.sessionKey}</span>
           </div>
+          ${props.error ? html`<div class="agent-terminal__run-status" role="alert">Run failed: ${props.error}</div>` : nothing}
         </div>
         <div class="agent-terminal__actions">
           <button
@@ -1083,7 +1273,9 @@ function renderTerminalCard(props: ChatProps) {
                     error: props.sidebarError ?? null,
                     onClose: props.onCloseSidebar!,
                     onViewRawText: () => {
-                      if (!props.sidebarContent || !props.onOpenSidebar) return;
+                      if (!props.sidebarContent || !props.onOpenSidebar) {
+                        return;
+                      }
                       props.onOpenSidebar(`\`\`\`\n${props.sidebarContent}\n\`\`\``);
                     },
                   })}
@@ -1103,10 +1295,18 @@ function renderTerminalCard(props: ChatProps) {
               .value=${props.draft}
               ?disabled=${!props.connected}
               @keydown=${(e: KeyboardEvent) => {
-                if (e.key !== "Enter") return;
-                if (e.isComposing || e.keyCode === 229) return;
-                if (e.shiftKey) return;
-                if (!props.connected) return;
+                if (e.key !== "Enter") {
+                  return;
+                }
+                if (e.isComposing || e.keyCode === 229) {
+                  return;
+                }
+                if (e.shiftKey) {
+                  return;
+                }
+                if (!props.connected) {
+                  return;
+                }
                 e.preventDefault();
                 if (canCompose) {
                   props.onSend();
@@ -1123,7 +1323,22 @@ function renderTerminalCard(props: ChatProps) {
           </label>
           <div class="chat-compose__actions">
             ${
-              isRunning && props.onQueue
+              props.ttsSpeaking && props.onStopSpeaking
+                ? html`
+                    <button
+                      class="btn"
+                      type="button"
+                      @click=${() => props.onStopSpeaking?.()}
+                      title="Stop speaking"
+                      aria-label="Stop speaking"
+                    >
+                      Stop
+                    </button>
+                  `
+                : nothing
+            }
+            ${
+              isRunning && props.onQueue && !props.ttsSpeaking
                 ? html`
                     <button
                       class="btn"
@@ -1137,6 +1352,29 @@ function renderTerminalCard(props: ChatProps) {
                   `
                 : nothing
             }
+            <button
+              class="btn agent-terminal__mic ${!props.sparkVoiceAvailable ? "agent-terminal__mic--unavailable" : "agent-terminal__mic--available"} ${props.sparkMicRecording ? "agent-terminal__mic--recording" : ""}"
+              ?hidden=${props.ttsSpeaking}
+              type="button"
+              ?disabled=${!props.connected}
+              @click=${() => props.onMicClick?.()}
+              title=${
+                props.sparkVoiceAvailable
+                  ? props.sparkMicRecording
+                    ? "Stop recording"
+                    : "Voice input (Spark STT)"
+                  : "Spark unavailable"
+              }
+              aria-label=${
+                props.sparkVoiceAvailable
+                  ? props.sparkMicRecording
+                    ? "Stop recording"
+                    : "Start voice input"
+                  : "Voice input unavailable (Spark down)"
+              }
+            >
+              ${icons.mic}
+            </button>
             <button
               class="btn primary"
               ?disabled=${!props.connected}

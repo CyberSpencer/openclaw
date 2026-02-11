@@ -5,8 +5,14 @@ import type { MsgContext } from "../../auto-reply/templating.js";
 import type { GatewayRequestContext, GatewayRequestHandlers } from "./types.js";
 import { resolveSessionAgentId } from "../../agents/agent-scope.js";
 import { resolveThinkingDefault } from "../../agents/model-selection.js";
+import {
+  isEmbeddedPiRunActive,
+  isEmbeddedPiRunStreaming,
+  queueEmbeddedPiMessage,
+} from "../../agents/pi-embedded.js";
 import { resolveAgentTimeoutMs } from "../../agents/timeout.js";
 import { dispatchInboundMessage } from "../../auto-reply/dispatch.js";
+import { stopSubagentsForRequester } from "../../auto-reply/reply/abort.js";
 import { createReplyDispatcher } from "../../auto-reply/reply/reply-dispatcher.js";
 import { createReplyPrefixOptions } from "../../channels/reply-prefix.js";
 import { resolveSendPolicy } from "../../sessions/send-policy.js";
@@ -17,7 +23,6 @@ import {
   isChatStopCommandText,
   resolveChatRunExpiresAtMs,
 } from "../chat-abort.js";
-import { stopSubagentsForRequester } from "../../auto-reply/reply/abort.js";
 import { type ChatImageContent, parseMessageWithAttachments } from "../chat-attachments.js";
 import { stripEnvelopeFromMessages } from "../chat-sanitize.js";
 import { GATEWAY_CLIENT_CAPS, hasGatewayClientCap } from "../protocol/client-info.js";
@@ -39,12 +44,7 @@ import {
   resolveSessionModelRef,
 } from "../session-utils.js";
 import { formatForLog } from "../ws-log.js";
-import type { GatewayRequestContext, GatewayRequestHandlers } from "./types.js";
-import {
-  isEmbeddedPiRunActive,
-  isEmbeddedPiRunStreaming,
-  queueEmbeddedPiMessage,
-} from "../../agents/pi-embedded.js";
+import { injectTimestamp, timestampOptsFromConfig } from "./agent-timestamp.js";
 
 type TranscriptAppendResult = {
   ok: boolean;
@@ -257,6 +257,7 @@ export const chatHandlers: GatewayRequestHandlers = {
       sessionId,
       messages: capped,
       thinkingLevel,
+      verboseLevel,
       taskPlan: entry?.taskPlan ?? null,
     });
   },

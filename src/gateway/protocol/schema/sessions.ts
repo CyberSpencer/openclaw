@@ -133,6 +133,17 @@ export const SessionsCompactParamsSchema = Type.Object(
   { additionalProperties: false },
 );
 
+export const SessionsUsageParamsSchema = Type.Object(
+  {
+    startDate: Type.Optional(Type.String()),
+    endDate: Type.Optional(Type.String()),
+    limit: Type.Optional(Type.Integer({ minimum: 1 })),
+    key: Type.Optional(Type.String()),
+    includeContextWeight: Type.Optional(Type.Boolean()),
+  },
+  { additionalProperties: false },
+);
+
 export const SessionsSpawnParamsSchema = Type.Object(
   {
     /** Requester session key that should receive the sub-agent announce/handoff. */

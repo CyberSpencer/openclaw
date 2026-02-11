@@ -1,13 +1,13 @@
 import { LitElement } from "lit";
 import { customElement, state } from "lit/decorators.js";
-
-import type { GatewayBrowserClient, GatewayHelloOk } from "./gateway";
-import { resolveInjectedAssistantIdentity } from "./assistant-identity";
-import { loadSettings, type UiSettings } from "./storage";
-import { renderApp } from "./app-render";
-import type { AppViewState } from "./app-view-state";
-import type { Tab } from "./navigation";
-import type { ResolvedTheme, ThemeMode } from "./theme";
+import type { EventLogEntry } from "./app-events.ts";
+import type { AppViewState } from "./app-view-state.ts";
+import type { DevicePairingList } from "./controllers/devices.ts";
+import type { ExecApprovalRequest } from "./controllers/exec-approval.ts";
+import type { ExecApprovalsFile, ExecApprovalsSnapshot } from "./controllers/exec-approvals.ts";
+import type { GatewayBrowserClient, GatewayHelloOk } from "./gateway.ts";
+import type { Tab } from "./navigation.ts";
+import type { ResolvedTheme, ThemeMode } from "./theme.ts";
 import type {
   AgentsListResult,
   AgentsFilesListResult,
@@ -26,48 +26,8 @@ import type {
   SkillStatusReport,
   StatusSummary,
   NostrProfile,
-} from "./types";
-import { type ChatAttachment, type ChatQueueItem, type CronFormState, type TaskPlan } from "./ui-types";
-import type { EventLogEntry } from "./app-events";
-import { DEFAULT_CRON_FORM, DEFAULT_LOG_LEVEL_FILTERS } from "./app-defaults";
-import type { ExecApprovalsFile, ExecApprovalsSnapshot } from "./controllers/exec-approvals";
-import type { DevicePairingList } from "./controllers/devices";
-import type { ExecApprovalRequest } from "./controllers/exec-approval";
-import {
-  resetToolStream as resetToolStreamInternal,
-  type AgentEventPayload,
-  type ModelSelectionInfo,
-  type ToolStreamEntry,
-} from "./app-tool-stream";
-import {
-  exportLogs as exportLogsInternal,
-  handleChatScroll as handleChatScrollInternal,
-  handleLogsScroll as handleLogsScrollInternal,
-  resetChatScroll as resetChatScrollInternal,
-} from "./app-scroll";
-import { connectGateway as connectGatewayInternal } from "./app-gateway";
-import {
-  handleConnected,
-  handleDisconnected,
-  handleFirstUpdated,
-  handleUpdated,
-} from "./app-lifecycle";
-import {
-  applySettings as applySettingsInternal,
-  loadCron as loadCronInternal,
-  loadOverview as loadOverviewInternal,
-  setTab as setTabInternal,
-  setTheme as setThemeInternal,
-  onPopState as onPopStateInternal,
-  syncUrlWithSessionKey as syncUrlWithSessionKeyInternal,
-} from "./app-settings";
-import {
-  handleAbortChat as handleAbortChatInternal,
-  handleSendChat as handleSendChatInternal,
-  removeQueuedMessage as removeQueuedMessageInternal,
-} from "./app-chat";
-import { loadChatThreads } from "./controllers/chat-threads";
-import { loadSubagentMonitor } from "./controllers/subagent-monitor";
+} from "./types.ts";
+import type { NostrProfileFormState } from "./views/channels.nostr-profile-form.ts";
 import {
   handleChannelConfigReload as handleChannelConfigReloadInternal,
   handleChannelConfigSave as handleChannelConfigSaveInternal,
@@ -80,23 +40,60 @@ import {
   handleWhatsAppLogout as handleWhatsAppLogoutInternal,
   handleWhatsAppStart as handleWhatsAppStartInternal,
   handleWhatsAppWait as handleWhatsAppWaitInternal,
-} from "./app-channels";
-import type { NostrProfileFormState } from "./views/channels.nostr-profile-form";
-import { loadAssistantIdentity as loadAssistantIdentityInternal } from "./controllers/assistant-identity";
+} from "./app-channels.ts";
 import {
-  createVoiceState,
-  loadVoiceStatus,
-  processVoiceInput,
-  startConversation,
-  stopConversation,
-  type VoiceState,
-} from "./controllers/voice";
+  handleAbortChat as handleAbortChatInternal,
+  handleSendChat as handleSendChatInternal,
+  removeQueuedMessage as removeQueuedMessageInternal,
+} from "./app-chat.ts";
+import { DEFAULT_CRON_FORM, DEFAULT_LOG_LEVEL_FILTERS } from "./app-defaults.ts";
+import { connectGateway as connectGatewayInternal } from "./app-gateway.ts";
+import {
+  handleConnected,
+  handleDisconnected,
+  handleFirstUpdated,
+  handleUpdated,
+} from "./app-lifecycle.ts";
+import { renderApp } from "./app-render.ts";
+import {
+  exportLogs as exportLogsInternal,
+  handleChatScroll as handleChatScrollInternal,
+  handleLogsScroll as handleLogsScrollInternal,
+  resetChatScroll as resetChatScrollInternal,
+} from "./app-scroll.ts";
+import {
+  applySettings as applySettingsInternal,
+  loadCron as loadCronInternal,
+  loadOverview as loadOverviewInternal,
+  setTab as setTabInternal,
+  setTheme as setThemeInternal,
+  onPopState as onPopStateInternal,
+  syncUrlWithSessionKey as syncUrlWithSessionKeyInternal,
+} from "./app-settings.ts";
+import {
+  resetToolStream as resetToolStreamInternal,
+  type AgentEventPayload,
+  type ModelSelectionInfo,
+  type ToolStreamEntry,
+} from "./app-tool-stream.ts";
+import { resolveInjectedAssistantIdentity } from "./assistant-identity.ts";
 import {
   buildCommandPaletteActions,
   filterCommandPaletteActions,
   type CommandPaletteAction,
-} from "./command-palette";
-import { generateUUID } from "./uuid";
+} from "./command-palette.ts";
+import { loadAssistantIdentity as loadAssistantIdentityInternal } from "./controllers/assistant-identity.ts";
+import { loadChatThreads } from "./controllers/chat-threads.ts";
+import { loadSubagentMonitor } from "./controllers/subagent-monitor.ts";
+import {
+  createVoiceState,
+  loadVoiceStatus,
+  processVoiceInput,
+  processVoiceInputSpark,
+  startConversation,
+  stopConversation,
+  type VoiceState,
+} from "./controllers/voice.ts";
 import {
   loadOrchestratorState,
   saveOrchestratorState,
@@ -104,12 +101,77 @@ import {
   type OrchestrationCard,
   type OrchestrationCardRun,
   type OrchestrationLaneId,
-} from "./orchestrator-store";
+} from "./orchestrator-store.ts";
+import { loadSettings, type UiSettings } from "./storage.ts";
+import {
+  type ChatAttachment,
+  type ChatQueueItem,
+  type CronFormState,
+  type TaskPlan,
+} from "./ui-types.ts";
+import { generateUUID } from "./uuid.ts";
 
 declare global {
   interface Window {
     __OPENCLAW_CONTROL_UI_BASE_PATH__?: string;
   }
+}
+
+/** Max chars per TTS chunk to stay under DGX timeout (~60s). ~250 chars ~= 12-15s under load. */
+const MAX_TTS_CHARS = 250;
+
+/** Strip markdown syntax so TTS reads clean prose. */
+function stripMarkdownForTts(text: string): string {
+  return text
+    .replace(/\*\*([^*]+)\*\*/g, "$1")
+    .replace(/\*([^*]+)\*/g, "$1")
+    .replace(/__([^_]+)__/g, "$1")
+    .replace(/_([^_]+)_/g, "$1")
+    .replace(/`([^`]+)`/g, "$1")
+    .replace(/\[([^\]]+)\]\([^)]+\)/g, "$1")
+    .replace(/^#{1,6}\s+/gm, "")
+    .replace(/^[-*+]\s+/gm, "")
+    .replace(/^\d+\.\s+/gm, "")
+    .trim();
+}
+
+/**
+ * Chunk text for TTS to avoid DGX timeouts. Long text (~1270 chars) takes 60–78s;
+ * chunks of ~250 chars stay under the 60s gateway timeout.
+ * Prefers sentence boundaries; falls back to space; hard-breaks at maxChars.
+ */
+function chunkTextForTts(text: string, maxChars = MAX_TTS_CHARS): string[] {
+  const t = text.trim();
+  if (!t) {
+    return [];
+  }
+  if (t.length <= maxChars) {
+    return [t];
+  }
+
+  const chunks: string[] = [];
+  let rest = t;
+
+  while (rest.length > 0) {
+    if (rest.length <= maxChars) {
+      chunks.push(rest.trim());
+      break;
+    }
+    const window = rest.slice(0, maxChars);
+    const sentMatches = [...window.matchAll(/[.!?]\s+/g)];
+    const lastSent = sentMatches[sentMatches.length - 1];
+    const lastSpace = window.lastIndexOf(" ");
+    const breakAt = lastSent
+      ? lastSent.index + lastSent[0].length
+      : lastSpace > 0
+        ? lastSpace + 1
+        : maxChars;
+
+    chunks.push(rest.slice(0, breakAt).trim());
+    rest = rest.slice(breakAt).trim();
+  }
+
+  return chunks;
 }
 
 const injectedAssistantIdentity = resolveInjectedAssistantIdentity();
@@ -127,34 +189,42 @@ function resolveOnboardingMode(): boolean {
   return normalized === "1" || normalized === "true" || normalized === "yes" || normalized === "on";
 }
 
-type PersonaPlexStatusResult = {
-  enabled?: boolean;
-  installed?: boolean;
-  running?: boolean;
-  hasToken?: boolean;
-  port?: number;
-};
-
-type RouterStatusResult = {
-  enabled?: boolean;
-  healthy?: boolean;
-  url?: string;
-  error?: string | null;
-};
-
 type SparkStatusResult = {
   enabled?: boolean;
   active?: boolean;
   host?: string | null;
   checkedAt?: number;
+  voiceAvailable?: boolean;
+  overall?: "healthy" | "degraded" | "down";
+  counts?: { healthy: number; degraded: number; down: number; total: number };
   services?: Record<
     string,
-    { url?: string; healthy?: boolean; status?: number; error?: string | null }
+    { url?: string; healthy?: boolean; status?: number; error?: string | null; latency_ms?: number }
   >;
+  gpu?: {
+    name?: string;
+    temperature_c?: number;
+    power_w?: number;
+    utilization_pct?: number;
+    memory_used_mib?: number;
+    memory_total_mib?: number;
+    unified_memory?: boolean;
+    processes?: Array<{ pid: number; memory_mib: number; process: string }>;
+  } | null;
+  containers?: Array<{
+    name: string;
+    cpu?: string;
+    memory?: string;
+    mem_pct?: string;
+    net_io?: string;
+    block_io?: string;
+  }> | null;
 };
 
 function asObject(value: unknown): Record<string, unknown> | null {
-  if (!value || typeof value !== "object" || Array.isArray(value)) return null;
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    return null;
+  }
   return value as Record<string, unknown>;
 }
 
@@ -162,9 +232,129 @@ function resolveMemorySearchEnabled(config: Record<string, unknown> | null | und
   const agents = asObject(config?.agents);
   const defaults = asObject(agents?.defaults);
   const memorySearch = asObject(defaults?.memorySearch);
-  if (!memorySearch) return true;
+  if (!memorySearch) {
+    return true;
+  }
   const enabled = memorySearch.enabled;
   return typeof enabled === "boolean" ? enabled : true;
+}
+
+/**
+ * Resolve a human-readable label for the memory search store.
+ * Returns e.g. "Qdrant (127.0.0.1)" or "SQLite" or "Auto".
+ */
+function resolveMemoryStoreLabel(
+  config: Record<string, unknown> | null | undefined,
+): string | null {
+  const agents = asObject(config?.agents);
+  const defaults = asObject(agents?.defaults);
+  const memorySearch = asObject(defaults?.memorySearch);
+  if (!memorySearch) {
+    return null;
+  }
+  const store = asObject(memorySearch.store);
+  if (!store) {
+    return null;
+  }
+
+  const driver = typeof store.driver === "string" ? store.driver.toLowerCase().trim() : "auto";
+
+  const qdrantConfig = asObject(store.qdrant);
+
+  // Prefer the endpoints array (priority-based failover) over the legacy url field.
+  const endpoints = Array.isArray(qdrantConfig?.endpoints) ? qdrantConfig.endpoints : null;
+  let effectiveUrl: string | null = null;
+
+  if (endpoints && endpoints.length > 0) {
+    // Pick the endpoint with the lowest priority number (highest precedence).
+    let bestPriority = Infinity;
+    for (const ep of endpoints) {
+      const obj = asObject(ep);
+      if (!obj || typeof obj.url !== "string") {
+        continue;
+      }
+      const pri = typeof obj.priority === "number" ? obj.priority : 999;
+      if (pri < bestPriority) {
+        bestPriority = pri;
+        effectiveUrl = obj.url.trim();
+      }
+    }
+  }
+
+  // Fall back to the legacy url field if no endpoints were found.
+  if (!effectiveUrl && typeof qdrantConfig?.url === "string") {
+    effectiveUrl = qdrantConfig.url.trim() || null;
+  }
+
+  if (driver === "qdrant" || (driver === "auto" && effectiveUrl)) {
+    if (effectiveUrl) {
+      try {
+        const parsed = new URL(effectiveUrl);
+        const isLocal =
+          parsed.hostname === "127.0.0.1" ||
+          parsed.hostname === "localhost" ||
+          parsed.hostname === "::1";
+        return isLocal ? "Mac" : "DGX";
+      } catch {
+        return "Mac";
+      }
+    }
+    return "Mac";
+  }
+
+  if (driver === "sqlite") {
+    return "Mac";
+  }
+  return "Mac";
+}
+
+function normalizeTaskStatus(value: unknown): string {
+  if (typeof value !== "string") {
+    return "todo";
+  }
+  const normalized = value.trim().toLowerCase();
+  if (
+    normalized === "todo" ||
+    normalized === "running" ||
+    normalized === "done" ||
+    normalized === "blocked" ||
+    normalized === "skipped"
+  ) {
+    return normalized;
+  }
+  return "todo";
+}
+
+function isTaskPlanIncomplete(plan: TaskPlan | null | undefined): boolean {
+  const tasks = plan?.tasks ?? [];
+  if (!Array.isArray(tasks) || tasks.length === 0) {
+    return false;
+  }
+  const done = tasks.filter((task) => {
+    const status = normalizeTaskStatus((task as { status?: unknown }).status);
+    return status === "done" || status === "skipped";
+  }).length;
+  return done < tasks.length;
+}
+
+const SUBAGENT_RECENT_WINDOW_MS = 5 * 60_000;
+
+function hasRecentSubagentActivity(result: SessionsListResult | null | undefined): boolean {
+  const sessions = result?.sessions ?? [];
+  if (!Array.isArray(sessions) || sessions.length === 0) {
+    return false;
+  }
+  let maxUpdatedAt = 0;
+  for (const row of sessions) {
+    const ts = typeof row.updatedAt === "number" ? row.updatedAt : 0;
+    if (ts > maxUpdatedAt) {
+      maxUpdatedAt = ts;
+    }
+  }
+  if (maxUpdatedAt <= 0) {
+    return false;
+  }
+  return Date.now() - maxUpdatedAt < SUBAGENT_RECENT_WINDOW_MS;
 }
 
 @customElement("openclaw-app")
@@ -198,7 +388,7 @@ export class OpenClawApp extends LitElement {
   @state() chatRunId: string | null = null;
   @state() chatModelSelection: ModelSelectionInfo | null = null;
   @state() chatTaskPlan: TaskPlan | null = null;
-  @state() compactionStatus: import("./app-tool-stream").CompactionStatus | null = null;
+  @state() compactionStatus: import("./app-tool-stream.ts").CompactionStatus | null = null;
   @state() chatAvatarUrl: string | null = null;
   @state() chatThinkingLevel: string | null = null;
   @state() chatQueue: ChatQueueItem[] = [];
@@ -216,6 +406,7 @@ export class OpenClawApp extends LitElement {
   @state() subagentMonitorResult: SessionsListResult | null = null;
   @state() subagentMonitorError: string | null = null;
   private subagentMonitorPollTimer: number | null = null;
+  private subagentMonitorPollMs: number | null = null;
   // Sidebar state for tool output viewing
   @state() sidebarOpen = false;
   @state() sidebarContent: string | null = null;
@@ -451,6 +642,7 @@ export class OpenClawApp extends LitElement {
   voiceState: VoiceState = createVoiceState();
   @state() memorySearchEnabled: boolean | null = null;
   @state() memorySearchBusy = false;
+  @state() memoryStoreLabel: string | null = null;
   @state() personaPlexRunning: boolean | null = null;
   @state() personaPlexBusy = false;
   @state() nvidiaRouterEnabled: boolean | null = null;
@@ -458,6 +650,22 @@ export class OpenClawApp extends LitElement {
   @state() nvidiaRouterBusy = false;
   @state() sparkStatus: SparkStatusResult | null = null;
   @state() sparkBusy = false;
+  @state() sparkMicRecording = false;
+  private sparkMicMediaRecorder: MediaRecorder | null = null;
+  private sparkMicStream: MediaStream | null = null;
+  private sparkMicAudioContext: AudioContext | null = null;
+  private sparkMicCaptureWorklet: AudioWorkletNode | null = null;
+  private sparkMicPcmFrames: Int16Array[] = [];
+  private sparkMicSampleRate = 24000;
+  private sparkMicUsingWorklet = false;
+  @state() ttsSpeaking = false;
+  @state() ttsProgress: string | null = null;
+  private ttsAbortController: AbortController | null = null;
+  private ttsCurrentAudio: HTMLAudioElement | null = null;
+  private ttsPlaybackContext: AudioContext | null = null;
+  private ttsPlaybackWorklet: AudioWorkletNode | null = null;
+  private sparkMicChunks: Blob[] = [];
+  private sparkMicRecordingTimer: ReturnType<typeof setTimeout> | null = null;
 
   @state() logsLoading = false;
   @state() logsError: string | null = null;
@@ -522,17 +730,24 @@ export class OpenClawApp extends LitElement {
     this.handleSubagentMonitorUpdated(changed);
   }
 
-  private startSubagentMonitorPolling() {
-    if (this.subagentMonitorPollTimer != null) return;
+  private startSubagentMonitorPolling(intervalMs: number) {
+    if (this.subagentMonitorPollTimer != null && this.subagentMonitorPollMs === intervalMs) {
+      return;
+    }
+    this.stopSubagentMonitorPolling();
+    this.subagentMonitorPollMs = intervalMs;
     this.subagentMonitorPollTimer = window.setInterval(() => {
       void loadSubagentMonitor(this, { quiet: true });
-    }, 3000);
+    }, intervalMs);
   }
 
   private stopSubagentMonitorPolling() {
-    if (this.subagentMonitorPollTimer == null) return;
+    if (this.subagentMonitorPollTimer == null) {
+      return;
+    }
     window.clearInterval(this.subagentMonitorPollTimer);
     this.subagentMonitorPollTimer = null;
+    this.subagentMonitorPollMs = null;
   }
 
   private handleSubagentMonitorUpdated(changed: Map<PropertyKey, unknown>) {
@@ -545,32 +760,27 @@ export class OpenClawApp extends LitElement {
     const didEnterChat = changed.has("tab") && this.tab === "chat";
     const didChangeSession = changed.has("sessionKey");
     const didConnect = changed.has("connected") && this.connected;
+    const didChangePlan = changed.has("chatTaskPlan");
+    const didChangeRun = changed.has("chatRunId");
 
-    if (this.connected && (didEnterChat || didChangeSession || didConnect)) {
+    if (
+      this.connected &&
+      (didEnterChat || didChangeSession || didConnect || didChangePlan || didChangeRun)
+    ) {
       void loadSubagentMonitor(this, { quiet: true });
     }
 
     const runActive = Boolean(this.chatRunId) || this.chatStream !== null;
-    const now = Date.now();
-    const tasks = this.chatTaskPlan?.tasks ?? [];
-    const hasSubagentTasks = tasks.some(
-      (task) => typeof task.assignedSessionKey === "string" && task.assignedSessionKey.trim(),
-    );
-    const planIncomplete =
-      hasSubagentTasks &&
-      tasks.some((task) => {
-        const status = typeof task.status === "string" ? task.status.trim().toLowerCase() : "todo";
-        return status !== "done" && status !== "skipped";
-      });
-    const subagents = this.subagentMonitorResult?.sessions ?? [];
-    const hasRecentSubagentActivity = subagents.some((s) => {
-      const updatedAt = typeof s.updatedAt === "number" ? s.updatedAt : 0;
-      return updatedAt > 0 && now - updatedAt < 60_000;
-    });
+    const planActive = isTaskPlanIncomplete(this.chatTaskPlan);
+    const recentSubagent = hasRecentSubagentActivity(this.subagentMonitorResult);
+    const shouldPoll = this.connected && (runActive || planActive || recentSubagent);
 
-    const shouldPoll = this.connected && (runActive || planIncomplete || hasRecentSubagentActivity);
-    if (shouldPoll) this.startSubagentMonitorPolling();
-    else this.stopSubagentMonitorPolling();
+    if (shouldPoll) {
+      const intervalMs = runActive ? 1500 : 3000;
+      this.startSubagentMonitorPolling(intervalMs);
+    } else {
+      this.stopSubagentMonitorPolling();
+    }
   }
 
   connect() {
@@ -637,7 +847,9 @@ export class OpenClawApp extends LitElement {
   }
 
   async openCommandPalette() {
-    if (this.commandPaletteOpen) return;
+    if (this.commandPaletteOpen) {
+      return;
+    }
     this.commandPaletteOpen = true;
     this.commandPaletteQuery = "";
     this.commandPaletteIndex = 0;
@@ -659,16 +871,20 @@ export class OpenClawApp extends LitElement {
       this.commandPaletteQuery,
     );
     const maxIndex = Math.max(0, actions.length - 1);
-    if (this.commandPaletteIndex > maxIndex) this.commandPaletteIndex = maxIndex;
+    if (this.commandPaletteIndex > maxIndex) {
+      this.commandPaletteIndex = maxIndex;
+    }
     return actions;
   }
 
   runCommandPaletteAction(action: CommandPaletteAction) {
-    if (action.disabled) return;
+    if (action.disabled) {
+      return;
+    }
     this.closeCommandPalette();
     try {
       const result = action.run();
-      if (result && typeof (result as Promise<void>).then === "function") {
+      if (result) {
         void result;
       }
     } catch (err) {
@@ -696,20 +912,20 @@ export class OpenClawApp extends LitElement {
   }
 
   async loadOrchestratorFromGateway(opts?: { seedIfMissing?: boolean }) {
-    if (!this.client || !this.connected) return;
+    if (!this.client || !this.connected) {
+      return;
+    }
     try {
-      const res = (await this.client.request("orchestrator.get", {})) as {
-        exists?: unknown;
-        hash?: unknown;
-        state?: unknown;
-      };
+      const res = await this.client.request("orchestrator.get", {});
       const exists = Boolean(res?.exists);
       const hash = typeof res?.hash === "string" ? res.hash : "";
       const stateRaw = res?.state as
         | { version?: unknown; selectedBoardId?: unknown; boards?: unknown }
         | undefined;
 
-      if (hash) this.orchServerHash = hash;
+      if (hash) {
+        this.orchServerHash = hash;
+      }
       this.orchServerLoaded = true;
 
       const boards = Array.isArray(stateRaw?.boards)
@@ -723,7 +939,9 @@ export class OpenClawApp extends LitElement {
       if (exists && boards) {
         // Gateway is source-of-truth; apply it and sync to local storage.
         this.orchBoards = boards;
-        if (selectedBoardId) this.orchSelectedBoardId = selectedBoardId;
+        if (selectedBoardId) {
+          this.orchSelectedBoardId = selectedBoardId;
+        }
         this.rebuildOrchRunIndex();
         try {
           saveOrchestratorState({
@@ -750,7 +968,9 @@ export class OpenClawApp extends LitElement {
       payload && typeof payload === "object" && !Array.isArray(payload)
         ? (payload as { state?: unknown; hash?: unknown })
         : null;
-    if (!obj) return;
+    if (!obj) {
+      return;
+    }
     const hash = typeof obj.hash === "string" ? obj.hash : "";
     const stateRaw = obj.state as
       | { version?: unknown; selectedBoardId?: unknown; boards?: unknown }
@@ -758,8 +978,12 @@ export class OpenClawApp extends LitElement {
     const boards = Array.isArray(stateRaw?.boards)
       ? (stateRaw?.boards as OrchestrationBoard[])
       : null;
-    if (!boards) return;
-    if (hash && this.orchServerHash && hash === this.orchServerHash) return;
+    if (!boards) {
+      return;
+    }
+    if (hash && this.orchServerHash && hash === this.orchServerHash) {
+      return;
+    }
 
     const selectedBoardId =
       typeof stateRaw?.selectedBoardId === "string" && stateRaw.selectedBoardId.trim()
@@ -769,7 +993,9 @@ export class OpenClawApp extends LitElement {
     this.orchBoards = boards;
     this.orchSelectedBoardId = selectedBoardId;
     this.rebuildOrchRunIndex();
-    if (hash) this.orchServerHash = hash;
+    if (hash) {
+      this.orchServerHash = hash;
+    }
     this.orchServerLoaded = true;
 
     try {
@@ -783,7 +1009,9 @@ export class OpenClawApp extends LitElement {
   }
 
   private async persistOrchestratorToGateway(opts?: { force?: boolean }) {
-    if (!this.client || !this.connected) return;
+    if (!this.client || !this.connected) {
+      return;
+    }
     if (!opts?.force && !this.orchServerLoaded) {
       // Avoid overwriting the gateway store before we've had a chance to read it once.
       // If the store doesn't exist yet, loadOrchestratorFromGateway will seed it.
@@ -801,26 +1029,29 @@ export class OpenClawApp extends LitElement {
     }
     this.orchServerSyncing = true;
     try {
-      const res = (await this.client.request("orchestrator.set", {
+      const res = await this.client.request("orchestrator.set", {
         state,
         baseHash: this.orchServerHash ?? undefined,
-      })) as { hash?: unknown };
+      });
       const nextHash = typeof res?.hash === "string" ? res.hash : "";
-      if (nextHash) this.orchServerHash = nextHash;
+      if (nextHash) {
+        this.orchServerHash = nextHash;
+      }
     } catch (err) {
-      const message = String(err ?? "");
+      const message =
+        err instanceof Error ? err.message : typeof err === "string" ? err : "unknown error";
       if (message.includes("baseHash") && message.includes("mismatch")) {
         try {
-          const latest = (await this.client.request("orchestrator.get", {})) as {
-            hash?: unknown;
-          };
+          const latest = await this.client.request("orchestrator.get", {});
           const nextHash = typeof latest?.hash === "string" ? latest.hash : "";
-          if (nextHash) this.orchServerHash = nextHash;
-          const retry = (await this.client.request("orchestrator.set", { state })) as {
-            hash?: unknown;
-          };
+          if (nextHash) {
+            this.orchServerHash = nextHash;
+          }
+          const retry = await this.client.request("orchestrator.set", { state });
           const retryHash = typeof retry?.hash === "string" ? retry.hash : "";
-          if (retryHash) this.orchServerHash = retryHash;
+          if (retryHash) {
+            this.orchServerHash = retryHash;
+          }
         } catch {
           // ignore
         }
@@ -836,7 +1067,9 @@ export class OpenClawApp extends LitElement {
 
   private resolveSelectedOrchBoard(): OrchestrationBoard | null {
     const boards = this.orchBoards ?? [];
-    if (boards.length === 0) return null;
+    if (boards.length === 0) {
+      return null;
+    }
     const selected =
       boards.find((board) => board.id === this.orchSelectedBoardId) ?? boards[0] ?? null;
     if (selected && selected.id !== this.orchSelectedBoardId) {
@@ -853,27 +1086,35 @@ export class OpenClawApp extends LitElement {
     card: OrchestrationCard;
   } | null {
     const id = cardId.trim();
-    if (!id) return null;
+    if (!id) {
+      return null;
+    }
     for (let b = 0; b < this.orchBoards.length; b++) {
-      const board = this.orchBoards[b]!;
+      const board = this.orchBoards[b];
       const idx = board.cards.findIndex((c) => c.id === id);
       if (idx !== -1) {
         return {
           boardIndex: b,
           cardIndex: idx,
           board,
-          card: board.cards[idx]!,
+          card: board.cards[idx],
         };
       }
     }
     return null;
   }
 
-  private setOrchBoard(boardId: string, nextBoard: OrchestrationBoard, opts?: { persist?: boolean }) {
+  private setOrchBoard(
+    boardId: string,
+    nextBoard: OrchestrationBoard,
+    opts?: { persist?: boolean },
+  ) {
     const nextBoards = this.orchBoards.map((b) => (b.id === boardId ? nextBoard : b));
     this.orchBoards = nextBoards;
     this.rebuildOrchRunIndex();
-    if (opts?.persist !== false) this.scheduleOrchSave();
+    if (opts?.persist !== false) {
+      this.scheduleOrchSave();
+    }
   }
 
   private updateOrchCard(
@@ -882,7 +1123,9 @@ export class OpenClawApp extends LitElement {
     opts?: { persist?: boolean },
   ) {
     const found = this.findOrchCard(cardId);
-    if (!found) return;
+    if (!found) {
+      return;
+    }
     const { boardIndex, cardIndex, board, card } = found;
     const nextCard = updater(card, board);
     const nextCards = [...board.cards];
@@ -895,12 +1138,16 @@ export class OpenClawApp extends LitElement {
     // Index is based on runId, which we do not change here unless updater changes it.
     // Keep it simple and rebuild each time, this list stays small in practice.
     this.rebuildOrchRunIndex();
-    if (opts?.persist !== false) this.scheduleOrchSave();
+    if (opts?.persist !== false) {
+      this.scheduleOrchSave();
+    }
   }
 
   private normalizeAgentId(value: string): string {
     const trimmed = (value ?? "").trim();
-    if (!trimmed) return "main";
+    if (!trimmed) {
+      return "main";
+    }
     // Same normalization rules as core/src/routing/session-key.ts (path-safe + shell-friendly).
     if (/^[a-z0-9][a-z0-9_-]{0,63}$/i.test(trimmed)) {
       return trimmed.toLowerCase();
@@ -955,7 +1202,9 @@ export class OpenClawApp extends LitElement {
       "",
       "## Session Context",
       params.label ? `- Label: ${params.label}` : undefined,
-      params.requesterSessionKey ? `- Requester session: ${params.requesterSessionKey}.` : undefined,
+      params.requesterSessionKey
+        ? `- Requester session: ${params.requesterSessionKey}.`
+        : undefined,
       `- Your session: ${params.childSessionKey}.`,
       "",
     ].filter((line): line is string => line !== undefined);
@@ -972,10 +1221,13 @@ export class OpenClawApp extends LitElement {
 
   orchCreateCard(laneId: OrchestrationLaneId = "backlog") {
     const board = this.resolveSelectedOrchBoard();
-    if (!board) return;
+    if (!board) {
+      return;
+    }
     const now = Date.now();
     const id = generateUUID();
-    const agentId = (this.agentsList?.defaultId ?? this.orchDraft.agentId ?? "main").trim() || "main";
+    const agentId =
+      (this.agentsList?.defaultId ?? this.orchDraft.agentId ?? "main").trim() || "main";
     const runner = this.orchDraft.runner === "codex" ? "codex" : "subagent";
     const codexMode = runner === "codex" ? (this.orchDraft.codexMode ?? "apply") : undefined;
     const codexShellAllowlist =
@@ -1013,14 +1265,11 @@ export class OpenClawApp extends LitElement {
       cardId,
       (card) => {
         const now = Date.now();
-        const nextTitle =
-          patch.title !== undefined ? String(patch.title) : card.title;
+        const nextTitle = patch.title !== undefined ? String(patch.title) : card.title;
         const title = nextTitle.trim() || card.title;
-        const agentIdRaw =
-          patch.agentId !== undefined ? String(patch.agentId) : card.agentId;
+        const agentIdRaw = patch.agentId !== undefined ? String(patch.agentId) : card.agentId;
         const agentId = agentIdRaw.trim() || card.agentId || "main";
-        const task =
-          patch.task !== undefined ? String(patch.task) : card.task;
+        const task = patch.task !== undefined ? String(patch.task) : card.task;
         const laneId =
           patch.laneId !== undefined
             ? (String(patch.laneId).trim() as OrchestrationLaneId)
@@ -1028,11 +1277,10 @@ export class OpenClawApp extends LitElement {
         const runnerValue =
           patch.runner !== undefined ? String(patch.runner).trim() : (card.runner ?? "subagent");
         const runner = runnerValue === "codex" ? "codex" : "subagent";
-        const modelValue =
-          patch.model !== undefined ? String(patch.model) : card.model ?? "";
+        const modelValue = patch.model !== undefined ? String(patch.model) : (card.model ?? "");
         const model = modelValue.trim() ? modelValue.trim() : undefined;
         const thinkingValue =
-          patch.thinking !== undefined ? String(patch.thinking) : card.thinking ?? "";
+          patch.thinking !== undefined ? String(patch.thinking) : (card.thinking ?? "");
         const thinking = thinkingValue.trim() ? thinkingValue.trim() : undefined;
         const codexModeRaw =
           patch.codexMode !== undefined ? String(patch.codexMode).trim() : card.codexMode;
@@ -1044,13 +1292,9 @@ export class OpenClawApp extends LitElement {
           ? patch.codexShellAllowlist
           : card.codexShellAllowlist;
         const timeoutSeconds =
-          typeof patch.timeoutSeconds === "number"
-            ? patch.timeoutSeconds
-            : card.timeoutSeconds;
+          typeof patch.timeoutSeconds === "number" ? patch.timeoutSeconds : card.timeoutSeconds;
         const cleanup =
-          patch.cleanup === "keep" || patch.cleanup === "delete"
-            ? patch.cleanup
-            : card.cleanup;
+          patch.cleanup === "keep" || patch.cleanup === "delete" ? patch.cleanup : card.cleanup;
         const tags = Array.isArray(patch.tags) ? patch.tags : card.tags;
         return {
           ...card,
@@ -1081,7 +1325,9 @@ export class OpenClawApp extends LitElement {
 
   orchDeleteCard(cardId: string) {
     const found = this.findOrchCard(cardId);
-    if (!found) return;
+    if (!found) {
+      return;
+    }
     const { board, boardIndex, cardIndex } = found;
     const nextCards = [...board.cards];
     nextCards.splice(cardIndex, 1);
@@ -1090,14 +1336,18 @@ export class OpenClawApp extends LitElement {
     const nextBoards = [...this.orchBoards];
     nextBoards[boardIndex] = nextBoard;
     this.orchBoards = nextBoards;
-    if (this.orchSelectedCardId === cardId) this.orchSelectedCardId = null;
+    if (this.orchSelectedCardId === cardId) {
+      this.orchSelectedCardId = null;
+    }
     this.rebuildOrchRunIndex();
     this.scheduleOrchSave();
   }
 
   orchDuplicateCard(cardId: string) {
     const found = this.findOrchCard(cardId);
-    if (!found) return;
+    if (!found) {
+      return;
+    }
     const { board, boardIndex, cardIndex, card } = found;
     const now = Date.now();
     const clone: OrchestrationCard = {
@@ -1121,11 +1371,15 @@ export class OpenClawApp extends LitElement {
 
   async orchAddDraftCard(opts?: { run?: boolean }) {
     const board = this.resolveSelectedOrchBoard();
-    if (!board) return;
+    if (!board) {
+      return;
+    }
     const now = Date.now();
     const task = this.orchDraft.task ?? "";
     const oneLine = task.replace(/\\s+/g, " ").trim();
-    const title = this.orchDraft.title.trim() || (oneLine ? `${oneLine.slice(0, 52)}${oneLine.length > 52 ? "…" : ""}` : "New task");
+    const title =
+      this.orchDraft.title.trim() ||
+      (oneLine ? `${oneLine.slice(0, 52)}${oneLine.length > 52 ? "…" : ""}` : "New task");
     const agentId = this.orchDraft.agentId.trim() || this.agentsList?.defaultId || "main";
     const timeoutSecondsRaw = this.orchDraft.timeoutSeconds.trim();
     const timeoutSeconds = timeoutSecondsRaw ? Number(timeoutSecondsRaw) : NaN;
@@ -1152,7 +1406,9 @@ export class OpenClawApp extends LitElement {
       agentId,
       model,
       thinking,
-      timeoutSeconds: Number.isFinite(timeoutSeconds) ? Math.max(0, Math.floor(timeoutSeconds)) : undefined,
+      timeoutSeconds: Number.isFinite(timeoutSeconds)
+        ? Math.max(0, Math.floor(timeoutSeconds))
+        : undefined,
       cleanup,
       codexMode,
       codexShellAllowlist,
@@ -1184,7 +1440,9 @@ export class OpenClawApp extends LitElement {
       return;
     }
     const found = this.findOrchCard(cardId);
-    if (!found) return;
+    if (!found) {
+      return;
+    }
     const { board, boardIndex, cardIndex, card } = found;
     const now = Date.now();
     this.orchBusyCardId = cardId;
@@ -1201,7 +1459,9 @@ export class OpenClawApp extends LitElement {
       if (runner === "codex") {
         const codexSessionKey = `codex:${card.id}`;
         const mode = card.codexMode ?? "apply";
-        const shellAllowlist = Array.isArray(card.codexShellAllowlist) ? card.codexShellAllowlist : [];
+        const shellAllowlist = Array.isArray(card.codexShellAllowlist)
+          ? card.codexShellAllowlist
+          : [];
 
         // Optimistic UI: move to Running + attach a synthetic session key.
         const optimisticRun: OrchestrationCardRun = {
@@ -1224,7 +1484,7 @@ export class OpenClawApp extends LitElement {
         this.orchBoards = nextBoards;
         this.rebuildOrchRunIndex();
 
-        const accepted = (await this.client.request("codex-team.run", {
+        const accepted = await this.client.request("codex-team.run", {
           cardId: card.id,
           title: card.title?.trim() || undefined,
           task: card.task,
@@ -1232,7 +1492,7 @@ export class OpenClawApp extends LitElement {
           mode,
           timeoutSeconds: timeoutSeconds > 0 ? timeoutSeconds : undefined,
           shellAllowlist,
-        })) as { runId?: string; sessionKey?: string } | undefined;
+        });
 
         const runId =
           accepted && typeof accepted.runId === "string" && accepted.runId.trim()
@@ -1279,7 +1539,7 @@ export class OpenClawApp extends LitElement {
       const thinking = (card.thinking ?? "").trim() || undefined;
       const idem = generateUUID();
 
-      const result = (await this.client.request("sessions.spawn", {
+      const result = await this.client.request("sessions.spawn", {
         requesterSessionKey,
         task: card.task,
         label: card.title?.trim() || undefined,
@@ -1291,15 +1551,7 @@ export class OpenClawApp extends LitElement {
         idempotencyKey: idem,
         // Ensure announce routing stays inside the Control UI (avoid stale lastChannel deliveries).
         channel: "webchat",
-      })) as
-        | {
-            status?: string;
-            childSessionKey?: string;
-            runId?: string;
-            warning?: string;
-            error?: string;
-          }
-        | undefined;
+      });
 
       const status = typeof result?.status === "string" ? result.status : "";
       if (status !== "accepted") {
@@ -1351,21 +1603,35 @@ export class OpenClawApp extends LitElement {
   }
 
   async orchCleanupCardSession(cardId: string) {
-    if (!this.client || !this.connected) return;
+    if (!this.client || !this.connected) {
+      return;
+    }
     const found = this.findOrchCard(cardId);
-    if (!found) return;
+    if (!found) {
+      return;
+    }
     const run = found.card.run;
-    if (!run?.sessionKey) return;
-    if (run.sessionKey.startsWith("codex:")) return;
-    if (run.cleanup?.mode === "delete") return;
-    if (run.cleanup?.status === "pending") return;
+    if (!run?.sessionKey) {
+      return;
+    }
+    if (run.sessionKey.startsWith("codex:")) {
+      return;
+    }
+    if (run.cleanup?.mode === "delete") {
+      return;
+    }
+    if (run.cleanup?.status === "pending") {
+      return;
+    }
 
     // Mark pending
     this.updateOrchCard(
       cardId,
       (card) => {
         const existing = card.run;
-        if (!existing) return card;
+        if (!existing) {
+          return card;
+        }
         return {
           ...card,
           run: {
@@ -1388,7 +1654,9 @@ export class OpenClawApp extends LitElement {
         cardId,
         (card) => {
           const existing = card.run;
-          if (!existing) return card;
+          if (!existing) {
+            return card;
+          }
           return {
             ...card,
             run: {
@@ -1405,7 +1673,9 @@ export class OpenClawApp extends LitElement {
         cardId,
         (card) => {
           const existing = card.run;
-          if (!existing) return card;
+          if (!existing) {
+            return card;
+          }
           return {
             ...card,
             run: {
@@ -1426,7 +1696,9 @@ export class OpenClawApp extends LitElement {
 
   openChatSession(sessionKey: string) {
     const key = sessionKey.trim();
-    if (!key) return;
+    if (!key) {
+      return;
+    }
     this.sessionKey = key;
     this.chatMessage = "";
     this.chatAttachments = [];
@@ -1450,24 +1722,36 @@ export class OpenClawApp extends LitElement {
 
   handleOrchestratorAgentEvent(payload: AgentEventPayload) {
     const runId = typeof payload.runId === "string" ? payload.runId.trim() : "";
-    if (!runId) return;
+    if (!runId) {
+      return;
+    }
     const link = this.orchRunIndex.get(runId);
-    if (!link) return;
+    if (!link) {
+      return;
+    }
     const found = this.findOrchCard(link.cardId);
-    if (!found) return;
+    if (!found) {
+      return;
+    }
     const { board, card } = found;
-    if (!card.run || card.run.runId !== runId) return;
+    if (!card.run || card.run.runId !== runId) {
+      return;
+    }
 
     const stream = payload.stream;
     const data = payload.data ?? {};
 
     if (stream === "assistant") {
       const text = typeof data.text === "string" ? data.text : null;
-      if (!text) return;
+      if (!text) {
+        return;
+      }
       this.updateOrchCard(
         card.id,
         (current) => {
-          if (!current.run) return current;
+          if (!current.run) {
+            return current;
+          }
           return {
             ...current,
             run: { ...current.run, lastText: text },
@@ -1481,14 +1765,18 @@ export class OpenClawApp extends LitElement {
 
     if (stream === "model") {
       const phase = typeof data.phase === "string" ? data.phase : "";
-      if (phase !== "selected") return;
+      if (phase !== "selected") {
+        return;
+      }
       const provider = typeof data.provider === "string" ? data.provider : undefined;
       const model = typeof data.model === "string" ? data.model : undefined;
       const thinkLevel = typeof data.thinkLevel === "string" ? data.thinkLevel : undefined;
       this.updateOrchCard(
         card.id,
         (current) => {
-          if (!current.run) return current;
+          if (!current.run) {
+            return current;
+          }
           return {
             ...current,
             run: { ...current.run, provider, model, thinkLevel },
@@ -1500,9 +1788,13 @@ export class OpenClawApp extends LitElement {
       return;
     }
 
-    if (stream !== "lifecycle") return;
+    if (stream !== "lifecycle") {
+      return;
+    }
     const phase = typeof data.phase === "string" ? data.phase : "";
-    if (phase !== "start" && phase !== "end" && phase !== "error") return;
+    if (phase !== "start" && phase !== "end" && phase !== "error") {
+      return;
+    }
 
     const startedAt =
       typeof data.startedAt === "number" && Number.isFinite(data.startedAt)
@@ -1514,9 +1806,17 @@ export class OpenClawApp extends LitElement {
 
     const hasLane = (lane: string) => board.lanes.some((l) => l.id === lane);
     const targetLane = (() => {
-      if (phase === "start") return hasLane("running") ? ("running" as OrchestrationLaneId) : card.laneId;
-      if (phase === "end") return card.laneId === "running" && hasLane("review") ? ("review" as OrchestrationLaneId) : card.laneId;
-      if (phase === "error") return hasLane("failed") ? ("failed" as OrchestrationLaneId) : card.laneId;
+      if (phase === "start") {
+        return hasLane("running") ? ("running" as OrchestrationLaneId) : card.laneId;
+      }
+      if (phase === "end") {
+        return card.laneId === "running" && hasLane("review")
+          ? ("review" as OrchestrationLaneId)
+          : card.laneId;
+      }
+      if (phase === "error") {
+        return hasLane("failed") ? ("failed" as OrchestrationLaneId) : card.laneId;
+      }
       return card.laneId;
     })();
 
@@ -1524,9 +1824,10 @@ export class OpenClawApp extends LitElement {
       card.id,
       (current) => {
         const run = current.run;
-        if (!run) return current;
-        const nextStatus =
-          phase === "start" ? "running" : phase === "end" ? "done" : "error";
+        if (!run) {
+          return current;
+        }
+        const nextStatus = phase === "start" ? "running" : phase === "end" ? "done" : "error";
         const cleanupMode = run.cleanup?.mode ?? (current.cleanup === "delete" ? "delete" : "keep");
         const nextCleanup = run.cleanup ?? { mode: cleanupMode };
         return {
@@ -1536,8 +1837,8 @@ export class OpenClawApp extends LitElement {
             ...run,
             status: nextStatus,
             startedAt: startedAt ?? run.startedAt,
-            endedAt: phase === "start" ? run.endedAt : endedAt ?? Date.now(),
-            error: phase === "error" ? error ?? run.error : run.error,
+            endedAt: phase === "start" ? run.endedAt : (endedAt ?? Date.now()),
+            error: phase === "error" ? (error ?? run.error) : run.error,
             cleanup: nextCleanup,
           },
           updatedAt: Date.now(),
@@ -1564,12 +1865,17 @@ export class OpenClawApp extends LitElement {
       (event.metaKey || event.ctrlKey) && event.key && event.key.toLowerCase() === "k";
     if (isToggle) {
       event.preventDefault();
-      if (this.commandPaletteOpen) this.closeCommandPalette();
-      else void this.openCommandPalette();
+      if (this.commandPaletteOpen) {
+        this.closeCommandPalette();
+      } else {
+        void this.openCommandPalette();
+      }
       return;
     }
 
-    if (!this.commandPaletteOpen) return;
+    if (!this.commandPaletteOpen) {
+      return;
+    }
 
     if (event.key === "Escape") {
       event.preventDefault();
@@ -1578,7 +1884,9 @@ export class OpenClawApp extends LitElement {
     }
 
     const actions = this.getCommandPaletteActions();
-    if (!actions.length) return;
+    if (!actions.length) {
+      return;
+    }
 
     if (event.key === "ArrowDown") {
       event.preventDefault();
@@ -1595,7 +1903,9 @@ export class OpenClawApp extends LitElement {
     if (event.key === "Enter") {
       event.preventDefault();
       const action = actions[this.commandPaletteIndex];
-      if (action) this.runCommandPaletteAction(action);
+      if (action) {
+        this.runCommandPaletteAction(action);
+      }
     }
   }
 
@@ -1623,9 +1933,13 @@ export class OpenClawApp extends LitElement {
 
   private resolveDefaultAgentIdForNewThread(): string {
     const fromAgents = this.agentsList?.defaultId?.trim();
-    if (fromAgents) return this.normalizeAgentId(fromAgents);
+    if (fromAgents) {
+      return this.normalizeAgentId(fromAgents);
+    }
     const fromIdentity = this.assistantAgentId?.trim();
-    if (fromIdentity) return this.normalizeAgentId(fromIdentity);
+    if (fromIdentity) {
+      return this.normalizeAgentId(fromIdentity);
+    }
     const key = (this.sessionKey ?? "").trim().toLowerCase();
     if (key.startsWith("agent:")) {
       const parts = key.split(":");
@@ -1637,7 +1951,9 @@ export class OpenClawApp extends LitElement {
   }
 
   async handleChatNewThread() {
-    if (!this.client || !this.connected) return;
+    if (!this.client || !this.connected) {
+      return;
+    }
     this.lastError = null;
     try {
       const agentId = this.resolveDefaultAgentIdForNewThread();
@@ -1652,7 +1968,9 @@ export class OpenClawApp extends LitElement {
 
   handleChatThreadsQueryChange(next: string) {
     this.chatThreadsQuery = next;
-    if (!this.client || !this.connected) return;
+    if (!this.client || !this.connected) {
+      return;
+    }
     if (this.chatThreadsSearchTimer != null) {
       window.clearTimeout(this.chatThreadsSearchTimer);
       this.chatThreadsSearchTimer = null;
@@ -1665,14 +1983,20 @@ export class OpenClawApp extends LitElement {
   }
 
   async handleChatThreadRename(key: string) {
-    if (!this.client || !this.connected) return;
+    if (!this.client || !this.connected) {
+      return;
+    }
     const trimmed = key.trim();
-    if (!trimmed) return;
+    if (!trimmed) {
+      return;
+    }
     const row = this.chatThreadsResult?.sessions?.find((entry) => entry.key === trimmed);
     const currentLabel = (row?.label ?? "").trim();
     const suggested = currentLabel || row?.derivedTitle || row?.displayName || trimmed;
     const next = window.prompt("Rename chat", suggested);
-    if (next == null) return;
+    if (next == null) {
+      return;
+    }
     const label = next.trim();
     try {
       await this.client.request("sessions.patch", { key: trimmed, label: label ? label : null });
@@ -1683,13 +2007,19 @@ export class OpenClawApp extends LitElement {
   }
 
   async handleChatThreadDelete(key: string) {
-    if (!this.client || !this.connected) return;
+    if (!this.client || !this.connected) {
+      return;
+    }
     const trimmed = key.trim();
-    if (!trimmed) return;
+    if (!trimmed) {
+      return;
+    }
     const confirmed = window.confirm(
       `Delete chat "${trimmed}"?\\n\\nDeletes the session entry and archives its transcript.`,
     );
-    if (!confirmed) return;
+    if (!confirmed) {
+      return;
+    }
     try {
       await this.client.request("sessions.delete", { key: trimmed, deleteTranscript: true });
       if (this.sessionKey === trimmed) {
@@ -1821,7 +2151,9 @@ export class OpenClawApp extends LitElement {
 
   // Voice mode handlers
   async loadVoiceStatus() {
-    if (!this.client || !this.connected) return;
+    if (!this.client || !this.connected) {
+      return;
+    }
     this.voiceState.client = this.client;
     this.voiceState.connected = this.connected;
     await loadVoiceStatus(this.voiceState);
@@ -1830,8 +2162,15 @@ export class OpenClawApp extends LitElement {
 
   toggleVoiceBar() {
     this.voiceBarVisible = !this.voiceBarVisible;
-    if (this.voiceBarVisible && !this.voiceState.capabilities) {
-      void this.loadVoiceStatus();
+    if (this.voiceBarVisible) {
+      // In spark mode, enable directly without PersonaPlex capability check
+      this.voiceState.client = this.client;
+      this.voiceState.connected = this.connected;
+      if (this.voiceState.mode === "spark") {
+        this.voiceState.enabled = true;
+      } else if (!this.voiceState.capabilities) {
+        void this.loadVoiceStatus();
+      }
     }
   }
 
@@ -1845,16 +2184,20 @@ export class OpenClawApp extends LitElement {
    */
   handleVoiceStartConversation() {
     this.voiceState.sessionKey = this.sessionKey;
-    startConversation(
+    const processFn = this.voiceState.mode === "spark" ? processVoiceInputSpark : processVoiceInput;
+    void startConversation(
       this.voiceState,
       () => this.requestUpdate(),
       async (audioBase64: string) => {
-        return await processVoiceInput(this.voiceState, audioBase64);
+        return await processFn(this.voiceState, audioBase64);
       },
-    );
+    ).catch((err) => {
+      this.voiceState.error = String(err);
+      this.requestUpdate();
+    });
     this.requestUpdate();
   }
-  
+
   /**
    * Stop the voice conversation.
    */
@@ -1882,9 +2225,11 @@ export class OpenClawApp extends LitElement {
   }
 
   private async readConfigSnapshot(): Promise<ConfigSnapshot | null> {
-    if (!this.client || !this.connected) return null;
+    if (!this.client || !this.connected) {
+      return null;
+    }
     try {
-      return (await this.client.request("config.get", {})) as ConfigSnapshot;
+      return await this.client.request("config.get", {});
     } catch (err) {
       this.lastError = String(err);
       return null;
@@ -1893,17 +2238,24 @@ export class OpenClawApp extends LitElement {
 
   async refreshMemoryToggleState() {
     const snapshot = await this.readConfigSnapshot();
-    if (!snapshot) return;
+    if (!snapshot) {
+      return;
+    }
     this.memorySearchEnabled = resolveMemorySearchEnabled(snapshot.config);
+    this.memoryStoreLabel = resolveMemoryStoreLabel(snapshot.config);
   }
 
   async handleMemorySearchToggle() {
-    if (!this.client || !this.connected || this.memorySearchBusy) return;
+    if (!this.client || !this.connected || this.memorySearchBusy) {
+      return;
+    }
     this.memorySearchBusy = true;
     this.lastError = null;
     try {
       const snapshot = await this.readConfigSnapshot();
-      if (!snapshot) return;
+      if (!snapshot) {
+        return;
+      }
       const baseHash = typeof snapshot.hash === "string" ? snapshot.hash.trim() : "";
       if (!baseHash) {
         this.lastError = "Config hash missing, reload and retry.";
@@ -1938,11 +2290,13 @@ export class OpenClawApp extends LitElement {
   }
 
   async handleCronSchedulerToggle(enabled: boolean) {
-    if (!this.client || !this.connected || this.cronBusy) return;
+    if (!this.client || !this.connected || this.cronBusy) {
+      return;
+    }
     this.cronBusy = true;
     this.cronError = null;
     try {
-      const snapshot = (await this.client.request("config.get", {})) as ConfigSnapshot;
+      const snapshot = await this.client.request("config.get", {});
       const baseHash = typeof snapshot.hash === "string" ? snapshot.hash.trim() : "";
       if (!baseHash) {
         this.cronError = "Config hash missing, reload and retry.";
@@ -1973,23 +2327,17 @@ export class OpenClawApp extends LitElement {
   }
 
   async handleDoctorRun(opts?: { deep?: boolean }) {
-    if (!this.client || !this.connected || this.doctorRunning) return;
+    if (!this.client || !this.connected || this.doctorRunning) {
+      return;
+    }
     this.doctorRunning = true;
     this.doctorError = null;
     this.doctorResult = null;
     try {
-      const res = (await this.client.request("doctor.run", {
+      const res = await this.client.request("doctor.run", {
         timeoutMs: 120_000,
         deep: opts?.deep === true,
-      })) as {
-        ok?: unknown;
-        exitCode?: unknown;
-        signal?: unknown;
-        durationMs?: unknown;
-        timedOut?: unknown;
-        stdout?: unknown;
-        stderr?: unknown;
-      };
+      });
       const result = {
         ok: res?.ok === true,
         exitCode: typeof res?.exitCode === "number" ? res.exitCode : null,
@@ -2011,7 +2359,9 @@ export class OpenClawApp extends LitElement {
   }
 
   async handleGatewayRestart() {
-    if (!this.client || !this.connected || this.gatewayRestartBusy) return;
+    if (!this.client || !this.connected || this.gatewayRestartBusy) {
+      return;
+    }
     this.gatewayRestartBusy = true;
     this.gatewayRestartError = null;
     try {
@@ -2024,12 +2374,11 @@ export class OpenClawApp extends LitElement {
   }
 
   async refreshPersonaPlexStatus() {
-    if (!this.client || !this.connected) return;
+    if (!this.client || !this.connected) {
+      return;
+    }
     try {
-      const status = (await this.client.request(
-        "voice.personaplex.status",
-        {},
-      )) as PersonaPlexStatusResult;
+      const status = await this.client.request("voice.personaplex.status", {});
       this.personaPlexRunning = Boolean(status.running);
     } catch {
       this.personaPlexRunning = null;
@@ -2037,14 +2386,13 @@ export class OpenClawApp extends LitElement {
   }
 
   async handlePersonaPlexPreload() {
-    if (!this.client || !this.connected || this.personaPlexBusy) return;
+    if (!this.client || !this.connected || this.personaPlexBusy) {
+      return;
+    }
     this.personaPlexBusy = true;
     this.lastError = null;
     try {
-      let status = (await this.client.request(
-        "voice.personaplex.status",
-        {},
-      )) as PersonaPlexStatusResult;
+      let status = await this.client.request("voice.personaplex.status", {});
 
       if (!status.running) {
         await this.client.request("voice.personaplex.start", {});
@@ -2052,11 +2400,10 @@ export class OpenClawApp extends LitElement {
           await new Promise<void>((resolve) => {
             window.setTimeout(() => resolve(), 500);
           });
-          status = (await this.client.request(
-            "voice.personaplex.status",
-            {},
-          )) as PersonaPlexStatusResult;
-          if (status.running) break;
+          status = await this.client.request("voice.personaplex.status", {});
+          if (status.running) {
+            break;
+          }
         }
       }
 
@@ -2073,10 +2420,12 @@ export class OpenClawApp extends LitElement {
   }
 
   async refreshNvidiaRouterStatus() {
-    if (!this.client || !this.connected) return;
+    if (!this.client || !this.connected) {
+      return;
+    }
     this.nvidiaRouterBusy = true;
     try {
-      const status = (await this.client.request("router.status", {})) as RouterStatusResult;
+      const status = await this.client.request("router.status", {});
       this.nvidiaRouterEnabled = status.enabled !== false;
       this.nvidiaRouterHealthy = status.enabled === false ? false : Boolean(status.healthy);
     } catch {
@@ -2088,18 +2437,19 @@ export class OpenClawApp extends LitElement {
   }
 
   async handleNvidiaRouterToggle() {
-    if (!this.client || !this.connected || this.nvidiaRouterBusy) return;
+    if (!this.client || !this.connected || this.nvidiaRouterBusy) {
+      return;
+    }
     this.nvidiaRouterBusy = true;
     this.lastError = null;
     try {
       const currentEnabled = this.nvidiaRouterEnabled !== false;
       const nextEnabled = !currentEnabled;
-      const result = (await this.client.request("router.setEnabled", {
+      const result = await this.client.request("router.setEnabled", {
         enabled: nextEnabled,
-      })) as RouterStatusResult;
+      });
       this.nvidiaRouterEnabled = result.enabled !== false;
-      this.nvidiaRouterHealthy =
-        result.enabled === false ? false : Boolean(result.healthy);
+      this.nvidiaRouterHealthy = result.enabled === false ? false : Boolean(result.healthy);
     } catch (err) {
       this.lastError = String(err);
     } finally {
@@ -2108,10 +2458,12 @@ export class OpenClawApp extends LitElement {
   }
 
   async refreshSparkStatus() {
-    if (!this.client || !this.connected) return;
+    if (!this.client || !this.connected) {
+      return;
+    }
     this.sparkBusy = true;
     try {
-      const status = (await this.client.request("spark.status", {})) as SparkStatusResult;
+      const status = await this.client.request("spark.status", {});
       this.sparkStatus = status;
     } catch {
       this.sparkStatus = null;
@@ -2120,8 +2472,585 @@ export class OpenClawApp extends LitElement {
     }
   }
 
+  // ---------------------------------------------------------------------------
+  // Spark voice mic (standalone, NOT PersonaPlex)
+  // ---------------------------------------------------------------------------
+
+  async handleSparkMicClick() {
+    if (this.sparkMicRecording) {
+      this.stopSparkMicRecording();
+    } else {
+      await this.startSparkMicRecording();
+    }
+  }
+
+  private supportsAudioWorklet(): boolean {
+    return (
+      typeof AudioContext !== "undefined" &&
+      "audioWorklet" in AudioContext.prototype &&
+      typeof AudioWorkletNode !== "undefined"
+    );
+  }
+
+  private base64ToArrayBuffer(b64: string): ArrayBuffer {
+    const bin = atob(b64);
+    const bytes = new Uint8Array(bin.length);
+    for (let i = 0; i < bin.length; i++) {
+      bytes[i] = bin.charCodeAt(i);
+    }
+    return bytes.buffer;
+  }
+
+  private async ensureTtsPlaybackWorklet(): Promise<boolean> {
+    if (this.ttsPlaybackContext && this.ttsPlaybackWorklet) {
+      return true;
+    }
+    if (!this.supportsAudioWorklet()) {
+      return false;
+    }
+
+    try {
+      const ctx = new AudioContext({ sampleRate: 24000 });
+      if (ctx.state === "suspended") {
+        await ctx.resume().catch(() => undefined);
+      }
+      const base = (this.basePath ?? "").replace(/\/$/, "") || "";
+      const workletPath = `${base}/worklets/playback-processor.js`;
+      const WORKLET_VERSION = "20260210-v1";
+      await ctx.audioWorklet.addModule(`${workletPath}?v=${WORKLET_VERSION}`);
+      const worklet = new AudioWorkletNode(ctx, "playback-processor");
+      worklet.connect(ctx.destination);
+
+      this.ttsPlaybackContext = ctx;
+      this.ttsPlaybackWorklet = worklet;
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
+  private blobToBase64(blob: Blob): Promise<string> {
+    return new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onloadend = () => {
+        const dataUrl = reader.result as string;
+        const base64 = dataUrl.split(",")[1] || "";
+        resolve(base64);
+      };
+      reader.addEventListener("error", () => {
+        reject(reader.error ?? new Error("FileReader error"));
+      });
+      reader.readAsDataURL(blob);
+    });
+  }
+
+  private encodeWavPcm16(pcm: Int16Array, sampleRate: number): Uint8Array {
+    const numChannels = 1;
+    const bitsPerSample = 16;
+    const blockAlign = (numChannels * bitsPerSample) / 8;
+    const byteRate = sampleRate * blockAlign;
+    const dataSize = pcm.length * 2;
+
+    const buffer = new ArrayBuffer(44 + dataSize);
+    const view = new DataView(buffer);
+
+    const writeStr = (offset: number, str: string) => {
+      for (let i = 0; i < str.length; i++) {
+        view.setUint8(offset + i, str.charCodeAt(i));
+      }
+    };
+
+    writeStr(0, "RIFF");
+    view.setUint32(4, 36 + dataSize, true);
+    writeStr(8, "WAVE");
+
+    writeStr(12, "fmt ");
+    view.setUint32(16, 16, true); // PCM chunk size
+    view.setUint16(20, 1, true); // audio format = PCM
+    view.setUint16(22, numChannels, true);
+    view.setUint32(24, sampleRate, true);
+    view.setUint32(28, byteRate, true);
+    view.setUint16(32, blockAlign, true);
+    view.setUint16(34, bitsPerSample, true);
+
+    writeStr(36, "data");
+    view.setUint32(40, dataSize, true);
+
+    let offset = 44;
+    for (let i = 0; i < pcm.length; i++) {
+      view.setInt16(offset, pcm[i], true);
+      offset += 2;
+    }
+
+    return new Uint8Array(buffer);
+  }
+
+  private async handleSparkMicAudio(params: {
+    audioBase64: string;
+    format: string;
+    sampleRate?: number;
+  }) {
+    if (!this.client || !this.connected) {
+      return;
+    }
+
+    try {
+      const result = await this.client.request("spark.voice.stt", {
+        audio_base64: params.audioBase64,
+        format: params.format,
+        sample_rate: params.sampleRate,
+      });
+      const text = (result as Record<string, unknown>)?.text;
+      if (typeof text === "string" && text.trim()) {
+        const existing = this.chatMessage?.trim() ?? "";
+        this.chatMessage = existing ? `${existing} ${text.trim()}` : text.trim();
+      }
+    } catch (err) {
+      console.error("[spark-mic] STT request failed:", err);
+      this.lastError = `Voice input failed: ${err instanceof Error ? err.message : String(err)}`;
+    }
+  }
+
+  private async startSparkMicRecording() {
+    try {
+      // Worklet-based capture (ported from AII-Chatbot). This avoids MediaRecorder/WebM
+      // variability and gives us deterministic PCM16 frames.
+      if (this.supportsAudioWorklet()) {
+        const stream = await navigator.mediaDevices.getUserMedia({
+          audio: {
+            echoCancellation: true,
+            noiseSuppression: true,
+            autoGainControl: false,
+          },
+        });
+
+        const audioContext = new AudioContext({ sampleRate: this.sparkMicSampleRate });
+        if (audioContext.state === "suspended") {
+          await audioContext.resume().catch(() => undefined);
+        }
+
+        // Cache-bust worklet loads (browsers cache worklets aggressively)
+        const WORKLET_VERSION = "20260210-v1";
+        await audioContext.audioWorklet.addModule(
+          `/worklets/capture-processor.js?v=${WORKLET_VERSION}`,
+        );
+
+        const source = audioContext.createMediaStreamSource(stream);
+        const captureWorklet = new AudioWorkletNode(audioContext, "capture-processor", {
+          processorOptions: {
+            targetSampleRate: this.sparkMicSampleRate,
+            frameSize: 480,
+          },
+        });
+
+        // Keep node alive but avoid echo
+        const zeroGain = audioContext.createGain();
+        zeroGain.gain.value = 0;
+        captureWorklet.connect(zeroGain);
+        zeroGain.connect(audioContext.destination);
+
+        // Collect PCM16 frames
+        this.sparkMicPcmFrames = [];
+        captureWorklet.port.addEventListener("message", (event) => {
+          if (event.data?.type === "audio" && event.data?.pcm16) {
+            // event.data.pcm16 is an Int16Array (transferable buffer)
+            this.sparkMicPcmFrames.push(event.data.pcm16 as Int16Array);
+          }
+        });
+        captureWorklet.port.start();
+
+        source.connect(captureWorklet);
+
+        this.sparkMicStream = stream;
+        this.sparkMicAudioContext = audioContext;
+        this.sparkMicCaptureWorklet = captureWorklet;
+        this.sparkMicUsingWorklet = true;
+        this.sparkMicRecording = true;
+
+        // Auto-stop after 30s
+        this.sparkMicRecordingTimer = setTimeout(() => {
+          this.stopSparkMicRecording();
+        }, 30_000);
+
+        this.requestUpdate();
+        return;
+      }
+
+      // Fallback: MediaRecorder (legacy)
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      this.sparkMicChunks = [];
+
+      const mimeType = MediaRecorder.isTypeSupported("audio/webm;codecs=opus")
+        ? "audio/webm;codecs=opus"
+        : "audio/webm";
+
+      const recorder = new MediaRecorder(stream, { mimeType });
+      this.sparkMicMediaRecorder = recorder;
+      this.sparkMicUsingWorklet = false;
+
+      recorder.ondataavailable = (e: BlobEvent) => {
+        if (e.data.size > 0) {
+          this.sparkMicChunks.push(e.data);
+        }
+      };
+
+      recorder.onstop = async () => {
+        for (const track of stream.getTracks()) {
+          track.stop();
+        }
+        if (this.sparkMicRecordingTimer) {
+          clearTimeout(this.sparkMicRecordingTimer);
+          this.sparkMicRecordingTimer = null;
+        }
+
+        if (this.sparkMicChunks.length === 0) {
+          this.sparkMicRecording = false;
+          return;
+        }
+
+        const blob = new Blob(this.sparkMicChunks, { type: mimeType });
+        this.sparkMicChunks = [];
+
+        const audioBase64 = await this.blobToBase64(blob);
+        await this.handleSparkMicAudio({ audioBase64, format: "webm" });
+
+        this.sparkMicRecording = false;
+        this.requestUpdate();
+      };
+
+      recorder.start();
+      this.sparkMicRecording = true;
+
+      this.sparkMicRecordingTimer = setTimeout(() => {
+        this.stopSparkMicRecording();
+      }, 30_000);
+    } catch (err) {
+      console.error("[spark-mic] Failed to start recording:", err);
+      this.sparkMicRecording = false;
+      this.lastError =
+        err instanceof Error && err.name === "NotAllowedError"
+          ? "Microphone access denied. Allow mic in browser or system settings."
+          : `Recording failed: ${err instanceof Error ? err.message : String(err)}`;
+      this.requestUpdate();
+    }
+  }
+
+  private stopSparkMicRecording() {
+    if (this.sparkMicRecordingTimer) {
+      clearTimeout(this.sparkMicRecordingTimer);
+      this.sparkMicRecordingTimer = null;
+    }
+
+    if (this.sparkMicUsingWorklet) {
+      void this.finishSparkMicWorkletRecording();
+      return;
+    }
+
+    if (this.sparkMicMediaRecorder && this.sparkMicMediaRecorder.state !== "inactive") {
+      this.sparkMicMediaRecorder.stop();
+    }
+    this.sparkMicMediaRecorder = null;
+    // sparkMicRecording will be set to false in the onstop handler
+  }
+
+  private async finishSparkMicWorkletRecording() {
+    if (!this.sparkMicUsingWorklet) {
+      return;
+    }
+
+    // Snapshot frames and reset state early to avoid re-entrancy.
+    const frames = this.sparkMicPcmFrames;
+    this.sparkMicPcmFrames = [];
+    this.sparkMicUsingWorklet = false;
+
+    const stream = this.sparkMicStream;
+    const audioContext = this.sparkMicAudioContext;
+    const capture = this.sparkMicCaptureWorklet;
+
+    this.sparkMicStream = null;
+    this.sparkMicAudioContext = null;
+    this.sparkMicCaptureWorklet = null;
+
+    // Stop inputs
+    try {
+      capture?.disconnect();
+    } catch {
+      // ignore
+    }
+    try {
+      if (stream) {
+        for (const track of stream.getTracks()) {
+          track.stop();
+        }
+      }
+    } catch {
+      // ignore
+    }
+    try {
+      await audioContext?.close();
+    } catch {
+      // ignore
+    }
+
+    if (!frames.length) {
+      this.sparkMicRecording = false;
+      this.requestUpdate();
+      return;
+    }
+
+    // Combine PCM16 frames
+    const totalSamples = frames.reduce((sum, f) => sum + f.length, 0);
+    const pcm = new Int16Array(totalSamples);
+    let offset = 0;
+    for (const frame of frames) {
+      pcm.set(frame, offset);
+      offset += frame.length;
+    }
+
+    // Encode to WAV for Spark STT
+    const wavBytes = this.encodeWavPcm16(pcm, this.sparkMicSampleRate);
+    const blob = new Blob([wavBytes], { type: "audio/wav" });
+    const audioBase64 = await this.blobToBase64(blob);
+    await this.handleSparkMicAudio({
+      audioBase64,
+      format: "wav",
+      sampleRate: this.sparkMicSampleRate,
+    });
+
+    this.sparkMicRecording = false;
+    this.requestUpdate();
+  }
+
+  handleStopSpeaking() {
+    if (this.ttsAbortController) {
+      this.ttsAbortController.abort();
+    }
+    if (this.ttsPlaybackWorklet) {
+      this.ttsPlaybackWorklet.port.postMessage({ type: "clear" });
+    }
+    if (this.ttsCurrentAudio) {
+      this.ttsCurrentAudio.pause();
+      this.ttsCurrentAudio.currentTime = 0;
+      this.ttsCurrentAudio = null;
+    }
+    this.ttsSpeaking = false;
+    this.ttsProgress = null;
+    this.ttsAbortController = null;
+    this.requestUpdate();
+  }
+
+  async handleSpeakText(text: string) {
+    if (!text.trim() || !this.client || !this.connected) {
+      return;
+    }
+    this.lastError = null;
+    const trimmed = stripMarkdownForTts(text.trim());
+    const chunks = chunkTextForTts(trimmed);
+    if (chunks.length === 0) {
+      return;
+    }
+
+    this.ttsAbortController = new AbortController();
+    this.ttsSpeaking = true;
+    this.ttsProgress = `Speaking 1/${chunks.length}...`;
+    this.requestUpdate();
+
+    console.log("[spark-tts] request", {
+      textLength: trimmed.length,
+      chunkCount: chunks.length,
+      textPreview: trimmed.slice(0, 50),
+    });
+
+    const useWorklet = await this.ensureTtsPlaybackWorklet();
+    console.log("[spark-tts] playback path:", useWorklet ? "worklet" : "audio-element");
+
+    if (useWorklet && this.ttsPlaybackWorklet && this.ttsPlaybackContext) {
+      const worklet = this.ttsPlaybackWorklet;
+      const ctx = this.ttsPlaybackContext;
+
+      worklet.port.postMessage({ type: "clear" });
+
+      const playbackCompletePromise = new Promise<void>((resolve) => {
+        const handler = (e: MessageEvent) => {
+          if (e.data?.type === "playback_complete") {
+            worklet.port.removeEventListener("message", handler);
+            resolve();
+          }
+        };
+        worklet.port.addEventListener("message", handler);
+        this.ttsAbortController?.signal.addEventListener(
+          "abort",
+          () => {
+            worklet.port.removeEventListener("message", handler);
+            resolve();
+          },
+          { once: true },
+        );
+      });
+
+      const fetchChunkForWorklet = async (idx: number): Promise<Float32Array> => {
+        const result = await this.client!.request("spark.voice.tts", {
+          text: chunks[idx],
+        });
+        const b64 = result?.audio_base64;
+        if (typeof b64 !== "string" || !b64) {
+          throw new Error(`Chunk ${idx + 1}: no audio`);
+        }
+        const buffer = this.base64ToArrayBuffer(b64);
+        const arrayBuffer = await ctx.decodeAudioData(buffer);
+        const chan = arrayBuffer.getChannelData(0);
+        return new Float32Array(chan);
+      };
+
+      try {
+        let nextPromise = fetchChunkForWorklet(0);
+
+        for (let i = 0; i < chunks.length; i++) {
+          if (this.ttsAbortController?.signal.aborted) {
+            break;
+          }
+
+          const float32 = await nextPromise;
+          if (i + 1 < chunks.length) {
+            nextPromise = fetchChunkForWorklet(i + 1);
+          }
+
+          if (this.ttsAbortController?.signal.aborted) {
+            break;
+          }
+
+          this.ttsProgress = `Speaking ${i + 1}/${chunks.length}...`;
+          this.requestUpdate();
+
+          worklet.port.postMessage({ type: "audio", data: float32, seq: i + 1 });
+        }
+
+        if (!this.ttsAbortController?.signal.aborted) {
+          worklet.port.postMessage({ type: "server_audio_complete" });
+          await playbackCompletePromise;
+        }
+        console.log("[spark-tts] worklet playback ok");
+      } catch (err) {
+        if (this.ttsAbortController?.signal.aborted) {
+          console.log("[spark-tts] stopped by user");
+        } else {
+          console.warn("[spark-tts] worklet path failed, falling back to audio element:", err);
+          try {
+            await this.playTtsChunksWithAudioElement(chunks);
+          } catch (fallbackErr) {
+            console.error("[spark-tts] audio element fallback failed:", fallbackErr);
+            this.lastError = `Speech failed: ${fallbackErr instanceof Error ? fallbackErr.message : String(fallbackErr)}`;
+          }
+        }
+      } finally {
+        this.ttsSpeaking = false;
+        this.ttsProgress = null;
+        this.ttsAbortController = null;
+        this.ttsCurrentAudio = null;
+        this.requestUpdate();
+      }
+      return;
+    }
+
+    try {
+      await this.playTtsChunksWithAudioElement(chunks);
+    } catch (err) {
+      if (this.ttsAbortController?.signal.aborted) {
+        console.log("[spark-tts] stopped by user");
+      } else {
+        console.error("[spark-tts] Failed:", err);
+        this.lastError = `Speech failed: ${err instanceof Error ? err.message : String(err)}`;
+      }
+    } finally {
+      this.ttsSpeaking = false;
+      this.ttsProgress = null;
+      this.ttsAbortController = null;
+      this.ttsCurrentAudio = null;
+      this.requestUpdate();
+    }
+  }
+
+  private async playTtsChunksWithAudioElement(chunks: string[]): Promise<void> {
+    if (!this.client) {
+      return;
+    }
+
+    const fetchChunkAudio = async (idx: number): Promise<HTMLAudioElement> => {
+      const result = await this.client!.request("spark.voice.tts", {
+        text: chunks[idx],
+      });
+      const b64 = result?.audio_base64;
+      if (typeof b64 !== "string" || !b64) {
+        throw new Error(`Chunk ${idx + 1}: no audio`);
+      }
+      const fmt = (result?.format as string) ?? "webm";
+      const mime = fmt === "webm" ? "audio/webm" : `audio/${fmt}`;
+      return new Audio(`data:${mime};base64,${b64}`);
+    };
+
+    const playAudio = (audio: HTMLAudioElement): Promise<void> =>
+      new Promise((resolve, reject) => {
+        const onError = () => {
+          cleanup();
+          reject(new Error("Audio playback failed"));
+        };
+        const onEnded = () => {
+          cleanup();
+          resolve();
+        };
+        const onCanPlay = () => {
+          audio.removeEventListener("canplaythrough", onCanPlay);
+          audio.play().catch(onError);
+        };
+        const cleanup = () => {
+          audio.removeEventListener("ended", onEnded);
+          audio.removeEventListener("error", onError);
+          audio.removeEventListener("canplaythrough", onCanPlay);
+        };
+
+        audio.addEventListener("ended", onEnded);
+        audio.addEventListener("error", onError);
+        if (audio.readyState >= 2) {
+          onCanPlay();
+        } else {
+          audio.addEventListener("canplaythrough", onCanPlay);
+        }
+      });
+
+    let nextPromise = fetchChunkAudio(0);
+
+    for (let i = 0; i < chunks.length; i++) {
+      if (this.ttsAbortController?.signal.aborted) {
+        break;
+      }
+
+      const audio = await nextPromise;
+      if (i + 1 < chunks.length) {
+        nextPromise = fetchChunkAudio(i + 1);
+      }
+
+      if (this.ttsAbortController?.signal.aborted) {
+        break;
+      }
+
+      this.ttsProgress = `Speaking ${i + 1}/${chunks.length}...`;
+      this.ttsCurrentAudio = audio;
+      this.requestUpdate();
+
+      await playAudio(audio);
+
+      this.ttsCurrentAudio = null;
+      if (this.ttsAbortController?.signal.aborted) {
+        break;
+      }
+    }
+    console.log("[spark-tts] play() ok");
+  }
+
   async refreshTopbarControls() {
-    if (!this.client || !this.connected) return;
+    if (!this.client || !this.connected) {
+      return;
+    }
     await Promise.all([
       this.refreshMemoryToggleState(),
       this.refreshPersonaPlexStatus(),

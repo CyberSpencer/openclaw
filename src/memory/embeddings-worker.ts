@@ -1,10 +1,5 @@
 import type { Llama, LlamaEmbeddingContext, LlamaModel } from "node-llama-cpp";
-
 import { importNodeLlamaCpp } from "./node-llama.js";
-
-type WorkerRequest =
-  | { id: string; type: "embedQuery"; text: string }
-  | { id: string; type: "embedBatch"; texts: string[] };
 
 type WorkerResponse =
   | { id: string; ok: true; embeddings: number[][] }

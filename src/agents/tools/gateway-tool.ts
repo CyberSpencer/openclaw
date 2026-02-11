@@ -12,6 +12,8 @@ import { stringEnum } from "../schema/typebox.js";
 import { type AnyAgentTool, jsonResult, readStringParam } from "./common.js";
 import { callGatewayTool } from "./gateway.js";
 
+const DEFAULT_UPDATE_TIMEOUT_MS = 20 * 60_000;
+
 const SENSITIVE_KEY_RE = /(key|token|secret|password)/i;
 
 function redactSensitive(value: unknown, parentKey?: string): unknown {

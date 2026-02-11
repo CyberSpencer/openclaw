@@ -1,5 +1,5 @@
-import type { AppViewState } from "./app-view-state";
-import { TAB_GROUPS, subtitleForTab, titleForTab, type Tab } from "./navigation";
+import type { AppViewState } from "./app-view-state.ts";
+import { TAB_GROUPS, subtitleForTab, titleForTab, type Tab } from "./navigation.ts";
 
 export type CommandPaletteAction = {
   id: string;
@@ -19,7 +19,9 @@ function normalizeQuery(input: string): string {
 
 function actionSearchHaystack(action: CommandPaletteAction): string {
   const parts: string[] = [action.label, action.detail ?? "", action.group];
-  if (action.keywords?.length) parts.push(action.keywords.join(" "));
+  if (action.keywords?.length) {
+    parts.push(action.keywords.join(" "));
+  }
   return normalizeQuery(parts.join(" "));
 }
 
@@ -28,7 +30,9 @@ export function filterCommandPaletteActions(
   query: string,
 ): CommandPaletteAction[] {
   const q = normalizeQuery(query);
-  if (!q) return actions;
+  if (!q) {
+    return actions;
+  }
   return actions.filter((action) => actionSearchHaystack(action).includes(q));
 }
 
@@ -125,4 +129,3 @@ export function buildCommandPaletteActions(state: AppViewState): CommandPaletteA
 
   return actions;
 }
-

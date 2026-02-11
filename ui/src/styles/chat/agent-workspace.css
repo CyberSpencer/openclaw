@@ -643,6 +643,12 @@
   font-size: 12px;
 }
 
+.agent-terminal__run-status {
+  margin-top: 6px;
+  font-size: 12px;
+  color: var(--danger-strong, var(--text));
+}
+
 .agent-terminal__actions {
   display: flex;
   align-items: center;
@@ -652,6 +658,48 @@
 
 .agent-terminal__compose {
   margin-top: 10px;
+}
+
+/* Spark voice mic button */
+.agent-terminal__mic {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 4px 8px;
+  min-width: 32px;
+}
+
+.agent-terminal__mic svg {
+  width: 16px;
+  height: 16px;
+  fill: currentColor;
+}
+
+.agent-terminal__mic--available {
+  color: var(--color-fg, currentColor);
+  cursor: pointer;
+}
+
+.agent-terminal__mic--unavailable,
+.agent-terminal__mic:disabled.agent-terminal__mic--unavailable {
+  color: var(--color-danger, #dc3545);
+  opacity: 0.8;
+  cursor: not-allowed;
+}
+
+.agent-terminal__mic--recording {
+  color: var(--color-danger, #dc3545);
+  animation: spark-mic-pulse 1.2s ease-in-out infinite;
+}
+
+@keyframes spark-mic-pulse {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.4;
+  }
 }
 
 .agent-terminal__composeLabel {
@@ -769,6 +817,59 @@
 
 .terminal-entry__open {
   margin-left: auto;
+}
+
+.terminal-entry__actions {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  margin-left: auto;
+}
+
+.terminal-entry__action {
+  padding: 4px;
+  min-width: 28px;
+  min-height: 28px;
+}
+
+.terminal-entry__action svg {
+  width: 14px;
+  height: 14px;
+}
+
+.terminal-entry__action-icon {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 14px;
+  height: 14px;
+}
+
+.terminal-entry__action-icon-copy,
+.terminal-entry__action-icon-check {
+  position: absolute;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  inset: 0;
+  transition: opacity 150ms ease;
+}
+
+.terminal-entry__action-icon-check {
+  opacity: 0;
+}
+
+.terminal-entry__action[data-copied="1"] .terminal-entry__action-icon-copy {
+  opacity: 0;
+}
+
+.terminal-entry__action[data-copied="1"] .terminal-entry__action-icon-check {
+  opacity: 1;
+}
+
+.terminal-entry__action[data-copied="1"] {
+  color: var(--ok);
 }
 
 .terminal-entry__body {

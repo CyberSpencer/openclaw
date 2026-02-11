@@ -312,51 +312,162 @@ export async function ensureLoaded(
     }
 
     const payload = raw.payload;
-    if (payload && typeof payload === "object" && !Array.isArray(payload)) {
-      const payloadRecord = payload as Record<string, unknown>;
-      const modelBefore =
-        typeof payloadRecord.model === "string" ? payloadRecord.model.trim() : undefined;
+    if (
+      (!payload || typeof payload !== "object" || Array.isArray(payload)) &&
+      inferPayloadIfMissing(raw)
+    ) {
+      mutated = true;
+    }
+
+    const payloadRecord =
+      raw.payload && typeof raw.payload === "object" && !Array.isArray(raw.payload)
+        ? (raw.payload as Record<string, unknown>)
+        : null;
+
+    if (payloadRecord) {
+      if (normalizePayloadKind(payloadRecord)) {
+        mutated = true;
+      }
+      if (!payloadRecord.kind) {
+        if (typeof payloadRecord.message === "string" && payloadRecord.message.trim()) {
+          payloadRecord.kind = "agentTurn";
+          mutated = true;
+        } else if (typeof payloadRecord.text === "string" && payloadRecord.text.trim()) {
+          payloadRecord.kind = "systemEvent";
+          mutated = true;
+        }
+      }
+      if (payloadRecord.kind === "agentTurn") {
+        if (copyTopLevelAgentTurnFields(raw, payloadRecord)) {
+          mutated = true;
+        }
+      }
+    }
+
+    const hadLegacyTopLevelFields =
+      "model" in raw ||
+      "thinking" in raw ||
+      "timeoutSeconds" in raw ||
+      "allowUnsafeExternalContent" in raw ||
+      "message" in raw ||
+      "text" in raw ||
+      "deliver" in raw ||
+      "channel" in raw ||
+      "to" in raw ||
+      "bestEffortDeliver" in raw ||
+      "provider" in raw;
+    if (hadLegacyTopLevelFields) {
+      stripLegacyTopLevelFields(raw);
+      mutated = true;
+    }
+
+    if (payloadRecord) {
       if (migrateLegacyCronPayload(payloadRecord)) {
         mutated = true;
       }
-      const modelAfter =
-        typeof payloadRecord.model === "string" ? payloadRecord.model.trim() : undefined;
-      const rawState = raw.state;
-      if (rawState && typeof rawState === "object" && !Array.isArray(rawState)) {
-        const lastError = (rawState as { lastError?: unknown }).lastError;
-        const lastStatus = (rawState as { lastStatus?: unknown }).lastStatus;
+    }
 
-        if (
-          modelBefore &&
-          modelAfter &&
-          modelBefore !== modelAfter &&
-          lastStatus === "error" &&
-          typeof lastError === "string" &&
-          lastError.includes(modelBefore)
-        ) {
-          // If we migrated an invalid/stale model id, clear the stored error so the UI doesn't
-          // keep showing an obsolete failure after upgrade.
-          delete (rawState as { lastError?: string }).lastError;
-          delete (rawState as { lastStatus?: string }).lastStatus;
+    const schedule = raw.schedule;
+    if (schedule && typeof schedule === "object" && !Array.isArray(schedule)) {
+      const sched = schedule as Record<string, unknown>;
+      const kind = typeof sched.kind === "string" ? sched.kind.trim().toLowerCase() : "";
+      if (!kind && ("at" in sched || "atMs" in sched)) {
+        sched.kind = "at";
+        mutated = true;
+      }
+      const atRaw = typeof sched.at === "string" ? sched.at.trim() : "";
+      const atMsRaw = sched.atMs;
+      const parsedAtMs =
+        typeof atMsRaw === "number"
+          ? atMsRaw
+          : typeof atMsRaw === "string"
+            ? parseAbsoluteTimeMs(atMsRaw)
+            : atRaw
+              ? parseAbsoluteTimeMs(atRaw)
+              : null;
+      if (parsedAtMs !== null) {
+        sched.at = new Date(parsedAtMs).toISOString();
+        if ("atMs" in sched) {
+          delete sched.atMs;
+        }
+        mutated = true;
+      }
+
+      const everyMsRaw = sched.everyMs;
+      const everyMs =
+        typeof everyMsRaw === "number" && Number.isFinite(everyMsRaw)
+          ? Math.floor(everyMsRaw)
+          : null;
+      if ((kind === "every" || sched.kind === "every") && everyMs !== null) {
+        const anchorRaw = sched.anchorMs;
+        const normalizedAnchor =
+          typeof anchorRaw === "number" && Number.isFinite(anchorRaw)
+            ? Math.max(0, Math.floor(anchorRaw))
+            : typeof raw.createdAtMs === "number" && Number.isFinite(raw.createdAtMs)
+              ? Math.max(0, Math.floor(raw.createdAtMs))
+              : typeof raw.updatedAtMs === "number" && Number.isFinite(raw.updatedAtMs)
+                ? Math.max(0, Math.floor(raw.updatedAtMs))
+                : null;
+        if (normalizedAnchor !== null && anchorRaw !== normalizedAnchor) {
+          sched.anchorMs = normalizedAnchor;
           mutated = true;
         }
+      }
+    }
 
-        // If the payload no longer references the model mentioned by a previous allowlist error,
-        // clear it to avoid confusing stale errors.
-        if (lastStatus === "error" && typeof lastError === "string") {
-          const match = lastError.match(/^model not allowed:\s*(.+)\s*$/i);
-          const denied = match?.[1]?.trim() ?? "";
-          if (
-            denied &&
-            (denied === "openai-codex/gpt-5.2" || denied === "openai-codex/gpt-5.3") &&
-            modelAfter &&
-            modelAfter !== denied
-          ) {
-            delete (rawState as { lastError?: string }).lastError;
-            delete (rawState as { lastStatus?: string }).lastStatus;
+    const delivery = raw.delivery;
+    if (delivery && typeof delivery === "object" && !Array.isArray(delivery)) {
+      const modeRaw = (delivery as { mode?: unknown }).mode;
+      if (typeof modeRaw === "string") {
+        const lowered = modeRaw.trim().toLowerCase();
+        if (lowered === "deliver") {
+          (delivery as { mode?: unknown }).mode = "announce";
+          mutated = true;
+        }
+      } else if (modeRaw === undefined || modeRaw === null) {
+        // Explicitly persist the default so existing jobs don't silently
+        // change behaviour when the runtime default shifts.
+        (delivery as { mode?: unknown }).mode = "announce";
+        mutated = true;
+      }
+    }
+
+    const isolation = raw.isolation;
+    if (isolation && typeof isolation === "object" && !Array.isArray(isolation)) {
+      delete raw.isolation;
+      mutated = true;
+    }
+
+    const payloadKind =
+      payloadRecord && typeof payloadRecord.kind === "string" ? payloadRecord.kind : "";
+    const sessionTarget =
+      typeof raw.sessionTarget === "string" ? raw.sessionTarget.trim().toLowerCase() : "";
+    const isIsolatedAgentTurn =
+      sessionTarget === "isolated" || (sessionTarget === "" && payloadKind === "agentTurn");
+    const hasDelivery = delivery && typeof delivery === "object" && !Array.isArray(delivery);
+    const hasLegacyDelivery = payloadRecord ? hasLegacyDeliveryHints(payloadRecord) : false;
+
+    if (isIsolatedAgentTurn && payloadKind === "agentTurn") {
+      if (!hasDelivery) {
+        raw.delivery =
+          payloadRecord && hasLegacyDelivery
+            ? buildDeliveryFromLegacyPayload(payloadRecord)
+            : { mode: "announce" };
+        mutated = true;
+      }
+      if (payloadRecord && hasLegacyDelivery) {
+        if (hasDelivery) {
+          const merged = mergeLegacyDeliveryInto(
+            delivery as Record<string, unknown>,
+            payloadRecord,
+          );
+          if (merged.mutated) {
+            raw.delivery = merged.delivery;
             mutated = true;
           }
         }
+        stripLegacyDeliveryFields(payloadRecord);
+        mutated = true;
       }
     }
   }

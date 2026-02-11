@@ -1,14 +1,13 @@
 import { randomUUID } from "node:crypto";
 import fs from "node:fs";
-
 import { resolveAgentConfig } from "../../agents/agent-scope.js";
-import { abortEmbeddedPiRun, waitForEmbeddedPiRunEnd } from "../../agents/pi-embedded.js";
 import { AGENT_LANE_SUBAGENT } from "../../agents/lanes.js";
+import { abortEmbeddedPiRun, waitForEmbeddedPiRunEnd } from "../../agents/pi-embedded.js";
 import { buildSubagentSystemPrompt } from "../../agents/subagent-announce.js";
 import { registerSubagentRun } from "../../agents/subagent-registry.js";
-import { normalizeThinkLevel, formatThinkingLevels } from "../../auto-reply/thinking.js";
 import { stopSubagentsForRequester } from "../../auto-reply/reply/abort.js";
 import { clearSessionQueues } from "../../auto-reply/reply/queue.js";
+import { normalizeThinkLevel, formatThinkingLevels } from "../../auto-reply/thinking.js";
 import { agentCommand } from "../../commands/agent.js";
 import { loadConfig } from "../../config/config.js";
 import {
@@ -18,15 +17,14 @@ import {
   type SessionEntry,
   updateSessionStore,
 } from "../../config/sessions.js";
-import { normalizeAgentId, parseAgentSessionKey } from "../../routing/session-key.js";
 import {
   isSubagentSessionKey,
   normalizeAgentId,
   normalizeMainKey,
   parseAgentSessionKey,
 } from "../../routing/session-key.js";
-import { normalizeDeliveryContext } from "../../utils/delivery-context.js";
 import { defaultRuntime } from "../../runtime.js";
+import { normalizeDeliveryContext } from "../../utils/delivery-context.js";
 import {
   ErrorCodes,
   errorShape,

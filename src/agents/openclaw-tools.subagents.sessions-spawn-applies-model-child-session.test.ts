@@ -159,7 +159,9 @@ describe("openclaw-tools: subagents", () => {
       status: "error",
     });
     expect(String(result.details?.error)).toMatch(/Invalid thinking level/i);
-    expect(calls).toHaveLength(0);
+    // resolveSessionModel now makes a sessions.list call before thinking validation
+    const patchOrAgent = calls.filter((c) => c.method === "sessions.patch" || c.method === "agent");
+    expect(patchOrAgent).toHaveLength(0);
   });
   it("sessions_spawn applies default subagent model from defaults config", async () => {
     resetSubagentRegistryForTests();

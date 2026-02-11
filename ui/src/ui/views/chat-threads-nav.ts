@@ -1,9 +1,8 @@
 import { html, nothing } from "lit";
 import { repeat } from "lit/directives/repeat.js";
-
-import type { GatewaySessionRow, SessionsListResult } from "../types";
-import { formatAgo, truncateText } from "../format";
-import { icons } from "../icons";
+import type { GatewaySessionRow, SessionsListResult } from "../types.ts";
+import { formatAgo, truncateText } from "../format.ts";
+import { icons } from "../icons.ts";
 
 export type ChatThreadsNavProps = {
   connected: boolean;
@@ -33,7 +32,9 @@ function isSubagentSessionKey(key: string): boolean {
 
 function resolveThreadTitle(row: GatewaySessionRow): string {
   const label = row.label?.trim();
-  if (label) return label;
+  if (label) {
+    return label;
+  }
   const preview = resolveThreadPreview(row);
   const derived = row.derivedTitle?.trim();
   if (derived) {
@@ -45,7 +46,9 @@ function resolveThreadTitle(row: GatewaySessionRow): string {
     return derived;
   }
   const displayName = row.displayName?.trim();
-  if (displayName) return displayName;
+  if (displayName) {
+    return displayName;
+  }
   return row.key;
 }
 
@@ -64,12 +67,22 @@ function groupThreads(threads: GatewaySessionRow[]): ThreadGroup[] {
   const byLabel: Record<string, GatewaySessionRow[]> = {};
 
   const labelFor = (updatedAt: number | null): string => {
-    if (!updatedAt) return "Older";
+    if (!updatedAt) {
+      return "Older";
+    }
     const diffDays = Math.floor((now - updatedAt) / 86_400_000);
-    if (diffDays <= 0) return "Today";
-    if (diffDays === 1) return "Yesterday";
-    if (diffDays < 7) return "Last 7 days";
-    if (diffDays < 30) return "Last 30 days";
+    if (diffDays <= 0) {
+      return "Today";
+    }
+    if (diffDays === 1) {
+      return "Yesterday";
+    }
+    if (diffDays < 7) {
+      return "Last 7 days";
+    }
+    if (diffDays < 30) {
+      return "Last 30 days";
+    }
     return "Older";
   };
 
@@ -82,7 +95,9 @@ function groupThreads(threads: GatewaySessionRow[]): ThreadGroup[] {
   return order
     .map((label) => {
       const items = byLabel[label];
-      if (!items?.length) return null;
+      if (!items?.length) {
+        return null;
+      }
       return { label, items } satisfies ThreadGroup;
     })
     .filter((group): group is ThreadGroup => Boolean(group));
@@ -124,12 +139,20 @@ function renderThreadItem(props: ChatThreadsNavProps, row: GatewaySessionRow) {
       <div class="chat-thread-item__main">
         <div class="chat-thread-item__title" title=${title}>${title}</div>
         <div class="chat-thread-item__sub">
-          ${subagent
-            ? html`<span class="chat-thread-item__pill">Sub-agent</span>`
-            : nothing}
-          ${previewText
-            ? html`<span class="chat-thread-item__preview">${previewText}</span>`
-            : html`<span class="chat-thread-item__preview chat-thread-item__preview--empty">No messages yet</span>`}
+          ${
+            subagent
+              ? html`
+                  <span class="chat-thread-item__pill">Sub-agent</span>
+                `
+              : nothing
+          }
+          ${
+            previewText
+              ? html`<span class="chat-thread-item__preview">${previewText}</span>`
+              : html`
+                  <span class="chat-thread-item__preview chat-thread-item__preview--empty">No messages yet</span>
+                `
+          }
         </div>
       </div>
       <div class="chat-thread-item__meta">
@@ -173,7 +196,7 @@ function listThreads(props: ChatThreadsNavProps) {
     .filter((row) => row.kind === "direct")
     .filter((row) => (props.showSubagents ? true : !isSubagentSessionKey(row.key)))
     .slice()
-    .sort((a, b) => (b.updatedAt ?? 0) - (a.updatedAt ?? 0));
+    .toSorted((a, b) => (b.updatedAt ?? 0) - (a.updatedAt ?? 0));
   const queryActive = props.query.trim().length > 0;
   const groups = queryActive ? [{ label: "Results", items: threads }] : groupThreads(threads);
   return { threads, groups };
@@ -257,7 +280,9 @@ export function renderChatThreadsNav(props: ChatThreadsNavProps) {
       <div class="chat-nav__list" role="list">
         ${
           props.connected && threads.length === 0 && !props.loading
-            ? html`<div class="chat-nav__empty muted">No chats yet.</div>`
+            ? html`
+                <div class="chat-nav__empty muted">No chats yet.</div>
+              `
             : nothing
         }
         ${groups.map(

@@ -90,15 +90,8 @@ export function toToolDefinitions(tools: AnyAgentTool[]): ToolDefinition[] {
       label: tool.label ?? name,
       description: tool.description ?? "",
       parameters: tool.parameters,
-      execute: async (
-        toolCallId,
-        params,
-        signal,
-        onUpdate: AgentToolUpdateCallback<unknown> | undefined,
-        _ctx,
-      ): Promise<AgentToolResult<unknown>> => {
-        // pi-coding-agent and pi-agent-core have different execute signatures; this adapter
-        // keeps the AgentTool interface stable for our tool implementations.
+      execute: async (...args: ToolExecuteArgs): Promise<AgentToolResult<unknown>> => {
+        const { toolCallId, params, onUpdate, signal } = splitToolExecuteArgs(args);
         try {
           return await tool.execute(toolCallId, params, signal, onUpdate);
         } catch (err) {
@@ -143,13 +136,19 @@ export function toClientToolDefinitions(
       description: func.description ?? "",
       // oxlint-disable-next-line typescript/no-explicit-any
       parameters: func.parameters as any,
-      execute: async (
-        toolCallId,
-        params,
-        _signal,
-        _onUpdate: AgentToolUpdateCallback<unknown> | undefined,
-        _ctx,
-      ): Promise<AgentToolResult<unknown>> => {
+      execute: async (...args: ToolExecuteArgs): Promise<AgentToolResult<unknown>> => {
+        const { toolCallId, params } = splitToolExecuteArgs(args);
+        const outcome = await runBeforeToolCallHook({
+          toolName: func.name,
+          params,
+          toolCallId,
+          ctx: hookContext,
+        });
+        if (outcome.blocked) {
+          throw new Error(outcome.reason);
+        }
+        const adjustedParams = outcome.params;
+        const paramsRecord = isPlainObject(adjustedParams) ? adjustedParams : {};
         // Notify handler that a client tool was called
         if (onClientToolCall) {
           onClientToolCall(func.name, paramsRecord);

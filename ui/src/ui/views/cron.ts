@@ -97,7 +97,9 @@ export function renderCron(props: CronProps) {
                     if (
                       props.status?.enabled &&
                       typeof window !== "undefined" &&
-                      !window.confirm("Disable the cron scheduler? Jobs will not run automatically.")
+                      !window.confirm(
+                        "Disable the cron scheduler? Jobs will not run automatically.",
+                      )
                     ) {
                       return;
                     }
@@ -417,7 +419,9 @@ function renderJob(job: CronJob, props: CronProps) {
       aria-label=${`View run history for ${job.name}`}
       @click=${() => props.onLoadRuns(job.id)}
       @keydown=${(event: KeyboardEvent) => {
-        if (event.target !== event.currentTarget) return;
+        if (event.target !== event.currentTarget) {
+          return;
+        }
         if (event.key === "Enter" || event.key === " ") {
           event.preventDefault();
           props.onLoadRuns(job.id);
