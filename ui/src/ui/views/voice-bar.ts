@@ -46,22 +46,6 @@ function renderCapabilityIndicator(capabilities: VoiceCapabilities | null) {
       label: "macOS TTS",
       available: capabilities.macosSayAvailable,
     },
-    {
-      label: "PersonaPlex S2S",
-      available: capabilities.personaplexAvailable,
-    },
-    {
-      label: "Opus Codec",
-      available: capabilities.personaplexDeps?.opus ?? false,
-    },
-    {
-      label: "Moshi",
-      available: capabilities.personaplexDeps?.moshi ?? false,
-    },
-    {
-      label: "Accelerate",
-      available: capabilities.personaplexDeps?.accelerate ?? false,
-    },
   ];
 
   return html`
@@ -189,9 +173,11 @@ export function renderVoiceBar(props: VoiceBarProps) {
     onRetry,
   } = props;
 
-  const canStart = state.connected && state.enabled && !state.conversationActive;
+  const sparkGate = state.mode !== "spark" || state.sparkVoiceAvailable;
+  const canStart = state.connected && state.enabled && sparkGate && !state.conversationActive;
   const isActive = state.conversationActive;
   const isRecording = isActive && state.phase === "listening";
+  const modeLabel = state.driveOpenClaw ? "Tools" : state.mode === "spark" ? "Spark" : "Fallback";
 
   // Simple toggle: start or stop conversation
   const mainButtonLabel = isActive ? "End Conversation" : "Start Conversation";
@@ -216,7 +202,7 @@ export function renderVoiceBar(props: VoiceBarProps) {
           ${expanded ? icons.chevronDown || "▼" : icons.chevronUp || "▲"}
         </button>
         <span class="voice-bar__title">Voice Conversation</span>
-        <span class="voice-bar__mode">${state.driveOpenClaw ? "Tools" : state.mode === "personaplex" ? "S2S" : state.mode === "spark" ? "Spark" : state.mode}</span>
+        <span class="voice-bar__mode">${modeLabel}</span>
         <button
           class="voice-bar__close"
           type="button"
@@ -287,6 +273,15 @@ export function renderVoiceBar(props: VoiceBarProps) {
         !state.enabled
           ? html`
               <div class="voice-bar__disabled">Voice mode is disabled. Enable it in settings.</div>
+            `
+          : nothing
+      }
+      ${
+        state.mode === "spark" && !state.sparkVoiceAvailable
+          ? html`
+              <div class="voice-bar__disabled">
+                Spark voice unavailable. Mic is disabled until DGX voice recovers.
+              </div>
             `
           : nothing
       }

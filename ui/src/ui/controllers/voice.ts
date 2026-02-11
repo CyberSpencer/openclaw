@@ -7,6 +7,7 @@
  */
 
 import type { GatewayBrowserClient } from "../gateway.ts";
+import { normalizeTextForDisplay, normalizeTextForTts } from "../text-normalization.ts";
 
 // VAD Configuration
 const VAD_SILENCE_THRESHOLD = 15; // Audio level below this = silence (0-255)
@@ -26,7 +27,8 @@ export type VoiceState = {
   client: GatewayBrowserClient | null;
   connected: boolean;
   enabled: boolean;
-  mode: "option2a" | "personaplex" | "hybrid" | "spark";
+  mode: "option2a" | "spark";
+  sparkVoiceAvailable: boolean;
   sessionKey: string | null;
   driveOpenClaw: boolean;
 
@@ -132,6 +134,7 @@ export function createVoiceState(): VoiceState {
     connected: false,
     enabled: false,
     mode: "spark", // Default to Spark STT/TTS (PersonaPlex disabled)
+    sparkVoiceAvailable: false,
     sessionKey: null,
     driveOpenClaw: true,
 
@@ -187,7 +190,8 @@ export async function loadVoiceStatus(state: VoiceState): Promise<void> {
     const result = await state.client.request("voice.status", {});
 
     state.enabled = result.enabled;
-    state.mode = result.mode as VoiceState["mode"];
+    const mode = result.mode;
+    state.mode = mode === "spark" ? "spark" : "option2a";
     state.capabilities = result.capabilities;
     state.error = null;
   } catch (err) {
@@ -636,8 +640,12 @@ export async function processVoiceInput(
       transcription: result.transcription,
     });
 
-    state.transcription = result.transcription ?? null;
-    state.response = result.response ?? null;
+    state.transcription =
+      typeof result.transcription === "string"
+        ? normalizeTextForDisplay(result.transcription)
+        : null;
+    state.response =
+      typeof result.response === "string" ? normalizeTextForDisplay(result.response) : null;
     state.timings = result.timings ?? null;
 
     return result;
@@ -683,7 +691,7 @@ export async function processVoiceInputSpark(
     const sttMs = Date.now() - sttStart;
 
     const text = (sttResult as Record<string, unknown>)?.text ?? "";
-    state.transcription = typeof text === "string" ? text : "";
+    state.transcription = typeof text === "string" ? normalizeTextForDisplay(text) : "";
 
     console.log("[Voice/Spark] STT result:", { text: state.transcription, sttMs });
 
@@ -708,7 +716,8 @@ export async function processVoiceInputSpark(
     const llmMs = Date.now() - llmStart;
 
     const responseTextRaw = (reply as Record<string, unknown>)?.response;
-    const responseText = typeof responseTextRaw === "string" ? responseTextRaw : "";
+    const responseText =
+      typeof responseTextRaw === "string" ? normalizeTextForDisplay(responseTextRaw) : "";
     state.response = responseText;
 
     const baseResult: VoiceProcessResult = {
@@ -749,11 +758,24 @@ export async function processVoiceInputSpark(
     }
 
     // 3) TTS via Spark
+    const ttsInput = normalizeTextForTts(responseText);
+    if (!ttsInput) {
+      state.timings = {
+        sttMs,
+        llmMs,
+        totalMs: Date.now() - startedAt,
+      };
+      return {
+        ...baseResult,
+        timings: state.timings,
+      };
+    }
+
     const ttsStart = Date.now();
     let ttsResult: Record<string, unknown> | null = null;
     try {
       ttsResult = await state.client.request("spark.voice.tts", {
-        text: responseText,
+        text: ttsInput,
         format: "webm",
       });
     } catch (ttsErr) {
@@ -797,7 +819,7 @@ export async function processTextToVoice(
   }
 
   state.error = null;
-  state.transcription = text;
+  state.transcription = normalizeTextForDisplay(text);
   state.response = null;
   state.timings = null;
 
@@ -808,7 +830,8 @@ export async function processTextToVoice(
       driveOpenClaw: state.driveOpenClaw,
     });
 
-    state.response = result.response ?? null;
+    state.response =
+      typeof result.response === "string" ? normalizeTextForDisplay(result.response) : null;
     state.timings = result.timings ?? null;
 
     return result;
@@ -834,7 +857,7 @@ export async function transcribeAudio(
       audio: audioBase64,
     });
 
-    return result.text ?? null;
+    return typeof result.text === "string" ? normalizeTextForDisplay(result.text) : null;
   } catch (err) {
     state.error = String(err);
     return null;
@@ -1036,6 +1059,12 @@ export async function startConversation(
   onProcess: (audioBase64: string) => Promise<VoiceProcessResult | null>,
 ): Promise<void> {
   if (state.conversationActive) {
+    return;
+  }
+  if (state.mode === "spark" && !state.sparkVoiceAvailable) {
+    state.error = "Spark voice is unavailable. Check DGX voice health and try again.";
+    state.phase = "idle";
+    onUpdate();
     return;
   }
 

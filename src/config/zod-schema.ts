@@ -596,7 +596,7 @@ export const OpenClawSchema = z
       .optional(),
     voice: z
       .object({
-        mode: z.enum(["option2a", "personaplex", "hybrid"]).optional(),
+        mode: z.enum(["spark", "option2a", "personaplex", "hybrid"]).optional(),
         enabled: z.boolean().optional(),
         sttProvider: z.enum(["whisper", "openai"]).optional(),
         ttsProvider: z.enum(["elevenlabs", "openai", "edge", "macos"]).optional(),
@@ -629,6 +629,16 @@ export const OpenClawSchema = z
             localModel: z.string().optional(),
             cloudModel: z.string().optional(),
             complexityThreshold: z.number().int().min(0).max(10).optional(),
+          })
+          .strict()
+          .optional(),
+        sparkTts: z
+          .object({
+            voice: z.string().optional(),
+            speaker: z.string().optional(),
+            language: z.string().optional(),
+            instruct: z.string().optional(),
+            format: z.enum(["webm", "wav", "mp3"]).optional(),
           })
           .strict()
           .optional(),

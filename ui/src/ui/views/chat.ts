@@ -1356,7 +1356,7 @@ function renderTerminalCard(props: ChatProps) {
               class="btn agent-terminal__mic ${!props.sparkVoiceAvailable ? "agent-terminal__mic--unavailable" : "agent-terminal__mic--available"} ${props.sparkMicRecording ? "agent-terminal__mic--recording" : ""}"
               ?hidden=${props.ttsSpeaking}
               type="button"
-              ?disabled=${!props.connected}
+              ?disabled=${!props.connected || !props.sparkVoiceAvailable}
               @click=${() => props.onMicClick?.()}
               title=${
                 props.sparkVoiceAvailable

@@ -216,23 +216,6 @@ export function renderSettings(state: AppViewState) {
 
           <div class="list-item">
             <div class="list-main">
-              <div class="list-title">PersonaPlex (S2S)</div>
-              <div class="list-sub">Preload the speech-to-speech server for low-latency voice mode.</div>
-            </div>
-            <div class="list-meta">
-              ${statusPill(state.personaPlexRunning, { on: "Running", off: "Stopped" })}
-              <button
-                class="btn"
-                ?disabled=${!state.connected || state.personaPlexBusy}
-                @click=${() => state.handlePersonaPlexPreload()}
-              >
-                ${state.personaPlexBusy ? "Working..." : state.personaPlexRunning ? "Recheck" : "Preload"}
-              </button>
-            </div>
-          </div>
-
-          <div class="list-item">
-            <div class="list-main">
               <div class="list-title">Voice Bar</div>
               <div class="list-sub">Show the voice conversation widget in the corner.</div>
             </div>

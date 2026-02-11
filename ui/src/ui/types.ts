@@ -807,10 +807,11 @@ export type SparkContainer = {
 export type SparkStatus = {
   enabled: boolean;
   active: boolean;
+  source?: "dgx-stats" | "fallback";
   host: string | null;
   checkedAt: number;
   voiceAvailable?: boolean;
-  overall?: "healthy" | "degraded" | "down";
+  overall?: "healthy" | "degraded" | "down" | "unknown";
   counts?: { healthy: number; degraded: number; down: number; total: number };
   services?: Record<string, unknown>;
   gpu?: SparkGpuStatus | null;

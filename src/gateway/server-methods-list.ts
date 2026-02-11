@@ -94,6 +94,7 @@ const BASE_METHODS = [
   "spark.status",
   "spark.voice.stt",
   "spark.voice.tts",
+  "spark.voice.voices",
 ];
 
 export function listGatewayMethods(): string[] {

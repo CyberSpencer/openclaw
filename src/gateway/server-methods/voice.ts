@@ -29,14 +29,6 @@ import { loadConfig } from "../../config/config.js";
 import { INTERNAL_MESSAGE_CHANNEL } from "../../utils/message-channel.js";
 import { transcribeWithWhisper, resolveWhisperConfig } from "../../voice/local-stt.js";
 import { synthesizeWithLocalTts, resolveLocalTtsConfig } from "../../voice/local-tts.js";
-import {
-  resolvePersonaPlexConfig,
-  selectPersonaPlexEndpoint,
-  startPersonaPlexServer,
-  stopPersonaPlexServer,
-  processWithPersonaPlex,
-  getPersonaPlexStatus,
-} from "../../voice/personaplex.js";
 import { routeVoiceRequest, resolveRouterConfig } from "../../voice/router.js";
 import {
   resolveVoiceConfig,
@@ -48,6 +40,9 @@ import {
 import { ErrorCodes, errorShape } from "../protocol/index.js";
 import { loadSessionEntry } from "../session-utils.js";
 import { formatForLog } from "../ws-log.js";
+
+const PERSONAPLEX_DECOMMISSIONED_REASON =
+  "Local PersonaPlex integration is decommissioned on Mac. Use spark.voice.stt and spark.voice.tts.";
 
 /**
  * Get voice configuration from OpenClaw config.
@@ -755,144 +750,64 @@ export const voiceHandlers: GatewayRequestHandlers = {
   // ============================================
 
   /**
-   * Get PersonaPlex status.
+   * Get PersonaPlex status (decommissioned compatibility stub).
    */
   "voice.personaplex.status": async ({ respond }) => {
-    try {
-      const voiceConfig = getVoiceConfig();
-      const config = resolvePersonaPlexConfig(voiceConfig.personaplex);
-
-      const status = await getPersonaPlexStatus(config);
-
-      respond(true, {
-        enabled: config.enabled,
-        installed: status.installed,
-        running: status.running,
-        device: status.device,
-        hasToken: status.hasToken,
-        port: config.port,
-        idleTimeoutMs: config.idleTimeoutMs,
-      });
-    } catch (err) {
-      respond(false, undefined, errorShape(ErrorCodes.UNAVAILABLE, formatForLog(err)));
-    }
+    respond(true, {
+      enabled: false,
+      running: false,
+      installed: false,
+      hasToken: false,
+      decommissioned: true,
+      reason: PERSONAPLEX_DECOMMISSIONED_REASON,
+      migration: "Use spark.voice.stt and spark.voice.tts",
+    });
   },
 
   /**
-   * Start PersonaPlex server.
+   * Start PersonaPlex server (decommissioned compatibility stub).
    */
   "voice.personaplex.start": async ({ respond }) => {
-    try {
-      const voiceConfig = getVoiceConfig();
-      const config = resolvePersonaPlexConfig(voiceConfig.personaplex);
-
-      if (!config.enabled) {
-        respond(
-          false,
-          undefined,
-          errorShape(ErrorCodes.INVALID_REQUEST, "PersonaPlex is not enabled"),
-        );
-        return;
-      }
-
-      const result = await startPersonaPlexServer(config);
-
-      if (result.success) {
-        respond(true, { ok: true, port: config.port });
-      } else {
-        respond(
-          false,
-          undefined,
-          errorShape(ErrorCodes.UNAVAILABLE, result.error ?? "Failed to start PersonaPlex"),
-        );
-      }
-    } catch (err) {
-      respond(false, undefined, errorShape(ErrorCodes.UNAVAILABLE, formatForLog(err)));
-    }
+    respond(
+      false,
+      {
+        decommissioned: true,
+        reason: PERSONAPLEX_DECOMMISSIONED_REASON,
+        migration: "Use spark.voice.stt and spark.voice.tts",
+      },
+      errorShape(ErrorCodes.UNAVAILABLE, PERSONAPLEX_DECOMMISSIONED_REASON),
+    );
   },
 
   /**
-   * Stop PersonaPlex server.
+   * Stop PersonaPlex server (decommissioned compatibility stub).
    */
   "voice.personaplex.stop": async ({ respond }) => {
-    try {
-      stopPersonaPlexServer();
-      respond(true, { ok: true });
-    } catch (err) {
-      respond(false, undefined, errorShape(ErrorCodes.UNAVAILABLE, formatForLog(err)));
-    }
+    respond(
+      false,
+      {
+        decommissioned: true,
+        reason: PERSONAPLEX_DECOMMISSIONED_REASON,
+        migration: "Use spark.voice.stt and spark.voice.tts",
+      },
+      errorShape(ErrorCodes.UNAVAILABLE, PERSONAPLEX_DECOMMISSIONED_REASON),
+    );
   },
 
   /**
-   * Process audio through PersonaPlex S2S.
-   *
-   * Params:
-   * - audio: Base64-encoded audio data
+   * Process audio through PersonaPlex S2S (decommissioned compatibility stub).
    */
   "voice.personaplex.process": async ({ params, respond }) => {
-    const audioBase64 = typeof params.audio === "string" ? params.audio : "";
-    if (!audioBase64) {
-      respond(
-        false,
-        undefined,
-        errorShape(ErrorCodes.INVALID_REQUEST, "voice.personaplex.process requires audio (base64)"),
-      );
-      return;
-    }
-
-    try {
-      const voiceConfig = getVoiceConfig();
-      const textPrompt = typeof params.textPrompt === "string" ? params.textPrompt.trim() : "";
-      const voicePrompt = typeof params.voicePrompt === "string" ? params.voicePrompt.trim() : "";
-      const seed =
-        typeof params.seed === "number" && Number.isFinite(params.seed)
-          ? Math.trunc(params.seed)
-          : undefined;
-      const cpuOffload = typeof params.cpuOffload === "boolean" ? params.cpuOffload : undefined;
-      const config = resolvePersonaPlexConfig({
-        ...voiceConfig.personaplex,
-        ...(textPrompt ? { textPrompt } : {}),
-        ...(voicePrompt ? { voicePrompt } : {}),
-        ...(seed !== undefined ? { seed } : {}),
-        ...(cpuOffload !== undefined ? { cpuOffload } : {}),
-      });
-
-      if (!config.enabled) {
-        respond(
-          false,
-          undefined,
-          errorShape(ErrorCodes.INVALID_REQUEST, "PersonaPlex is not enabled"),
-        );
-        return;
-      }
-
-      const audioBuffer = Buffer.from(audioBase64, "base64");
-      const selected = await selectPersonaPlexEndpoint(config);
-      if (!selected) {
-        respond(
-          false,
-          undefined,
-          errorShape(ErrorCodes.UNAVAILABLE, "PersonaPlex unavailable (no healthy endpoints)"),
-        );
-        return;
-      }
-      const result = await processWithPersonaPlex(audioBuffer, selected.config, selected.transport);
-
-      if (result.success) {
-        respond(true, {
-          audioBase64: result.audioBuffer?.toString("base64"),
-          audioPath: result.audioPath,
-          latencyMs: result.latencyMs,
-        });
-      } else {
-        respond(
-          false,
-          { latencyMs: result.latencyMs },
-          errorShape(ErrorCodes.UNAVAILABLE, result.error ?? "PersonaPlex processing failed"),
-        );
-      }
-    } catch (err) {
-      respond(false, undefined, errorShape(ErrorCodes.UNAVAILABLE, formatForLog(err)));
-    }
+    const hasAudio = typeof params.audio === "string" && params.audio.length > 0;
+    respond(
+      false,
+      {
+        decommissioned: true,
+        providedAudio: hasAudio,
+        reason: PERSONAPLEX_DECOMMISSIONED_REASON,
+        migration: "Use spark.voice.stt and spark.voice.tts",
+      },
+      errorShape(ErrorCodes.UNAVAILABLE, PERSONAPLEX_DECOMMISSIONED_REASON),
+    );
   },
 };

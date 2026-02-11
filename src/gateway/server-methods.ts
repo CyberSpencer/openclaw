@@ -84,6 +84,7 @@ const READ_METHODS = new Set([
   "chat.history",
   "router.status",
   "spark.status",
+  "spark.voice.voices",
 ]);
 const WRITE_METHODS = new Set([
   "send",

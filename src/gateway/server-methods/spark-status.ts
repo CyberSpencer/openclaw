@@ -9,6 +9,7 @@ const DEFAULT_DGX_STATS_PORT = 9090;
 const DEFAULT_VOICE_HEALTH_PORT = 9000;
 const DEFAULT_STT_PORT = 9001;
 const DEFAULT_TTS_PORT = 9002;
+const DGX_STATS_TIMEOUT_MS = 5000;
 
 const CACHE_TTL_MS = 5000;
 let lastCachedAt = 0;
@@ -320,7 +321,7 @@ interface DgxStatsResponse {
 
 async function fetchDgxStats(host: string, port: number): Promise<DgxStatsResponse | null> {
   const url = `http://${host}:${port}/api/dgx-stats`;
-  const timeoutMs = 2000;
+  const timeoutMs = DGX_STATS_TIMEOUT_MS;
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), timeoutMs);
   try {
@@ -342,6 +343,23 @@ async function fetchDgxStats(host: string, port: number): Promise<DgxStatsRespon
   } finally {
     clearTimeout(timer);
   }
+}
+
+type SparkOverall = "healthy" | "degraded" | "down" | "unknown";
+
+function deriveOverallFromFallback(probes: Array<{ healthy: boolean } | null>): SparkOverall {
+  const filtered = probes.filter((probe): probe is { healthy: boolean } => probe !== null);
+  if (filtered.length === 0) {
+    return "unknown";
+  }
+  const healthyCount = filtered.filter((probe) => probe.healthy).length;
+  if (healthyCount === 0) {
+    return "down";
+  }
+  if (healthyCount === filtered.length) {
+    return "healthy";
+  }
+  return "degraded";
 }
 
 /** Map DGX Stats services to the legacy per-service shape used by the UI. */
@@ -384,7 +402,15 @@ export const sparkStatusHandlers: GatewayRequestHandlers = {
       const checkedAt = Date.now();
 
       if (!enabled) {
-        const payload = { enabled: false, active: false, host: host ?? null, checkedAt };
+        const payload = {
+          enabled: false,
+          active: false,
+          host: host ?? null,
+          checkedAt,
+          source: "fallback" as const,
+          voiceAvailable: false,
+          overall: "unknown" as SparkOverall,
+        };
         lastCachedAt = now;
         lastCachedResult = payload;
         respond(true, payload, undefined);
@@ -401,6 +427,7 @@ export const sparkStatusHandlers: GatewayRequestHandlers = {
             active: stats.overall !== "down",
             host,
             checkedAt,
+            source: "dgx-stats" as const,
             voiceAvailable: stats.voice?.available ?? false,
             overall: stats.overall,
             counts: stats.counts ?? null,
@@ -450,28 +477,37 @@ export const sparkStatusHandlers: GatewayRequestHandlers = {
         services.qdrant = { url: `${normalizeBaseUrl(qdrantUrl)}/collections`, ...qdrantProbe };
       }
       if (voiceHealthUrl && voiceHealthProbe) {
-        services.voice = { url: voiceHealthUrl, ...voiceHealthProbe };
+        services.voice_health = { url: voiceHealthUrl, ...voiceHealthProbe };
       }
       if (sttHealthUrl && sttProbe) {
-        services.stt = { url: sttHealthUrl, ...sttProbe };
+        services.voice_stt = { url: sttHealthUrl, ...sttProbe };
       }
       if (ttsHealthUrl && ttsProbe) {
-        services.tts = { url: ttsHealthUrl, ...ttsProbe };
+        services.voice_tts = { url: ttsHealthUrl, ...ttsProbe };
       }
 
-      const computeHealthy = Boolean(routerProbe?.healthy || ollamaProbe?.healthy);
-      const active = computeHealthy;
       const voiceAvailable = Boolean(
         (voiceHealthProbe?.healthy && voiceHealthProbe?.stt && voiceHealthProbe?.tts) ||
         (sttProbe?.healthy && ttsProbe?.healthy),
       );
+      const overall = deriveOverallFromFallback([
+        routerProbe,
+        ollamaProbe,
+        qdrantProbe,
+        voiceHealthProbe,
+        sttProbe,
+        ttsProbe,
+      ]);
+      const active = overall === "healthy" || overall === "degraded";
 
       const payload = {
         enabled: true,
         active,
         host: host ?? null,
         checkedAt,
+        source: "fallback" as const,
         voiceAvailable,
+        overall,
         services,
       };
 

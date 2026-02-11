@@ -1,11 +1,9 @@
 /**
  * Voice mode orchestrator.
  *
- * Primary mode: PersonaPlex S2S (native speech-to-speech)
- * Fallback mode: STT → LLM → TTS pipeline
- *
- * PersonaPlex is used as the primary path when available.
- * The traditional pipeline is only used when PersonaPlex is unavailable or fails.
+ * Spark voice runtime path:
+ * STT → Route → LLM → TTS.
+ * Legacy voice mode values are accepted but mapped to Spark behavior.
  */
 
 import net from "node:net";
@@ -28,29 +26,17 @@ import {
   isSagAvailable,
   type LocalTtsResult,
 } from "./local-tts.js";
-import {
-  checkPersonaPlexDependencies,
-  getPersonaPlexStatus,
-  resolvePersonaPlexConfig,
-  processWithPersonaPlex,
-  selectPersonaPlexEndpoint,
-} from "./personaplex.js";
-import {
-  analyzeComplexity,
-  detectSensitiveData,
-  resolveRouterConfig,
-  routeVoiceRequest,
-  type RouterDecision,
-} from "./router.js";
+import { resolveRouterConfig, routeVoiceRequest, type RouterDecision } from "./router.js";
 
-const DEFAULT_MODE: VoiceMode = "personaplex"; // PersonaPlex as default
+const DEFAULT_MODE: VoiceMode = "spark";
 const DEFAULT_BUFFER_MS = 100;
 const DEFAULT_MAX_RECORDING_SECONDS = 60;
 const DEFAULT_VAD_SENSITIVITY = 0.5;
 const DEFAULT_NETCHECK_TTL_SECONDS = 30;
 const DEFAULT_NETCHECK_TIMEOUT_SECONDS = 0.5;
 const DEFAULT_NETCHECK_HOSTS = "1.1.1.1:53,8.8.8.8:53";
-const HANDOFF_TOKEN_RE = /\[\[\s*handoff_to_cloud\s*\]\]/i;
+const LEGACY_VOICE_MODES = new Set<VoiceMode>(["personaplex", "hybrid"]);
+const loggedLegacyModes = new Set<VoiceMode>();
 
 type HostCheck = { host: string; port: number };
 let lastNetCheckAt = 0;
@@ -148,11 +134,18 @@ function pickTextForRouting(input?: string | null): string {
   return input.replace(/\s+/g, " ").trim();
 }
 
-function hasHandoffToken(text?: string | null): boolean {
-  if (!text) {
-    return false;
+function normalizeVoiceMode(mode?: VoiceMode): VoiceMode {
+  const resolved = mode ?? DEFAULT_MODE;
+  if (!LEGACY_VOICE_MODES.has(resolved)) {
+    return resolved;
   }
-  return HANDOFF_TOKEN_RE.test(text);
+  if (!loggedLegacyModes.has(resolved)) {
+    loggedLegacyModes.add(resolved);
+    console.warn(
+      `[voice] mode=${resolved} is legacy and mapped to spark runtime; update config voice.mode="spark"`,
+    );
+  }
+  return "spark";
 }
 
 export type VoiceCapabilities = {
@@ -173,15 +166,16 @@ export type VoiceCapabilities = {
 
 /**
  * Resolve voice configuration with defaults.
- * PersonaPlex S2S is the default mode - STT/TTS are only fallbacks.
+ * Spark is the default mode. Legacy mode values are mapped to Spark runtime behavior.
  */
 export function resolveVoiceConfig(config?: VoiceConfig): ResolvedVoiceConfig {
-  const resolvedPersonaPlex = resolvePersonaPlexConfig(config?.personaplex);
+  const mode = normalizeVoiceMode(config?.mode);
+  const sparkTts = config?.sparkTts ?? {};
   return {
-    mode: config?.mode ?? DEFAULT_MODE, // "personaplex" is default
+    mode,
     enabled: config?.enabled ?? false,
-    sttProvider: config?.sttProvider ?? "whisper", // Fallback STT
-    ttsProvider: config?.ttsProvider ?? "macos", // Fallback TTS (macos say is reliable)
+    sttProvider: config?.sttProvider ?? "whisper",
+    ttsProvider: config?.ttsProvider ?? "macos",
     streaming: config?.streaming ?? false,
     bufferMs: config?.bufferMs ?? DEFAULT_BUFFER_MS,
     maxRecordingSeconds: config?.maxRecordingSeconds ?? DEFAULT_MAX_RECORDING_SECONDS,
@@ -189,10 +183,38 @@ export function resolveVoiceConfig(config?: VoiceConfig): ResolvedVoiceConfig {
     whisper: resolveWhisperConfig(config?.whisper),
     localTts: resolveLocalTtsConfig(config?.localTts),
     router: resolveRouterConfig(config?.router),
+    sparkTts: {
+      voice: sparkTts.voice ?? "",
+      speaker: sparkTts.speaker ?? "",
+      language: sparkTts.language ?? "",
+      instruct: sparkTts.instruct ?? "",
+      format: sparkTts.format ?? "webm",
+    },
+    // Keep this shape for compatibility, but local PersonaPlex runtime is decommissioned.
     personaplex: {
-      ...resolvedPersonaPlex,
-      enabled: config?.personaplex?.enabled ?? true, // Enabled by default
-      autoStart: config?.personaplex?.autoStart ?? true, // Auto-start by default
+      enabled: false,
+      installPath: config?.personaplex?.installPath ?? "",
+      host: config?.personaplex?.host ?? "127.0.0.1",
+      port: config?.personaplex?.port ?? 8998,
+      wsPort: config?.personaplex?.wsPort ?? 8999,
+      wsPath: config?.personaplex?.wsPath ?? "/api/chat",
+      useSsl: config?.personaplex?.useSsl ?? false,
+      transport: config?.personaplex?.transport ?? "server",
+      endpoints: config?.personaplex?.endpoints ?? [],
+      useLocalAssets: config?.personaplex?.useLocalAssets ?? false,
+      hfToken: config?.personaplex?.hfToken ?? "",
+      useGpu: config?.personaplex?.useGpu ?? false,
+      device: config?.personaplex?.device ?? "",
+      dtype: config?.personaplex?.dtype ?? "fp16",
+      context: config?.personaplex?.context ?? 0,
+      cpuOffload: config?.personaplex?.cpuOffload ?? false,
+      singleMimi: config?.personaplex?.singleMimi ?? false,
+      timeoutMs: config?.personaplex?.timeoutMs ?? 30_000,
+      idleTimeoutMs: config?.personaplex?.idleTimeoutMs ?? 0,
+      autoStart: false,
+      voicePrompt: config?.personaplex?.voicePrompt ?? "",
+      textPrompt: config?.personaplex?.textPrompt ?? "",
+      seed: config?.personaplex?.seed ?? 0,
     },
   };
 }
@@ -203,39 +225,15 @@ export function resolveVoiceConfig(config?: VoiceConfig): ResolvedVoiceConfig {
 export async function checkVoiceCapabilities(
   config: ResolvedVoiceConfig,
 ): Promise<VoiceCapabilities> {
-  const [
-    whisperAvailable,
-    ffmpegAvailable,
-    sagStatus,
-    personaplexDeps,
-    personaplexStatus,
-    personaplexSelection,
-  ] = await Promise.all([
+  const [whisperAvailable, ffmpegAvailable, sagStatus] = await Promise.all([
     isWhisperAvailable(config.whisper),
     isFfmpegAvailable(),
     isSagAvailable(),
-    checkPersonaPlexDependencies(config.personaplex),
-    getPersonaPlexStatus(config.personaplex),
-    selectPersonaPlexEndpoint(config.personaplex),
   ]);
 
   // Check for macOS say
   const { isMacosSayAvailable } = await import("./local-tts.js");
   const macosSayAvailable = isMacosSayAvailable();
-
-  const usingServer = personaplexSelection?.transport === "server";
-  const personaplexInstalled = usingServer ? true : personaplexStatus.installed;
-  const personaplexRunning = usingServer ? true : personaplexStatus.running;
-  const depsOk = usingServer
-    ? true
-    : personaplexDeps.opus &&
-      personaplexDeps.moshi &&
-      (!config.personaplex.cpuOffload || personaplexDeps.accelerate);
-  const personaplexAvailable = config.personaplex.enabled
-    ? usingServer
-      ? true
-      : personaplexInstalled && depsOk && personaplexStatus.hasToken
-    : false;
 
   return {
     whisperAvailable,
@@ -243,10 +241,14 @@ export async function checkVoiceCapabilities(
     sagAvailable: sagStatus.available,
     sagAuthenticated: sagStatus.authenticated,
     macosSayAvailable,
-    personaplexAvailable,
-    personaplexInstalled,
-    personaplexRunning,
-    personaplexDeps,
+    personaplexAvailable: false,
+    personaplexInstalled: false,
+    personaplexRunning: false,
+    personaplexDeps: {
+      opus: false,
+      moshi: false,
+      accelerate: false,
+    },
   };
 }
 
@@ -474,14 +476,11 @@ async function runFallbackPipeline(params: {
 }
 
 /**
- * Process voice input through PersonaPlex S2S (primary) or fallback pipeline.
+ * Process voice input through Spark-compatible fallback pipeline.
  *
- * Primary path: PersonaPlex S2S (audio in → audio out, native)
- * Fallback path: STT → LLM → TTS (only when PersonaPlex unavailable)
- *
- * @param audioBuffer - Raw audio data (WAV or webm format - auto-converted)
+ * @param audioBuffer - Raw audio data
  * @param config - Voice configuration
- * @param llmInvoke - Function to invoke the LLM (only used in fallback mode)
+ * @param llmInvoke - Function to invoke the LLM
  * @returns Processing result
  */
 export async function processVoiceInput(
@@ -491,83 +490,13 @@ export async function processVoiceInput(
 ): Promise<VoiceProcessResult> {
   const sessionId = generateSessionId();
   const startTime = Date.now();
-
-  // PRIMARY PATH: Try PersonaPlex S2S first (native speech-to-speech)
-  if (config.mode === "personaplex" || config.mode === "hybrid") {
-    const personaplexConfig = resolvePersonaPlexConfig(config.personaplex);
-
-    if (personaplexConfig.enabled) {
-      const selected = await selectPersonaPlexEndpoint(personaplexConfig);
-      if (!selected) {
-        // PersonaPlex not available, fall through to fallback pipeline
-        console.warn("PersonaPlex unavailable, falling back to STT+LLM+TTS");
-      } else {
-        const s2sStart = Date.now();
-        const s2sResult = await processWithPersonaPlex(
-          audioBuffer,
-          selected.config,
-          selected.transport,
-        );
-        const s2sMs = Date.now() - s2sStart;
-
-        if (s2sResult.success && s2sResult.audioBuffer) {
-          const transcript = pickTextForRouting(s2sResult.transcription);
-          const responseText = pickTextForRouting(s2sResult.response);
-          const handoffToken =
-            hasHandoffToken(s2sResult.response) || hasHandoffToken(s2sResult.transcription);
-          const routingText = transcript || responseText;
-
-          if (routingText) {
-            const sensitive = detectSensitiveData(routingText);
-            const offline = await isOffline();
-            const complexity = analyzeComplexity(routingText);
-            const complex = complexity.score >= config.router.complexityThreshold;
-
-            if (!offline && !sensitive.detected && (handoffToken || complex)) {
-              const thinking = complex ? "xhigh" : "medium";
-              const reason = complex ? "personaplex_complexity" : "personaplex_handoff";
-              return await runFallbackPipeline({
-                audioBuffer,
-                config,
-                llmInvoke,
-                sessionId,
-                startTime,
-                overrides: {
-                  model: config.router.cloudModel,
-                  thinking,
-                  reason,
-                  complexityScore: complexity.score,
-                  sensitiveDetected: sensitive.detected,
-                },
-              });
-            }
-          }
-
-          // PersonaPlex succeeded - return native S2S result
-          return {
-            success: true,
-            sessionId,
-            transcription: s2sResult.transcription,
-            response: s2sResult.response,
-            audioPath: s2sResult.audioPath,
-            audioBuffer: s2sResult.audioBuffer,
-            timings: {
-              totalMs: s2sMs,
-              // S2S doesn't have separate STT/LLM/TTS timings
-            },
-          };
-        }
-
-        // PersonaPlex failed - log and fall through to fallback
-        console.warn(`PersonaPlex S2S failed: ${s2sResult.error}, falling back to STT+LLM+TTS`);
-      }
-    }
-  }
-
-  // FALLBACK PATH: STT → LLM → TTS (when PersonaPlex unavailable or failed)
+  const resolvedConfig = {
+    ...config,
+    mode: normalizeVoiceMode(config.mode),
+  };
   return runFallbackPipeline({
     audioBuffer,
-    config,
+    config: resolvedConfig,
     llmInvoke,
     sessionId,
     startTime,

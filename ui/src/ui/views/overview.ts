@@ -40,7 +40,6 @@ export type OverviewProps = {
   systemStatusError: string | null;
   routerStatus: import("../types.js").RouterStatus | null;
   sparkStatus: import("../types.js").SparkStatus | null;
-  personaplexStatus: import("../types.js").PersonaPlexStatus | null;
   onSettingsChange: (next: UiSettings) => void;
   onPasswordChange: (next: string) => void;
   onSessionKeyChange: (next: string) => void;
@@ -168,8 +167,6 @@ export function renderOverview(props: OverviewProps) {
   const sparkEnabled = typeof spark?.enabled === "boolean" ? spark.enabled : null;
   const sparkActive = Boolean(spark?.enabled && spark?.active);
   const sparkCheckedAt = typeof spark?.checkedAt === "number" ? spark.checkedAt : null;
-
-  const personaplex = props.personaplexStatus;
 
   return html`
     <section class="grid grid-cols-2">
@@ -429,34 +426,6 @@ export function renderOverview(props: OverviewProps) {
         }
       </div>
 
-      <div class="card">
-        <div class="card-title">PersonaPlex</div>
-        <div class="card-sub">Speech-to-speech service status.</div>
-        <div class="pill" style="margin-top: 14px; width: fit-content;">
-          <span
-            class="statusDot ${personaplex?.running ? "ok" : ""}"
-            style=${!props.connected || !personaplex?.enabled ? "background: var(--border-strong); box-shadow: none;" : ""}
-          ></span>
-          <span>Status</span>
-          <span class="mono">
-            ${
-              !props.connected
-                ? "n/a"
-                : personaplex?.enabled
-                  ? personaplex.running
-                    ? "Running"
-                    : "Down"
-                  : "Disabled"
-            }
-          </span>
-        </div>
-        <div class="muted" style="margin-top: 10px;">
-          Port: <span class="mono">${personaplex?.port ?? "n/a"}</span>
-        </div>
-        <div class="muted" style="margin-top: 6px;">
-          Token: ${personaplex ? (personaplex.hasToken ? "Present" : "Missing") : "n/a"}
-        </div>
-      </div>
     </section>
 
     <section class="card" style="margin-top: 18px;">

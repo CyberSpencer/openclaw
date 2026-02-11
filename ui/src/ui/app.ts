@@ -103,6 +103,7 @@ import {
   type OrchestrationLaneId,
 } from "./orchestrator-store.ts";
 import { loadSettings, type UiSettings } from "./storage.ts";
+import { normalizeTextForTts } from "./text-normalization.ts";
 import {
   type ChatAttachment,
   type ChatQueueItem,
@@ -119,21 +120,6 @@ declare global {
 
 /** Max chars per TTS chunk to stay under DGX timeout (~60s). ~250 chars ~= 12-15s under load. */
 const MAX_TTS_CHARS = 250;
-
-/** Strip markdown syntax so TTS reads clean prose. */
-function stripMarkdownForTts(text: string): string {
-  return text
-    .replace(/\*\*([^*]+)\*\*/g, "$1")
-    .replace(/\*([^*]+)\*/g, "$1")
-    .replace(/__([^_]+)__/g, "$1")
-    .replace(/_([^_]+)_/g, "$1")
-    .replace(/`([^`]+)`/g, "$1")
-    .replace(/\[([^\]]+)\]\([^)]+\)/g, "$1")
-    .replace(/^#{1,6}\s+/gm, "")
-    .replace(/^[-*+]\s+/gm, "")
-    .replace(/^\d+\.\s+/gm, "")
-    .trim();
-}
 
 /**
  * Chunk text for TTS to avoid DGX timeouts. Long text (~1270 chars) takes 60–78s;
@@ -192,10 +178,11 @@ function resolveOnboardingMode(): boolean {
 type SparkStatusResult = {
   enabled?: boolean;
   active?: boolean;
+  source?: "dgx-stats" | "fallback";
   host?: string | null;
   checkedAt?: number;
   voiceAvailable?: boolean;
-  overall?: "healthy" | "degraded" | "down";
+  overall?: "healthy" | "degraded" | "down" | "unknown";
   counts?: { healthy: number; degraded: number; down: number; total: number };
   services?: Record<
     string,
@@ -643,8 +630,6 @@ export class OpenClawApp extends LitElement {
   @state() memorySearchEnabled: boolean | null = null;
   @state() memorySearchBusy = false;
   @state() memoryStoreLabel: string | null = null;
-  @state() personaPlexRunning: boolean | null = null;
-  @state() personaPlexBusy = false;
   @state() nvidiaRouterEnabled: boolean | null = null;
   @state() nvidiaRouterHealthy: boolean | null = null;
   @state() nvidiaRouterBusy = false;
@@ -666,6 +651,7 @@ export class OpenClawApp extends LitElement {
   private ttsPlaybackWorklet: AudioWorkletNode | null = null;
   private sparkMicChunks: Blob[] = [];
   private sparkMicRecordingTimer: ReturnType<typeof setTimeout> | null = null;
+  private sparkStatusPollInterval: number | null = null;
 
   @state() logsLoading = false;
   @state() logsError: string | null = null;
@@ -721,12 +707,22 @@ export class OpenClawApp extends LitElement {
   disconnectedCallback() {
     handleDisconnected(this as unknown as Parameters<typeof handleDisconnected>[0]);
     window.removeEventListener("keydown", this.globalKeydownHandler);
+    this.stopSparkStatusPolling();
     this.stopSubagentMonitorPolling();
     super.disconnectedCallback();
   }
 
   protected updated(changed: Map<PropertyKey, unknown>) {
     handleUpdated(this as unknown as Parameters<typeof handleUpdated>[0], changed);
+    if (changed.has("connected")) {
+      if (this.connected) {
+        this.startSparkStatusPolling();
+        void this.refreshSparkStatus();
+      } else {
+        this.stopSparkStatusPolling();
+        this.voiceState.sparkVoiceAvailable = false;
+      }
+    }
     this.handleSubagentMonitorUpdated(changed);
   }
 
@@ -748,6 +744,30 @@ export class OpenClawApp extends LitElement {
     window.clearInterval(this.subagentMonitorPollTimer);
     this.subagentMonitorPollTimer = null;
     this.subagentMonitorPollMs = null;
+  }
+
+  private startSparkStatusPolling(intervalMs = 10_000) {
+    if (this.sparkStatusPollInterval != null) {
+      return;
+    }
+    this.sparkStatusPollInterval = window.setInterval(() => {
+      if (!this.connected) {
+        return;
+      }
+      void this.refreshSparkStatus();
+    }, intervalMs);
+  }
+
+  private stopSparkStatusPolling() {
+    if (this.sparkStatusPollInterval == null) {
+      return;
+    }
+    window.clearInterval(this.sparkStatusPollInterval);
+    this.sparkStatusPollInterval = null;
+  }
+
+  private isSparkVoiceAvailable(): boolean {
+    return Boolean(this.connected && this.sparkStatus?.enabled && this.sparkStatus?.voiceAvailable);
   }
 
   private handleSubagentMonitorUpdated(changed: Map<PropertyKey, unknown>) {
@@ -2157,15 +2177,16 @@ export class OpenClawApp extends LitElement {
     this.voiceState.client = this.client;
     this.voiceState.connected = this.connected;
     await loadVoiceStatus(this.voiceState);
+    this.voiceState.sparkVoiceAvailable = this.isSparkVoiceAvailable();
     this.requestUpdate();
   }
 
   toggleVoiceBar() {
     this.voiceBarVisible = !this.voiceBarVisible;
     if (this.voiceBarVisible) {
-      // In spark mode, enable directly without PersonaPlex capability check
       this.voiceState.client = this.client;
       this.voiceState.connected = this.connected;
+      this.voiceState.sparkVoiceAvailable = this.isSparkVoiceAvailable();
       if (this.voiceState.mode === "spark") {
         this.voiceState.enabled = true;
       } else if (!this.voiceState.capabilities) {
@@ -2183,7 +2204,13 @@ export class OpenClawApp extends LitElement {
    * Mic goes live, VAD detects speech end, processes, responds, loops.
    */
   handleVoiceStartConversation() {
+    if (this.voiceState.mode === "spark" && !this.isSparkVoiceAvailable()) {
+      this.voiceState.error = "Spark voice unavailable. Conversation start is blocked.";
+      this.requestUpdate();
+      return;
+    }
     this.voiceState.sessionKey = this.sessionKey;
+    this.voiceState.sparkVoiceAvailable = this.isSparkVoiceAvailable();
     const processFn = this.voiceState.mode === "spark" ? processVoiceInputSpark : processVoiceInput;
     void startConversation(
       this.voiceState,
@@ -2373,52 +2400,6 @@ export class OpenClawApp extends LitElement {
     }
   }
 
-  async refreshPersonaPlexStatus() {
-    if (!this.client || !this.connected) {
-      return;
-    }
-    try {
-      const status = await this.client.request("voice.personaplex.status", {});
-      this.personaPlexRunning = Boolean(status.running);
-    } catch {
-      this.personaPlexRunning = null;
-    }
-  }
-
-  async handlePersonaPlexPreload() {
-    if (!this.client || !this.connected || this.personaPlexBusy) {
-      return;
-    }
-    this.personaPlexBusy = true;
-    this.lastError = null;
-    try {
-      let status = await this.client.request("voice.personaplex.status", {});
-
-      if (!status.running) {
-        await this.client.request("voice.personaplex.start", {});
-        for (let attempt = 0; attempt < 10; attempt += 1) {
-          await new Promise<void>((resolve) => {
-            window.setTimeout(() => resolve(), 500);
-          });
-          status = await this.client.request("voice.personaplex.status", {});
-          if (status.running) {
-            break;
-          }
-        }
-      }
-
-      this.personaPlexRunning = Boolean(status.running);
-      if (!status.running) {
-        this.lastError = "PersonaPlex preload did not report running yet.";
-      }
-      await this.loadVoiceStatus();
-    } catch (err) {
-      this.lastError = String(err);
-    } finally {
-      this.personaPlexBusy = false;
-    }
-  }
-
   async refreshNvidiaRouterStatus() {
     if (!this.client || !this.connected) {
       return;
@@ -2470,6 +2451,20 @@ export class OpenClawApp extends LitElement {
     } finally {
       this.sparkBusy = false;
     }
+
+    const available = this.isSparkVoiceAvailable();
+    const wasAvailable = this.voiceState.sparkVoiceAvailable;
+    this.voiceState.sparkVoiceAvailable = available;
+    if (
+      this.voiceState.mode === "spark" &&
+      wasAvailable &&
+      !available &&
+      this.voiceState.conversationActive
+    ) {
+      stopConversation(this.voiceState);
+      this.voiceState.error = "Spark voice became unavailable. Conversation stopped.";
+      this.requestUpdate();
+    }
   }
 
   // ---------------------------------------------------------------------------
@@ -2477,6 +2472,10 @@ export class OpenClawApp extends LitElement {
   // ---------------------------------------------------------------------------
 
   async handleSparkMicClick() {
+    if (!this.isSparkVoiceAvailable()) {
+      this.lastError = "Spark voice unavailable. Mic is disabled until DGX voice recovers.";
+      return;
+    }
     if (this.sparkMicRecording) {
       this.stopSparkMicRecording();
     } else {
@@ -2612,6 +2611,12 @@ export class OpenClawApp extends LitElement {
   }
 
   private async startSparkMicRecording() {
+    if (!this.isSparkVoiceAvailable()) {
+      this.lastError = "Spark voice unavailable. Recording blocked.";
+      this.sparkMicRecording = false;
+      this.requestUpdate();
+      return;
+    }
     try {
       // Worklet-based capture (ported from AII-Chatbot). This avoids MediaRecorder/WebM
       // variability and gives us deterministic PCM16 frames.
@@ -2630,10 +2635,10 @@ export class OpenClawApp extends LitElement {
         }
 
         // Cache-bust worklet loads (browsers cache worklets aggressively)
+        const base = (this.basePath ?? "").replace(/\/$/, "") || "";
+        const workletPath = `${base}/worklets/capture-processor.js`;
         const WORKLET_VERSION = "20260210-v1";
-        await audioContext.audioWorklet.addModule(
-          `/worklets/capture-processor.js?v=${WORKLET_VERSION}`,
-        );
+        await audioContext.audioWorklet.addModule(`${workletPath}?v=${WORKLET_VERSION}`);
 
         const source = audioContext.createMediaStreamSource(stream);
         const captureWorklet = new AudioWorkletNode(audioContext, "capture-processor", {
@@ -2844,7 +2849,7 @@ export class OpenClawApp extends LitElement {
       return;
     }
     this.lastError = null;
-    const trimmed = stripMarkdownForTts(text.trim());
+    const trimmed = normalizeTextForTts(text.trim());
     const chunks = chunkTextForTts(trimmed);
     if (chunks.length === 0) {
       return;
@@ -3053,7 +3058,6 @@ export class OpenClawApp extends LitElement {
     }
     await Promise.all([
       this.refreshMemoryToggleState(),
-      this.refreshPersonaPlexStatus(),
       this.refreshNvidiaRouterStatus(),
       this.refreshSparkStatus(),
     ]);

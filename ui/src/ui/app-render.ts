@@ -279,16 +279,6 @@ export function renderApp(state: AppViewState) {
             <span class="mono">${sparkLabel}</span>
           </button>
           <button
-            class="pill topbar-action-btn topbar-action-btn--status ${state.personaPlexRunning ? "topbar-action-btn--ready" : "topbar-action-btn--off"}"
-            ?disabled=${!state.connected || state.personaPlexBusy}
-            @click=${() => state.handlePersonaPlexPreload()}
-            title="${state.personaPlexRunning ? "PersonaPlex is running" : "Preload PersonaPlex"}"
-            aria-label="${state.personaPlexRunning ? "PersonaPlex is running" : "Preload PersonaPlex"}"
-          >
-            <span class="statusDot ${state.personaPlexRunning ? "ok" : ""}"></span>
-            <span>S2S</span>
-          </button>
-          <button
             class="voice-toggle-btn ${state.voiceBarVisible ? "voice-toggle-btn--active" : ""}"
             @click=${() => state.toggleVoiceBar()}
             title="${state.voiceBarVisible ? "Hide voice mode" : "Show voice mode"}"
@@ -417,7 +407,6 @@ export function renderApp(state: AppViewState) {
                 systemStatusError: state.systemStatusError,
                 routerStatus: state.routerStatus,
                 sparkStatus: state.sparkStatus,
-                personaplexStatus: state.personaplexStatus,
                 onSettingsChange: (next) => state.applySettings(next),
                 onPasswordChange: (next) => (state.password = next),
                 onSessionKeyChange: (next) => {
@@ -1360,10 +1349,8 @@ export function renderApp(state: AppViewState) {
                   onSplitRatioChange: (ratio: number) => state.handleSplitRatioChange(ratio),
                   assistantName: state.assistantName,
                   assistantAvatar: state.assistantAvatar,
-                  // Spark voice mic + per-message speaker (from spark.status: voiceAvailable or active)
                   sparkVoiceAvailable: Boolean(
-                    state.sparkStatus?.enabled &&
-                    (state.sparkStatus?.voiceAvailable ?? state.sparkStatus?.active),
+                    state.sparkStatus?.enabled && state.sparkStatus?.voiceAvailable === true,
                   ),
                   sparkMicRecording: state.sparkMicRecording ?? false,
                   onMicClick: () => state.handleSparkMicClick?.(),
