@@ -4,6 +4,10 @@
  * NVIDIA PersonaPlex-7B-v1 provides end-to-end speech processing
  * without intermediate text conversion.
  *
+ * Workspace note (2026-02-11): macOS local PersonaPlex is currently treated as
+ * a legacy path, since active STT/TTS runs on a separate Spark device.
+ * Keep this code intact for compatibility and future reactivation.
+ *
  * This module is EXPERIMENTAL and requires:
  * - GPU with MPS support (Apple Silicon) or CUDA
  * - ~16GB memory

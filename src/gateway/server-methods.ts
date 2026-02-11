@@ -20,6 +20,7 @@ import { sendHandlers } from "./server-methods/send.js";
 import { sessionsHandlers } from "./server-methods/sessions.js";
 import { skillsHandlers } from "./server-methods/skills.js";
 import { sparkStatusHandlers } from "./server-methods/spark-status.js";
+import { sparkVoiceHandlers } from "./server-methods/spark-voice.js";
 import { systemHandlers } from "./server-methods/system.js";
 import { talkHandlers } from "./server-methods/talk.js";
 import { ttsHandlers } from "./server-methods/tts.js";
@@ -74,6 +75,7 @@ const READ_METHODS = new Set([
   "orchestrator.get",
   "router.status",
   "spark.status",
+  "spark.voice.voices",
   "cron.list",
   "cron.status",
   "cron.runs",
@@ -105,6 +107,8 @@ const WRITE_METHODS = new Set([
   "orchestrator.set",
   "orchestrator.reset",
   "router.setEnabled",
+  "spark.voice.stt",
+  "spark.voice.tts",
 ]);
 
 function authorizeGatewayMethod(method: string, client: GatewayRequestOptions["client"]) {
@@ -198,6 +202,7 @@ export const coreGatewayHandlers: GatewayRequestHandlers = {
   ...ttsHandlers,
   ...skillsHandlers,
   ...sparkStatusHandlers,
+  ...sparkVoiceHandlers,
   ...sessionsHandlers,
   ...orchestratorHandlers,
   ...routerStatusHandlers,

@@ -1,7 +1,17 @@
-import { existsSync, readFileSync } from "node:fs";
-import path from "node:path";
 import type { GatewayRequestHandlers } from "./types.js";
 import { ErrorCodes, errorShape } from "../protocol/index.js";
+import {
+  appendUrlPath,
+  mergeDgxRequestHeaders,
+  normalizeBaseUrl,
+  parseStringLike,
+  resolveDgxAccess,
+  resolveDgxEnabled,
+  resolveDgxHost,
+  resolveEffectiveEnv,
+  resolveWanServiceBaseUrl,
+  type DgxAccessContext,
+} from "./dgx-access.js";
 
 const DEFAULT_OLLAMA_PORT = 11434;
 const DEFAULT_QDRANT_PORT = 6333;
@@ -15,85 +25,21 @@ const CACHE_TTL_MS = 5000;
 let lastCachedAt = 0;
 let lastCachedResult: Record<string, unknown> | null = null;
 
-function parseBooleanLike(raw: string | undefined): boolean | undefined {
-  if (!raw) {
-    return undefined;
-  }
-  const normalized = raw
-    .trim()
-    .replace(/^['"]|['"]$/g, "")
-    .toLowerCase();
-  if (["1", "true", "yes", "on"].includes(normalized)) {
-    return true;
-  }
-  if (["0", "false", "no", "off"].includes(normalized)) {
-    return false;
-  }
-  return undefined;
-}
-
-function parseStringLike(raw: string | undefined): string | undefined {
-  if (!raw) {
-    return undefined;
-  }
-  const trimmed = raw.trim();
-  const unquoted = trimmed.replace(/^['"]|['"]$/g, "");
-  return unquoted.trim() || undefined;
-}
-
-function resolveContractPath(): string | null {
-  const explicit = process.env.OPENCLAW_CONTRACT?.trim();
-  if (explicit) {
-    return explicit;
-  }
-  const fallback = path.resolve(process.cwd(), "config", "workspace.env");
-  return existsSync(fallback) ? fallback : null;
-}
-
-function readContractEnv(contractPath: string | null): Record<string, string> {
-  if (!contractPath || !existsSync(contractPath)) {
-    return {};
-  }
-  try {
-    const result: Record<string, string> = {};
-    const lines = readFileSync(contractPath, "utf-8").split(/\r?\n/);
-    for (const line of lines) {
-      const trimmed = line.trim();
-      if (!trimmed || trimmed.startsWith("#")) {
-        continue;
-      }
-      const idx = trimmed.indexOf("=");
-      if (idx < 0) {
-        continue;
-      }
-      const key = trimmed.slice(0, idx).trim();
-      if (!key) {
-        continue;
-      }
-      const value = trimmed.slice(idx + 1).trim();
-      result[key] = value;
-    }
-    return result;
-  } catch {
-    return {};
-  }
-}
-
 function resolveUrlFromEnv(raw: string | undefined): string | undefined {
   const value = parseStringLike(raw);
   if (!value) {
     return undefined;
   }
   try {
-    const parsed = new URL(value);
-    return parsed.toString();
+    return new URL(value).toString();
   } catch {
     return undefined;
   }
 }
 
-function normalizeBaseUrl(url: string): string {
-  return url.replace(/\/+$/, "");
+function resolvePort(raw: string | undefined, fallback: number): number {
+  const parsed = raw ? Number(raw) : fallback;
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback;
 }
 
 function deriveRouterHealthUrl(url: string): string {
@@ -108,7 +54,10 @@ function deriveRouterHealthUrl(url: string): string {
   }
 }
 
-async function probeHealth(url: string): Promise<{
+async function probeHealth(
+  url: string,
+  context: DgxAccessContext | null,
+): Promise<{
   healthy: boolean;
   status?: number;
   error?: string;
@@ -119,7 +68,7 @@ async function probeHealth(url: string): Promise<{
   try {
     const response = await fetch(url, {
       method: "GET",
-      headers: { accept: "application/json" },
+      headers: mergeDgxRequestHeaders(context, { accept: "application/json" }),
       signal: controller.signal,
     });
     return {
@@ -137,111 +86,139 @@ async function probeHealth(url: string): Promise<{
   }
 }
 
-function resolveEffectiveEnv(): Record<string, string> {
-  const base = readContractEnv(resolveContractPath());
-  for (const [key, value] of Object.entries(process.env)) {
-    if (typeof value === "string") {
-      base[key] = value;
-    }
-  }
-  return base;
-}
-
-function resolveDgxEnabled(env: Record<string, string>): boolean {
-  return Boolean(parseBooleanLike(env.DGX_ENABLED) ?? parseBooleanLike(process.env.DGX_ENABLED));
-}
-
-function resolveDgxHost(env: Record<string, string>): string | undefined {
-  return parseStringLike(env.DGX_HOST) ?? parseStringLike(process.env.DGX_HOST);
-}
-
 function resolveDgxStatsPort(env: Record<string, string>): number {
-  const raw = parseStringLike(env.DGX_STATS_PORT) ?? parseStringLike(process.env.DGX_STATS_PORT);
-  const port = raw ? Number(raw) : DEFAULT_DGX_STATS_PORT;
-  return Number.isFinite(port) && port > 0 ? port : DEFAULT_DGX_STATS_PORT;
+  return resolvePort(
+    parseStringLike(env.DGX_STATS_PORT) ?? parseStringLike(process.env.DGX_STATS_PORT),
+    DEFAULT_DGX_STATS_PORT,
+  );
 }
 
-function resolveOllamaUrl(env: Record<string, string>): string | undefined {
+function resolveRouterHealthUrl(
+  env: Record<string, string>,
+  context: DgxAccessContext | null,
+): string | null {
+  if (context?.mode === "wan") {
+    const wanBase = resolveWanServiceBaseUrl(context, "router");
+    return wanBase ? appendUrlPath(wanBase, "health") : null;
+  }
+  const explicit = resolveUrlFromEnv(env.DGX_ROUTER_URL ?? process.env.DGX_ROUTER_URL);
+  if (explicit) {
+    return deriveRouterHealthUrl(explicit);
+  }
+  const fallback = resolveUrlFromEnv(
+    env.OPENCLAW_NVIDIA_ROUTER_URL ?? process.env.OPENCLAW_NVIDIA_ROUTER_URL,
+  );
+  return fallback ? deriveRouterHealthUrl(fallback) : null;
+}
+
+function resolveOllamaBaseUrl(
+  env: Record<string, string>,
+  context: DgxAccessContext | null,
+): string | undefined {
+  if (context?.mode === "wan") {
+    return resolveWanServiceBaseUrl(context, "ollama");
+  }
+
   const explicit = resolveUrlFromEnv(env.DGX_OLLAMA_URL ?? process.env.DGX_OLLAMA_URL);
   if (explicit) {
     return explicit;
   }
-  const host = resolveDgxHost(env);
+  const host = context?.lanHost ?? resolveDgxHost(env);
   if (!host) {
     return undefined;
   }
-  const port = Number(
-    parseStringLike(env.OLLAMA_PORT) ??
-      parseStringLike(process.env.OLLAMA_PORT) ??
-      DEFAULT_OLLAMA_PORT,
+  const port = resolvePort(
+    parseStringLike(env.OLLAMA_PORT) ?? parseStringLike(process.env.OLLAMA_PORT),
+    DEFAULT_OLLAMA_PORT,
   );
-  return `http://${host}:${Number.isFinite(port) ? port : DEFAULT_OLLAMA_PORT}`;
+  return `http://${host}:${port}`;
 }
 
-function resolveQdrantUrl(env: Record<string, string>): string | undefined {
+function resolveQdrantBaseUrl(
+  env: Record<string, string>,
+  context: DgxAccessContext | null,
+): string | undefined {
+  if (context?.mode === "wan") {
+    return resolveWanServiceBaseUrl(context, "qdrant");
+  }
+
   const explicit = resolveUrlFromEnv(env.DGX_QDRANT_URL ?? process.env.DGX_QDRANT_URL);
   if (explicit) {
     return explicit;
   }
-  const host = resolveDgxHost(env);
+  const host = context?.lanHost ?? resolveDgxHost(env);
   if (!host) {
     return undefined;
   }
-  const port = Number(
-    parseStringLike(env.QDRANT_HTTP_PORT) ??
-      parseStringLike(process.env.QDRANT_HTTP_PORT) ??
-      DEFAULT_QDRANT_PORT,
+  const port = resolvePort(
+    parseStringLike(env.QDRANT_HTTP_PORT) ?? parseStringLike(process.env.QDRANT_HTTP_PORT),
+    DEFAULT_QDRANT_PORT,
   );
-  return `http://${host}:${Number.isFinite(port) ? port : DEFAULT_QDRANT_PORT}`;
+  return `http://${host}:${port}`;
 }
 
-function resolveRouterUrl(env: Record<string, string>): string | undefined {
-  const explicit = resolveUrlFromEnv(env.DGX_ROUTER_URL ?? process.env.DGX_ROUTER_URL);
-  if (explicit) {
-    return explicit;
+function resolveSttHealthUrl(
+  env: Record<string, string>,
+  context: DgxAccessContext | null,
+): string | null {
+  if (context?.mode === "wan") {
+    const wanBase = resolveWanServiceBaseUrl(context, "voiceStt");
+    return wanBase ? appendUrlPath(wanBase, "health") : null;
   }
-  // OPENCLAW_NVIDIA_ROUTER_URL is often pointed at the DGX router when DGX is enabled.
-  return resolveUrlFromEnv(
-    env.OPENCLAW_NVIDIA_ROUTER_URL ?? process.env.OPENCLAW_NVIDIA_ROUTER_URL,
-  );
-}
-
-function resolveSttHealthUrl(env: Record<string, string>): string | null {
-  const host = resolveDgxHost(env);
+  const host = context?.lanHost ?? resolveDgxHost(env);
   if (!host) {
     return null;
   }
-  const port = Number(
-    parseStringLike(env.DGX_STT_PORT ?? process.env.DGX_STT_PORT) ?? DEFAULT_STT_PORT,
+  const port = resolvePort(
+    parseStringLike(env.DGX_STT_PORT ?? process.env.DGX_STT_PORT),
+    DEFAULT_STT_PORT,
   );
-  return Number.isFinite(port) && port > 0 ? `http://${host}:${port}/health` : null;
+  return `http://${host}:${port}/health`;
 }
 
-function resolveTtsHealthUrl(env: Record<string, string>): string | null {
-  const host = resolveDgxHost(env);
+function resolveTtsHealthUrl(
+  env: Record<string, string>,
+  context: DgxAccessContext | null,
+): string | null {
+  if (context?.mode === "wan") {
+    const wanBase = resolveWanServiceBaseUrl(context, "voiceTts");
+    return wanBase ? appendUrlPath(wanBase, "health") : null;
+  }
+  const host = context?.lanHost ?? resolveDgxHost(env);
   if (!host) {
     return null;
   }
-  const port = Number(
-    parseStringLike(env.DGX_TTS_PORT ?? process.env.DGX_TTS_PORT) ?? DEFAULT_TTS_PORT,
+  const port = resolvePort(
+    parseStringLike(env.DGX_TTS_PORT ?? process.env.DGX_TTS_PORT),
+    DEFAULT_TTS_PORT,
   );
-  return Number.isFinite(port) && port > 0 ? `http://${host}:${port}/health` : null;
+  return `http://${host}:${port}/health`;
 }
 
 /** Consolidated DGX voice health (STT+TTS) at e.g. :9000/health. Returns { status, stt, tts }. */
-function resolveVoiceHealthUrl(env: Record<string, string>): string | null {
-  const host = resolveDgxHost(env);
+function resolveVoiceHealthUrl(
+  env: Record<string, string>,
+  context: DgxAccessContext | null,
+): string | null {
+  if (context?.mode === "wan") {
+    const wanBase = resolveWanServiceBaseUrl(context, "voiceHealth");
+    return wanBase ? appendUrlPath(wanBase, "health") : null;
+  }
+  const host = context?.lanHost ?? resolveDgxHost(env);
   if (!host) {
     return null;
   }
-  const port = Number(
-    parseStringLike(env.DGX_VOICE_HEALTH_PORT ?? process.env.DGX_VOICE_HEALTH_PORT) ??
-      DEFAULT_VOICE_HEALTH_PORT,
+  const port = resolvePort(
+    parseStringLike(env.DGX_VOICE_HEALTH_PORT ?? process.env.DGX_VOICE_HEALTH_PORT),
+    DEFAULT_VOICE_HEALTH_PORT,
   );
-  return Number.isFinite(port) && port > 0 ? `http://${host}:${port}/health` : null;
+  return `http://${host}:${port}/health`;
 }
 
-async function fetchVoiceHealth(url: string): Promise<{
+async function fetchVoiceHealth(
+  url: string,
+  context: DgxAccessContext | null,
+): Promise<{
   healthy: boolean;
   stt?: boolean;
   tts?: boolean;
@@ -254,7 +231,7 @@ async function fetchVoiceHealth(url: string): Promise<{
   try {
     const response = await fetch(url, {
       method: "GET",
-      headers: { accept: "application/json" },
+      headers: mergeDgxRequestHeaders(context, { accept: "application/json" }),
       signal: controller.signal,
     });
     const body = response.ok
@@ -319,15 +296,32 @@ interface DgxStatsResponse {
   };
 }
 
-async function fetchDgxStats(host: string, port: number): Promise<DgxStatsResponse | null> {
-  const url = `http://${host}:${port}/api/dgx-stats`;
+function resolveDgxStatsUrl(
+  env: Record<string, string>,
+  context: DgxAccessContext | null,
+): string | null {
+  if (context?.mode === "wan") {
+    const dashboardBase = resolveWanServiceBaseUrl(context, "dashboard");
+    return dashboardBase ? appendUrlPath(dashboardBase, "api/dgx-stats") : null;
+  }
+  const host = context?.lanHost ?? resolveDgxHost(env);
+  if (!host) {
+    return null;
+  }
+  return `http://${host}:${resolveDgxStatsPort(env)}/api/dgx-stats`;
+}
+
+async function fetchDgxStats(
+  url: string,
+  context: DgxAccessContext | null,
+): Promise<DgxStatsResponse | null> {
   const timeoutMs = DGX_STATS_TIMEOUT_MS;
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), timeoutMs);
   try {
     const response = await fetch(url, {
       method: "GET",
-      headers: { accept: "application/json" },
+      headers: mergeDgxRequestHeaders(context, { accept: "application/json" }),
       signal: controller.signal,
     });
     if (!response.ok) {
@@ -398,14 +392,14 @@ export const sparkStatusHandlers: GatewayRequestHandlers = {
     try {
       const env = resolveEffectiveEnv();
       const enabled = resolveDgxEnabled(env);
-      const host = resolveDgxHost(env);
+      const configuredHost = resolveDgxHost(env);
       const checkedAt = Date.now();
 
       if (!enabled) {
         const payload = {
           enabled: false,
           active: false,
-          host: host ?? null,
+          host: configuredHost ?? null,
           checkedAt,
           source: "fallback" as const,
           voiceAvailable: false,
@@ -417,15 +411,34 @@ export const sparkStatusHandlers: GatewayRequestHandlers = {
         return;
       }
 
-      // --- Try consolidated dgx-stats endpoint first ---
-      if (host) {
-        const statsPort = resolveDgxStatsPort(env);
-        const stats = await fetchDgxStats(host, statsPort);
+      const access = await resolveDgxAccess(env);
+      const context = access.context;
+      const activeHost = context?.host ?? configuredHost ?? null;
+      if (!context) {
+        const payload = {
+          enabled: true,
+          active: false,
+          host: activeHost,
+          checkedAt,
+          source: "fallback" as const,
+          voiceAvailable: false,
+          overall: "down" as SparkOverall,
+          error: access.error ?? "DGX endpoint is not configured",
+        };
+        lastCachedAt = now;
+        lastCachedResult = payload;
+        respond(true, payload, undefined);
+        return;
+      }
+
+      const statsUrl = resolveDgxStatsUrl(env, context);
+      if (statsUrl) {
+        const stats = await fetchDgxStats(statsUrl, context);
         if (stats) {
           const payload = {
             enabled: true,
             active: stats.overall !== "down",
-            host,
+            host: activeHost,
             checkedAt,
             source: "dgx-stats" as const,
             voiceAvailable: stats.voice?.available ?? false,
@@ -442,39 +455,40 @@ export const sparkStatusHandlers: GatewayRequestHandlers = {
         }
       }
 
-      // --- Fallback: probe individual endpoints (DGX voice: consolidated :9000/health or STT/TTS) ---
       const services: Record<string, unknown> = {};
 
-      const routerUrl = resolveRouterUrl(env);
-      const routerHealth = routerUrl ? deriveRouterHealthUrl(routerUrl) : null;
-      const ollamaUrl = resolveOllamaUrl(env);
-      const qdrantUrl = resolveQdrantUrl(env);
-      const voiceHealthUrl = resolveVoiceHealthUrl(env);
-      const sttHealthUrl = resolveSttHealthUrl(env);
-      const ttsHealthUrl = resolveTtsHealthUrl(env);
+      const routerHealthUrl = resolveRouterHealthUrl(env, context);
+      const ollamaBase = resolveOllamaBaseUrl(env, context);
+      const qdrantBase = resolveQdrantBaseUrl(env, context);
+      const voiceHealthUrl = resolveVoiceHealthUrl(env, context);
+      const sttHealthUrl = resolveSttHealthUrl(env, context);
+      const ttsHealthUrl = resolveTtsHealthUrl(env, context);
+
+      const ollamaHealthUrl = ollamaBase
+        ? appendUrlPath(normalizeBaseUrl(ollamaBase), "api/tags")
+        : null;
+      const qdrantHealthUrl = qdrantBase
+        ? appendUrlPath(normalizeBaseUrl(qdrantBase), "collections")
+        : null;
 
       const [routerProbe, ollamaProbe, qdrantProbe, voiceHealthProbe, sttProbe, ttsProbe] =
         await Promise.all([
-          routerHealth ? probeHealth(routerHealth) : Promise.resolve(null),
-          ollamaUrl
-            ? probeHealth(`${normalizeBaseUrl(ollamaUrl)}/api/tags`)
-            : Promise.resolve(null),
-          qdrantUrl
-            ? probeHealth(`${normalizeBaseUrl(qdrantUrl)}/collections`)
-            : Promise.resolve(null),
-          voiceHealthUrl ? fetchVoiceHealth(voiceHealthUrl) : Promise.resolve(null),
-          sttHealthUrl ? probeHealth(sttHealthUrl) : Promise.resolve(null),
-          ttsHealthUrl ? probeHealth(ttsHealthUrl) : Promise.resolve(null),
+          routerHealthUrl ? probeHealth(routerHealthUrl, context) : Promise.resolve(null),
+          ollamaHealthUrl ? probeHealth(ollamaHealthUrl, context) : Promise.resolve(null),
+          qdrantHealthUrl ? probeHealth(qdrantHealthUrl, context) : Promise.resolve(null),
+          voiceHealthUrl ? fetchVoiceHealth(voiceHealthUrl, context) : Promise.resolve(null),
+          sttHealthUrl ? probeHealth(sttHealthUrl, context) : Promise.resolve(null),
+          ttsHealthUrl ? probeHealth(ttsHealthUrl, context) : Promise.resolve(null),
         ]);
 
-      if (routerHealth && routerProbe) {
-        services.router = { url: routerHealth, ...routerProbe };
+      if (routerHealthUrl && routerProbe) {
+        services.router = { url: routerHealthUrl, ...routerProbe };
       }
-      if (ollamaUrl && ollamaProbe) {
-        services.ollama = { url: `${normalizeBaseUrl(ollamaUrl)}/api/tags`, ...ollamaProbe };
+      if (ollamaHealthUrl && ollamaProbe) {
+        services.ollama = { url: ollamaHealthUrl, ...ollamaProbe };
       }
-      if (qdrantUrl && qdrantProbe) {
-        services.qdrant = { url: `${normalizeBaseUrl(qdrantUrl)}/collections`, ...qdrantProbe };
+      if (qdrantHealthUrl && qdrantProbe) {
+        services.qdrant = { url: qdrantHealthUrl, ...qdrantProbe };
       }
       if (voiceHealthUrl && voiceHealthProbe) {
         services.voice_health = { url: voiceHealthUrl, ...voiceHealthProbe };
@@ -503,7 +517,7 @@ export const sparkStatusHandlers: GatewayRequestHandlers = {
       const payload = {
         enabled: true,
         active,
-        host: host ?? null,
+        host: activeHost,
         checkedAt,
         source: "fallback" as const,
         voiceAvailable,

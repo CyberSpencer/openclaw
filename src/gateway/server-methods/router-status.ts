@@ -2,6 +2,16 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import type { GatewayRequestHandlers } from "./types.js";
 import { ErrorCodes, errorShape } from "../protocol/index.js";
+import {
+  appendUrlPath,
+  mergeDgxRequestHeaders,
+  parseBooleanLike,
+  parseStringLike,
+  resolveDgxAccess,
+  resolveDgxEnabled,
+  resolveEffectiveEnv,
+  resolveWanServiceBaseUrl,
+} from "./dgx-access.js";
 
 const DEFAULT_ROUTER_URL = "http://127.0.0.1:8001/sfc_router/chat/completions";
 const DEFAULT_ROUTER_HEALTH_URL = "http://127.0.0.1:8001/health";
@@ -14,23 +24,6 @@ function envFlag(name: string): boolean {
   }
   const normalized = raw.trim().toLowerCase();
   return normalized === "1" || normalized === "true" || normalized === "yes" || normalized === "on";
-}
-
-function parseBooleanLike(raw: string | undefined): boolean | undefined {
-  if (!raw) {
-    return undefined;
-  }
-  const normalized = raw
-    .trim()
-    .replace(/^['"]|['"]$/g, "")
-    .toLowerCase();
-  if (["1", "true", "yes", "on"].includes(normalized)) {
-    return true;
-  }
-  if (["0", "false", "no", "off"].includes(normalized)) {
-    return false;
-  }
-  return undefined;
 }
 
 function resolveContractPath(): string | null {
@@ -107,11 +100,21 @@ function writeRouterDisabledToContract(contractPath: string | null, disabled: bo
   writeFileSync(contractPath, next.join("\n").replace(/\n*$/, "\n"), { encoding: "utf-8" });
 }
 
-function resolveRouterHealthUrl(): string {
-  const configuredUrl = process.env.OPENCLAW_NVIDIA_ROUTER_URL?.trim();
-  const source = configuredUrl || DEFAULT_ROUTER_URL;
+function resolveUrlFromEnv(raw: string | undefined): string | undefined {
+  const value = parseStringLike(raw);
+  if (!value) {
+    return undefined;
+  }
   try {
-    const parsed = new URL(source);
+    return new URL(value).toString();
+  } catch {
+    return undefined;
+  }
+}
+
+function deriveRouterHealthUrl(url: string): string {
+  try {
+    const parsed = new URL(url);
     parsed.pathname = "/health";
     parsed.search = "";
     parsed.hash = "";
@@ -121,7 +124,58 @@ function resolveRouterHealthUrl(): string {
   }
 }
 
-async function probeHealth(url: string): Promise<{
+async function resolveRouterHealthTarget(): Promise<{
+  url: string;
+  headers: Record<string, string>;
+  error?: string;
+}> {
+  const env = resolveEffectiveEnv();
+  if (resolveDgxEnabled(env)) {
+    const access = await resolveDgxAccess(env);
+    if (access.context?.mode === "wan") {
+      const base = resolveWanServiceBaseUrl(access.context, "router");
+      if (base) {
+        return {
+          url: appendUrlPath(base, "health"),
+          headers: mergeDgxRequestHeaders(access.context, { accept: "application/json" }),
+        };
+      }
+      return {
+        url: DEFAULT_ROUTER_HEALTH_URL,
+        headers: { accept: "application/json" },
+        error: access.error ?? "WAN router endpoint is not configured",
+      };
+    }
+
+    const lanRouterUrl =
+      resolveUrlFromEnv(env.DGX_ROUTER_URL ?? process.env.DGX_ROUTER_URL) ??
+      resolveUrlFromEnv(env.OPENCLAW_NVIDIA_ROUTER_URL ?? process.env.OPENCLAW_NVIDIA_ROUTER_URL) ??
+      (access.context?.lanHost
+        ? `http://${access.context.lanHost}:8001/sfc_router/chat/completions`
+        : undefined);
+    if (lanRouterUrl) {
+      return {
+        url: deriveRouterHealthUrl(lanRouterUrl),
+        headers: mergeDgxRequestHeaders(access.context ?? null, { accept: "application/json" }),
+        error: access.error,
+      };
+    }
+  }
+
+  const configuredUrl =
+    resolveUrlFromEnv(env.OPENCLAW_NVIDIA_ROUTER_URL ?? process.env.OPENCLAW_NVIDIA_ROUTER_URL) ??
+    resolveUrlFromEnv(env.DGX_ROUTER_URL ?? process.env.DGX_ROUTER_URL) ??
+    DEFAULT_ROUTER_URL;
+  return {
+    url: deriveRouterHealthUrl(configuredUrl),
+    headers: { accept: "application/json" },
+  };
+}
+
+async function probeHealth(
+  url: string,
+  headers: Record<string, string>,
+): Promise<{
   healthy: boolean;
   status?: number;
   error?: string;
@@ -132,7 +186,7 @@ async function probeHealth(url: string): Promise<{
   try {
     const response = await fetch(url, {
       method: "GET",
-      headers: { accept: "application/json" },
+      headers,
       signal: controller.signal,
     });
     return {
@@ -152,7 +206,7 @@ async function probeHealth(url: string): Promise<{
 
 export const routerStatusHandlers: GatewayRequestHandlers = {
   "router.status": async ({ respond }) => {
-    const healthUrl = resolveRouterHealthUrl();
+    const target = await resolveRouterHealthTarget();
     const contractPath = resolveContractPath();
     const contractDisabled = readRouterDisabledFromContract(contractPath);
     const enabled = !(contractDisabled ?? envFlag(ROUTER_DISABLED_KEY));
@@ -162,7 +216,7 @@ export const routerStatusHandlers: GatewayRequestHandlers = {
         {
           enabled: false,
           healthy: false,
-          url: healthUrl,
+          url: target.url,
           checkedAt: Date.now(),
           error: "disabled",
         },
@@ -171,16 +225,16 @@ export const routerStatusHandlers: GatewayRequestHandlers = {
       return;
     }
 
-    const probe = await probeHealth(healthUrl);
+    const probe = await probeHealth(target.url, target.headers);
     respond(
       true,
       {
         enabled: true,
         healthy: probe.healthy,
-        url: healthUrl,
+        url: target.url,
         checkedAt: Date.now(),
         status: probe.status,
-        error: probe.error,
+        error: target.error ?? probe.error,
       },
       undefined,
     );
@@ -207,14 +261,14 @@ export const routerStatusHandlers: GatewayRequestHandlers = {
       );
       return;
     }
-    const healthUrl = resolveRouterHealthUrl();
+    const target = await resolveRouterHealthTarget();
     if (!enabled) {
       respond(
         true,
         {
           enabled: false,
           healthy: false,
-          url: healthUrl,
+          url: target.url,
           checkedAt: Date.now(),
           error: "disabled",
         },
@@ -222,16 +276,16 @@ export const routerStatusHandlers: GatewayRequestHandlers = {
       );
       return;
     }
-    const probe = await probeHealth(healthUrl);
+    const probe = await probeHealth(target.url, target.headers);
     respond(
       true,
       {
         enabled: true,
         healthy: probe.healthy,
-        url: healthUrl,
+        url: target.url,
         checkedAt: Date.now(),
         status: probe.status,
-        error: probe.error,
+        error: target.error ?? probe.error,
       },
       undefined,
     );

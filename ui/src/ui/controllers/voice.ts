@@ -8,6 +8,7 @@
 
 import type { GatewayBrowserClient } from "../gateway.ts";
 import { normalizeTextForDisplay, normalizeTextForTts } from "../text-normalization.ts";
+import { buildWorkletModuleUrl, supportsAudioWorkletRuntime } from "../worklets.ts";
 
 // VAD Configuration
 const VAD_SILENCE_THRESHOLD = 15; // Audio level below this = silence (0-255)
@@ -200,11 +201,7 @@ export async function loadVoiceStatus(state: VoiceState): Promise<void> {
 }
 
 function supportsAudioWorklet(): boolean {
-  return (
-    typeof AudioContext !== "undefined" &&
-    "audioWorklet" in AudioContext.prototype &&
-    typeof AudioWorkletNode !== "undefined"
-  );
+  return supportsAudioWorkletRuntime();
 }
 
 function decodeBase64ToArrayBuffer(base64: string): ArrayBuffer {
@@ -226,23 +223,33 @@ async function ensurePlaybackWorklet(state: VoiceState): Promise<boolean> {
     return true;
   }
 
-  const playbackContext = new AudioContext({ sampleRate: 24000 });
-  if (playbackContext.state === "suspended") {
-    await playbackContext.resume().catch(() => undefined);
+  let playbackContext: AudioContext | null = null;
+  try {
+    playbackContext = new AudioContext({ sampleRate: 24000 });
+    if (playbackContext.state === "suspended") {
+      await playbackContext.resume().catch(() => undefined);
+    }
+
+    await playbackContext.audioWorklet.addModule(
+      buildWorkletModuleUrl("playback-processor.js", WORKLET_VERSION),
+    );
+
+    const playbackWorklet = new AudioWorkletNode(playbackContext, "playback-processor");
+    playbackWorklet.connect(playbackContext.destination);
+
+    state.playbackContext = playbackContext;
+    state.playbackWorklet = playbackWorklet;
+    state.playbackSeq = 1;
+    return true;
+  } catch (err) {
+    console.warn("[Voice] Playback worklet unavailable, falling back to <audio>", err);
+    try {
+      await playbackContext?.close();
+    } catch {
+      // ignore
+    }
+    return false;
   }
-
-  await playbackContext.audioWorklet.addModule(
-    `/worklets/playback-processor.js?v=${WORKLET_VERSION}`,
-  );
-
-  const playbackWorklet = new AudioWorkletNode(playbackContext, "playback-processor");
-  playbackWorklet.connect(playbackContext.destination);
-
-  state.playbackContext = playbackContext;
-  state.playbackWorklet = playbackWorklet;
-  state.playbackSeq = 1;
-
-  return true;
 }
 
 function stopPlayback(state: VoiceState): void {

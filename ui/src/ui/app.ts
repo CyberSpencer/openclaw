@@ -111,6 +111,7 @@ import {
   type TaskPlan,
 } from "./ui-types.ts";
 import { generateUUID } from "./uuid.ts";
+import { buildWorkletModuleUrl, supportsAudioWorkletRuntime } from "./worklets.ts";
 
 declare global {
   interface Window {
@@ -120,6 +121,7 @@ declare global {
 
 /** Max chars per TTS chunk to stay under DGX timeout (~60s). ~250 chars ~= 12-15s under load. */
 const MAX_TTS_CHARS = 250;
+const WORKLET_VERSION = "20260210-v1";
 
 /**
  * Chunk text for TTS to avoid DGX timeouts. Long text (~1270 chars) takes 60–78s;
@@ -651,6 +653,7 @@ export class OpenClawApp extends LitElement {
   private ttsPlaybackWorklet: AudioWorkletNode | null = null;
   private sparkMicChunks: Blob[] = [];
   private sparkMicRecordingTimer: ReturnType<typeof setTimeout> | null = null;
+  private sparkMicWorkletDisabledForSession = false;
   private sparkStatusPollInterval: number | null = null;
 
   @state() logsLoading = false;
@@ -2484,11 +2487,7 @@ export class OpenClawApp extends LitElement {
   }
 
   private supportsAudioWorklet(): boolean {
-    return (
-      typeof AudioContext !== "undefined" &&
-      "audioWorklet" in AudioContext.prototype &&
-      typeof AudioWorkletNode !== "undefined"
-    );
+    return supportsAudioWorkletRuntime();
   }
 
   private base64ToArrayBuffer(b64: string): ArrayBuffer {
@@ -2513,10 +2512,12 @@ export class OpenClawApp extends LitElement {
       if (ctx.state === "suspended") {
         await ctx.resume().catch(() => undefined);
       }
-      const base = (this.basePath ?? "").replace(/\/$/, "") || "";
-      const workletPath = `${base}/worklets/playback-processor.js`;
-      const WORKLET_VERSION = "20260210-v1";
-      await ctx.audioWorklet.addModule(`${workletPath}?v=${WORKLET_VERSION}`);
+      const workletUrl = buildWorkletModuleUrl(
+        "playback-processor.js",
+        WORKLET_VERSION,
+        this.basePath,
+      );
+      await ctx.audioWorklet.addModule(workletUrl);
       const worklet = new AudioWorkletNode(ctx, "playback-processor");
       worklet.connect(ctx.destination);
 
@@ -2617,119 +2618,34 @@ export class OpenClawApp extends LitElement {
       this.requestUpdate();
       return;
     }
+    let stream: MediaStream | null = null;
     try {
-      // Worklet-based capture (ported from AII-Chatbot). This avoids MediaRecorder/WebM
-      // variability and gives us deterministic PCM16 frames.
-      if (this.supportsAudioWorklet()) {
-        const stream = await navigator.mediaDevices.getUserMedia({
-          audio: {
-            echoCancellation: true,
-            noiseSuppression: true,
-            autoGainControl: false,
-          },
-        });
+      stream = await navigator.mediaDevices.getUserMedia({
+        audio: {
+          echoCancellation: true,
+          noiseSuppression: true,
+          autoGainControl: false,
+        },
+      });
 
-        const audioContext = new AudioContext({ sampleRate: this.sparkMicSampleRate });
-        if (audioContext.state === "suspended") {
-          await audioContext.resume().catch(() => undefined);
+      const shouldTryWorklet =
+        this.supportsAudioWorklet() && !this.sparkMicWorkletDisabledForSession;
+      if (shouldTryWorklet) {
+        const started = await this.tryStartSparkMicWorklet(stream);
+        if (started) {
+          this.requestUpdate();
+          return;
         }
-
-        // Cache-bust worklet loads (browsers cache worklets aggressively)
-        const base = (this.basePath ?? "").replace(/\/$/, "") || "";
-        const workletPath = `${base}/worklets/capture-processor.js`;
-        const WORKLET_VERSION = "20260210-v1";
-        await audioContext.audioWorklet.addModule(`${workletPath}?v=${WORKLET_VERSION}`);
-
-        const source = audioContext.createMediaStreamSource(stream);
-        const captureWorklet = new AudioWorkletNode(audioContext, "capture-processor", {
-          processorOptions: {
-            targetSampleRate: this.sparkMicSampleRate,
-            frameSize: 480,
-          },
-        });
-
-        // Keep node alive but avoid echo
-        const zeroGain = audioContext.createGain();
-        zeroGain.gain.value = 0;
-        captureWorklet.connect(zeroGain);
-        zeroGain.connect(audioContext.destination);
-
-        // Collect PCM16 frames
-        this.sparkMicPcmFrames = [];
-        captureWorklet.port.addEventListener("message", (event) => {
-          if (event.data?.type === "audio" && event.data?.pcm16) {
-            // event.data.pcm16 is an Int16Array (transferable buffer)
-            this.sparkMicPcmFrames.push(event.data.pcm16 as Int16Array);
-          }
-        });
-        captureWorklet.port.start();
-
-        source.connect(captureWorklet);
-
-        this.sparkMicStream = stream;
-        this.sparkMicAudioContext = audioContext;
-        this.sparkMicCaptureWorklet = captureWorklet;
-        this.sparkMicUsingWorklet = true;
-        this.sparkMicRecording = true;
-
-        // Auto-stop after 30s
-        this.sparkMicRecordingTimer = setTimeout(() => {
-          this.stopSparkMicRecording();
-        }, 30_000);
-
-        this.requestUpdate();
-        return;
       }
 
-      // Fallback: MediaRecorder (legacy)
-      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-      this.sparkMicChunks = [];
-
-      const mimeType = MediaRecorder.isTypeSupported("audio/webm;codecs=opus")
-        ? "audio/webm;codecs=opus"
-        : "audio/webm";
-
-      const recorder = new MediaRecorder(stream, { mimeType });
-      this.sparkMicMediaRecorder = recorder;
-      this.sparkMicUsingWorklet = false;
-
-      recorder.ondataavailable = (e: BlobEvent) => {
-        if (e.data.size > 0) {
-          this.sparkMicChunks.push(e.data);
-        }
-      };
-
-      recorder.onstop = async () => {
+      this.startSparkMicMediaRecorder(stream);
+      this.requestUpdate();
+    } catch (err) {
+      if (stream) {
         for (const track of stream.getTracks()) {
           track.stop();
         }
-        if (this.sparkMicRecordingTimer) {
-          clearTimeout(this.sparkMicRecordingTimer);
-          this.sparkMicRecordingTimer = null;
-        }
-
-        if (this.sparkMicChunks.length === 0) {
-          this.sparkMicRecording = false;
-          return;
-        }
-
-        const blob = new Blob(this.sparkMicChunks, { type: mimeType });
-        this.sparkMicChunks = [];
-
-        const audioBase64 = await this.blobToBase64(blob);
-        await this.handleSparkMicAudio({ audioBase64, format: "webm" });
-
-        this.sparkMicRecording = false;
-        this.requestUpdate();
-      };
-
-      recorder.start();
-      this.sparkMicRecording = true;
-
-      this.sparkMicRecordingTimer = setTimeout(() => {
-        this.stopSparkMicRecording();
-      }, 30_000);
-    } catch (err) {
+      }
       console.error("[spark-mic] Failed to start recording:", err);
       this.sparkMicRecording = false;
       this.lastError =
@@ -2738,6 +2654,140 @@ export class OpenClawApp extends LitElement {
           : `Recording failed: ${err instanceof Error ? err.message : String(err)}`;
       this.requestUpdate();
     }
+  }
+
+  private async tryStartSparkMicWorklet(stream: MediaStream): Promise<boolean> {
+    let audioContext: AudioContext | null = null;
+    let source: MediaStreamAudioSourceNode | null = null;
+    let captureWorklet: AudioWorkletNode | null = null;
+    let zeroGain: GainNode | null = null;
+    try {
+      audioContext = new AudioContext({ sampleRate: this.sparkMicSampleRate });
+      if (audioContext.state === "suspended") {
+        await audioContext.resume().catch(() => undefined);
+      }
+
+      const workletUrl = buildWorkletModuleUrl(
+        "capture-processor.js",
+        WORKLET_VERSION,
+        this.basePath,
+      );
+      await audioContext.audioWorklet.addModule(workletUrl);
+
+      source = audioContext.createMediaStreamSource(stream);
+      captureWorklet = new AudioWorkletNode(audioContext, "capture-processor", {
+        processorOptions: {
+          targetSampleRate: this.sparkMicSampleRate,
+          frameSize: 480,
+        },
+      });
+
+      zeroGain = audioContext.createGain();
+      zeroGain.gain.value = 0;
+      captureWorklet.connect(zeroGain);
+      zeroGain.connect(audioContext.destination);
+
+      this.sparkMicPcmFrames = [];
+      captureWorklet.port.addEventListener("message", (event) => {
+        if (event.data?.type === "audio" && event.data?.pcm16) {
+          this.sparkMicPcmFrames.push(event.data.pcm16 as Int16Array);
+        }
+      });
+      captureWorklet.port.start();
+      source.connect(captureWorklet);
+
+      this.sparkMicStream = stream;
+      this.sparkMicAudioContext = audioContext;
+      this.sparkMicCaptureWorklet = captureWorklet;
+      this.sparkMicUsingWorklet = true;
+      this.sparkMicRecording = true;
+      this.sparkMicRecordingTimer = setTimeout(() => {
+        this.stopSparkMicRecording();
+      }, 30_000);
+
+      return true;
+    } catch (err) {
+      console.warn("[spark-mic] Worklet capture unavailable; falling back to MediaRecorder", err);
+      this.sparkMicWorkletDisabledForSession = true;
+      this.sparkMicUsingWorklet = false;
+      this.sparkMicStream = null;
+      this.sparkMicAudioContext = null;
+      this.sparkMicCaptureWorklet = null;
+      this.sparkMicPcmFrames = [];
+      try {
+        source?.disconnect();
+      } catch {
+        // ignore
+      }
+      try {
+        captureWorklet?.disconnect();
+      } catch {
+        // ignore
+      }
+      try {
+        zeroGain?.disconnect();
+      } catch {
+        // ignore
+      }
+      try {
+        await audioContext?.close();
+      } catch {
+        // ignore
+      }
+      return false;
+    }
+  }
+
+  private startSparkMicMediaRecorder(stream: MediaStream): void {
+    if (typeof MediaRecorder === "undefined") {
+      throw new Error("MediaRecorder not supported in this browser.");
+    }
+
+    this.sparkMicChunks = [];
+    const mimeType = MediaRecorder.isTypeSupported("audio/webm;codecs=opus")
+      ? "audio/webm;codecs=opus"
+      : "audio/webm";
+
+    const recorder = new MediaRecorder(stream, { mimeType });
+    this.sparkMicMediaRecorder = recorder;
+    this.sparkMicUsingWorklet = false;
+
+    recorder.ondataavailable = (event: BlobEvent) => {
+      if (event.data.size > 0) {
+        this.sparkMicChunks.push(event.data);
+      }
+    };
+
+    recorder.onstop = async () => {
+      for (const track of stream.getTracks()) {
+        track.stop();
+      }
+      if (this.sparkMicRecordingTimer) {
+        clearTimeout(this.sparkMicRecordingTimer);
+        this.sparkMicRecordingTimer = null;
+      }
+
+      try {
+        if (this.sparkMicChunks.length > 0) {
+          const blob = new Blob(this.sparkMicChunks, { type: mimeType });
+          this.sparkMicChunks = [];
+          const audioBase64 = await this.blobToBase64(blob);
+          await this.handleSparkMicAudio({ audioBase64, format: "webm" });
+        }
+      } catch (err) {
+        console.error("[spark-mic] Failed while processing MediaRecorder audio:", err);
+        this.lastError = `Recording failed: ${err instanceof Error ? err.message : String(err)}`;
+      } finally {
+        this.sparkMicRecording = false;
+        this.requestUpdate();
+      }
+    };
+
+    recorder.start();
+    this.sparkMicRecording = true;
+    this.sparkMicRecordingTimer = setTimeout(() => {
+      this.stopSparkMicRecording();
+    }, 30_000);
   }
 
   private stopSparkMicRecording() {
