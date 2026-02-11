@@ -79,6 +79,41 @@ export type SessionsListResult = {
   sessions: GatewaySessionRow[];
 };
 
+export type SubagentTaskStatus = "running" | "done" | "error";
+
+export type SubagentTaskRow = {
+  taskId: string;
+  runId: string;
+  assignedRunId: string;
+  childSessionKey: string;
+  assignedSessionKey: string;
+  requesterSessionKey: string;
+  label?: string;
+  task: string;
+  status: SubagentTaskStatus;
+  cleanup: "delete" | "keep";
+  model?: string;
+  modelApplied?: boolean;
+  routing?: "explicit" | "simple-kimi" | "configured-default";
+  complexity?: "simple" | "complex";
+  outcome?: {
+    status: "ok" | "error" | "timeout" | "unknown";
+    error?: string;
+  };
+  createdAt: number;
+  startedAt?: number;
+  endedAt?: number;
+  runtimeMs?: number;
+};
+
+export type SessionsSubagentsResult = {
+  ts: number;
+  requesterSessionKey: string;
+  count: number;
+  active: number;
+  tasks: SubagentTaskRow[];
+};
+
 export type SessionsPatchResult = {
   ok: true;
   path: string;

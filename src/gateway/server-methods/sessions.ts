@@ -1,14 +1,12 @@
 import { randomUUID } from "node:crypto";
 import fs from "node:fs";
-import { resolveAgentConfig } from "../../agents/agent-scope.js";
-import { AGENT_LANE_SUBAGENT } from "../../agents/lanes.js";
+import type { SessionsSubagentsResult, SubagentTaskRow } from "../session-utils.types.js";
+import type { GatewayRequestHandlers } from "./types.js";
+import { resolveDefaultAgentId } from "../../agents/agent-scope.js";
 import { abortEmbeddedPiRun, waitForEmbeddedPiRunEnd } from "../../agents/pi-embedded.js";
-import { buildSubagentSystemPrompt } from "../../agents/subagent-announce.js";
-import { registerSubagentRun } from "../../agents/subagent-registry.js";
+import { listSubagentRunsForRequester } from "../../agents/subagent-registry.js";
 import { stopSubagentsForRequester } from "../../auto-reply/reply/abort.js";
 import { clearSessionQueues } from "../../auto-reply/reply/queue.js";
-import { normalizeThinkLevel, formatThinkingLevels } from "../../auto-reply/thinking.js";
-import { agentCommand } from "../../commands/agent.js";
 import { loadConfig } from "../../config/config.js";
 import {
   loadSessionStore,
@@ -17,14 +15,7 @@ import {
   type SessionEntry,
   updateSessionStore,
 } from "../../config/sessions.js";
-import {
-  isSubagentSessionKey,
-  normalizeAgentId,
-  normalizeMainKey,
-  parseAgentSessionKey,
-} from "../../routing/session-key.js";
-import { defaultRuntime } from "../../runtime.js";
-import { normalizeDeliveryContext } from "../../utils/delivery-context.js";
+import { normalizeAgentId, parseAgentSessionKey } from "../../routing/session-key.js";
 import {
   ErrorCodes,
   errorShape,
@@ -32,11 +23,11 @@ import {
   validateSessionsCompactParams,
   validateSessionsDeleteParams,
   validateSessionsListParams,
+  validateSessionsSubagentsParams,
   validateSessionsPatchParams,
   validateSessionsPreviewParams,
   validateSessionsResetParams,
   validateSessionsResolveParams,
-  validateSessionsSpawnParams,
 } from "../protocol/index.js";
 import {
   archiveFileOnDisk,
@@ -53,36 +44,6 @@ import {
 } from "../session-utils.js";
 import { applySessionsPatchToStore } from "../sessions-patch.js";
 import { resolveSessionKeyFromResolveParams } from "../sessions-resolve.js";
-
-function splitModelRef(ref?: string) {
-  if (!ref) {
-    return { provider: undefined, model: undefined };
-  }
-  const trimmed = ref.trim();
-  if (!trimmed) {
-    return { provider: undefined, model: undefined };
-  }
-  const [provider, model] = trimmed.split("/", 2);
-  if (model) {
-    return { provider, model };
-  }
-  return { provider: undefined, model: trimmed };
-}
-
-function normalizeModelSelection(value: unknown): string | undefined {
-  if (typeof value === "string") {
-    const trimmed = value.trim();
-    return trimmed || undefined;
-  }
-  if (!value || typeof value !== "object") {
-    return undefined;
-  }
-  const primary = (value as { primary?: unknown }).primary;
-  if (typeof primary === "string" && primary.trim()) {
-    return primary.trim();
-  }
-  return undefined;
-}
 
 export const sessionsHandlers: GatewayRequestHandlers = {
   "sessions.list": ({ params, respond }) => {
@@ -108,311 +69,88 @@ export const sessionsHandlers: GatewayRequestHandlers = {
     });
     respond(true, result, undefined);
   },
-  "sessions.spawn": async ({ params, respond, context }) => {
-    if (!validateSessionsSpawnParams(params)) {
+  "sessions.subagents": ({ params, respond }) => {
+    if (!validateSessionsSubagentsParams(params)) {
       respond(
         false,
         undefined,
         errorShape(
           ErrorCodes.INVALID_REQUEST,
-          `invalid sessions.spawn params: ${formatValidationErrors(validateSessionsSpawnParams.errors)}`,
+          `invalid sessions.subagents params: ${formatValidationErrors(validateSessionsSubagentsParams.errors)}`,
         ),
       );
       return;
     }
-
-    const p = params as {
-      requesterSessionKey: string;
-      task: string;
-      label?: string;
-      agentId?: string;
-      model?: string;
-      thinking?: string;
-      runTimeoutSeconds?: number;
-      timeoutSeconds?: number;
-      cleanup?: "delete" | "keep";
-      idempotencyKey?: string;
-      channel?: string;
-      accountId?: string;
-      to?: string;
-      threadId?: string | number;
-      groupId?: string;
-      groupChannel?: string;
-      groupSpace?: string;
-    };
-
+    const p = params;
     const cfg = loadConfig();
-    const mainKey = normalizeMainKey(cfg.session?.mainKey);
-    const scope = cfg.session?.scope ?? "per-sender";
-    const alias = scope === "global" ? "global" : mainKey;
-
-    const requesterSessionKeyRaw = String(p.requesterSessionKey ?? "").trim();
-    const requesterInternalKey = requesterSessionKeyRaw === "main" ? alias : requesterSessionKeyRaw;
-    if (!requesterInternalKey) {
-      respond(true, { status: "error", error: "requesterSessionKey required" }, undefined);
-      return;
-    }
-    if (isSubagentSessionKey(requesterInternalKey)) {
+    const rawRequester = String(p.requesterSessionKey ?? "").trim();
+    if (!rawRequester) {
       respond(
-        true,
-        {
-          status: "forbidden",
-          error: "sessions.spawn is not allowed from sub-agent sessions",
-        },
+        false,
         undefined,
+        errorShape(ErrorCodes.INVALID_REQUEST, "requesterSessionKey required"),
       );
       return;
     }
 
-    const requesterDisplayKey =
-      requesterInternalKey === alias || requesterInternalKey === mainKey
-        ? "main"
-        : requesterInternalKey;
+    const requesterSessionKey = rawRequester === "main" ? resolveMainSessionKey(cfg) : rawRequester;
+    const includeCompleted = p.includeCompleted !== false;
+    const limit =
+      typeof p.limit === "number" && Number.isFinite(p.limit)
+        ? Math.max(1, Math.min(200, Math.floor(p.limit)))
+        : 50;
 
-    const task = String(p.task ?? "").trim();
-    if (!task) {
-      respond(true, { status: "error", error: "task required" }, undefined);
-      return;
-    }
-
-    const runTimeoutSeconds = (() => {
-      const explicit =
-        typeof p.runTimeoutSeconds === "number" && Number.isFinite(p.runTimeoutSeconds)
-          ? Math.max(0, Math.floor(p.runTimeoutSeconds))
-          : undefined;
-      if (explicit !== undefined) {
-        return explicit;
-      }
-      const legacy =
-        typeof p.timeoutSeconds === "number" && Number.isFinite(p.timeoutSeconds)
-          ? Math.max(0, Math.floor(p.timeoutSeconds))
-          : undefined;
-      return legacy ?? 0;
-    })();
-
-    const requesterOrigin = normalizeDeliveryContext({
-      channel: typeof p.channel === "string" ? p.channel : undefined,
-      accountId: typeof p.accountId === "string" ? p.accountId : undefined,
-      to: typeof p.to === "string" ? p.to : undefined,
-      threadId: p.threadId,
-    });
-
-    const requesterAgentId = normalizeAgentId(parseAgentSessionKey(requesterInternalKey)?.agentId);
-    const requestedAgentIdRaw = typeof p.agentId === "string" ? p.agentId.trim() : "";
-    const targetAgentId = requestedAgentIdRaw
-      ? normalizeAgentId(requestedAgentIdRaw)
-      : requesterAgentId;
-
-    if (targetAgentId !== requesterAgentId) {
-      const allowAgents = resolveAgentConfig(cfg, requesterAgentId)?.subagents?.allowAgents ?? [];
-      const allowAny = allowAgents.some((value) => String(value ?? "").trim() === "*");
-      const normalizedTargetId = targetAgentId.toLowerCase();
-      const allowSet = new Set(
-        allowAgents
-          .filter((value) => String(value ?? "").trim() && String(value ?? "").trim() !== "*")
-          .map((value) => normalizeAgentId(String(value ?? "")).toLowerCase()),
-      );
-      if (!allowAny && !allowSet.has(normalizedTargetId)) {
-        const allowedText = allowAny
-          ? "*"
-          : allowSet.size > 0
-            ? Array.from(allowSet).join(", ")
-            : "none";
-        respond(
-          true,
-          {
-            status: "forbidden",
-            error: `agentId is not allowed for sessions.spawn (allowed: ${allowedText})`,
-          },
-          undefined,
-        );
-        return;
-      }
-    }
-
-    const idempotencyKeyRaw =
-      typeof p.idempotencyKey === "string" && p.idempotencyKey.trim()
-        ? p.idempotencyKey.trim()
-        : undefined;
-    const childRunId = idempotencyKeyRaw ?? randomUUID();
-    const cached = context.dedupe.get(`sessions.spawn:${childRunId}`);
-    if (cached) {
-      respond(cached.ok, cached.payload, cached.error, { cached: true });
-      return;
-    }
-
-    const childSessionKey = `agent:${targetAgentId}:subagent:${randomUUID()}`;
-    const spawnedByKey = requesterInternalKey;
-    const label = typeof p.label === "string" ? p.label.trim() : "";
-    const cleanup = p.cleanup === "delete" || p.cleanup === "keep" ? p.cleanup : "delete";
-
-    // Resolve default model selection for the child session.
-    const targetAgentConfig = resolveAgentConfig(cfg, targetAgentId);
-    const modelOverride = typeof p.model === "string" ? p.model.trim() : "";
-    const inheritedModel = (() => {
-      const { entry } = loadSessionEntry(requesterInternalKey);
-      const model = typeof entry?.model === "string" ? entry.model.trim() : "";
-      return model || undefined;
-    })();
-    const resolvedModel =
-      (modelOverride ? modelOverride : undefined) ??
-      inheritedModel ??
-      normalizeModelSelection(targetAgentConfig?.subagents?.model) ??
-      normalizeModelSelection(cfg.agents?.defaults?.subagents?.model);
-
-    // Validate thinking override.
-    let thinkingOverride: string | undefined;
-    const thinkingOverrideRaw = typeof p.thinking === "string" ? p.thinking.trim() : "";
-    if (thinkingOverrideRaw) {
-      const normalized = normalizeThinkLevel(thinkingOverrideRaw);
-      if (!normalized) {
-        const { provider, model } = splitModelRef(resolvedModel);
-        const hint = formatThinkingLevels(provider, model);
-        respond(
-          true,
-          {
-            status: "error",
-            error: `Invalid thinking level "${thinkingOverrideRaw}". Use one of: ${hint}.`,
-          },
-          undefined,
-        );
-        return;
-      }
-      thinkingOverride = normalized;
-    }
-
-    // Ensure the child session exists and is linked to its requester.
-    const spawnedByPatch = await (async () => {
-      const target = resolveGatewaySessionStoreTarget({ cfg, key: childSessionKey });
-      const storePath = target.storePath;
-      return await updateSessionStore(storePath, async (store) => {
-        const primaryKey = target.storeKeys[0] ?? childSessionKey;
-        const existingKey = target.storeKeys.find((candidate) => store[candidate]);
-        if (existingKey && existingKey !== primaryKey && !store[primaryKey]) {
-          store[primaryKey] = store[existingKey];
-          delete store[existingKey];
-        }
-        return await applySessionsPatchToStore({
-          cfg,
-          store,
-          storeKey: primaryKey,
-          patch: {
-            key: primaryKey,
-            spawnedBy: spawnedByKey,
-          },
-          loadGatewayModelCatalog: context.loadGatewayModelCatalog,
-        });
+    const rows = listSubagentRunsForRequester(requesterSessionKey)
+      .toSorted((a, b) => {
+        const aTime = a.startedAt ?? a.createdAt ?? 0;
+        const bTime = b.startedAt ?? b.createdAt ?? 0;
+        return bTime - aTime;
+      })
+      .filter((entry) => includeCompleted || !entry.endedAt)
+      .slice(0, limit)
+      .map((entry): SubagentTaskRow => {
+        const terminalOutcome = entry.outcome?.status;
+        const status = !entry.endedAt
+          ? "running"
+          : terminalOutcome === "ok" || terminalOutcome == null
+            ? "done"
+            : "error";
+        const runtimeMs =
+          typeof entry.startedAt === "number"
+            ? Math.max(0, (entry.endedAt ?? Date.now()) - entry.startedAt)
+            : undefined;
+        return {
+          taskId: entry.runId,
+          runId: entry.runId,
+          assignedRunId: entry.runId,
+          childSessionKey: entry.childSessionKey,
+          assignedSessionKey: entry.childSessionKey,
+          requesterSessionKey: entry.requesterSessionKey,
+          label: entry.label,
+          task: entry.task,
+          status,
+          cleanup: entry.cleanup,
+          model: entry.model,
+          modelApplied: entry.modelApplied,
+          routing: entry.routing,
+          complexity: entry.complexity,
+          outcome: entry.outcome,
+          createdAt: entry.createdAt,
+          startedAt: entry.startedAt,
+          endedAt: entry.endedAt,
+          runtimeMs,
+        };
       });
-    })();
-    if (!spawnedByPatch.ok) {
-      respond(
-        true,
-        { status: "error", error: spawnedByPatch.error.message, childSessionKey },
-        undefined,
-      );
-      return;
-    }
 
-    // Best-effort model patch for the child session.
-    let modelWarning: string | undefined;
-    let modelApplied = false;
-    if (resolvedModel) {
-      const patched = await (async () => {
-        const target = resolveGatewaySessionStoreTarget({ cfg, key: childSessionKey });
-        const storePath = target.storePath;
-        return await updateSessionStore(storePath, async (store) => {
-          const primaryKey = target.storeKeys[0] ?? childSessionKey;
-          const existingKey = target.storeKeys.find((candidate) => store[candidate]);
-          if (existingKey && existingKey !== primaryKey && !store[primaryKey]) {
-            store[primaryKey] = store[existingKey];
-            delete store[existingKey];
-          }
-          return await applySessionsPatchToStore({
-            cfg,
-            store,
-            storeKey: primaryKey,
-            patch: {
-              key: primaryKey,
-              model: resolvedModel,
-            },
-            loadGatewayModelCatalog: context.loadGatewayModelCatalog,
-          });
-        });
-      })();
-
-      if (patched.ok) {
-        modelApplied = true;
-      } else {
-        const messageText = String(patched.error.message ?? "error");
-        const recoverable =
-          messageText.includes("invalid model") || messageText.includes("model not allowed");
-        if (!recoverable) {
-          respond(true, { status: "error", error: messageText, childSessionKey }, undefined);
-          return;
-        }
-        modelWarning = messageText;
-      }
-    }
-
-    const childSystemPrompt = buildSubagentSystemPrompt({
-      requesterSessionKey: requesterDisplayKey,
-      requesterOrigin,
-      childSessionKey,
-      label: label || undefined,
-      task,
-    });
-
-    // Fire-and-forget background run.
-    void agentCommand(
-      {
-        message: task,
-        sessionKey: childSessionKey,
-        channel: requesterOrigin?.channel,
-        accountId: requesterOrigin?.accountId,
-        to: requesterOrigin?.to,
-        threadId: requesterOrigin?.threadId,
-        deliver: false,
-        lane: AGENT_LANE_SUBAGENT,
-        extraSystemPrompt: childSystemPrompt,
-        thinking: thinkingOverride,
-        timeout: runTimeoutSeconds > 0 ? String(runTimeoutSeconds) : undefined,
-        runId: childRunId,
-        spawnedBy: spawnedByKey,
-        groupId: p.groupId ?? undefined,
-        groupChannel: p.groupChannel ?? undefined,
-        groupSpace: p.groupSpace ?? undefined,
-      },
-      defaultRuntime,
-      context.deps,
-    ).catch((err) => {
-      context.logGateway.error(`sessions.spawn run failed: ${String(err)}`);
-    });
-
-    registerSubagentRun({
-      runId: childRunId,
-      childSessionKey,
-      requesterSessionKey: requesterInternalKey,
-      requesterOrigin,
-      requesterDisplayKey,
-      task,
-      cleanup,
-      label: label || undefined,
-      runTimeoutSeconds,
-    });
-
-    const payload = {
-      status: "accepted" as const,
-      childSessionKey,
-      runId: childRunId,
-      modelApplied: resolvedModel ? modelApplied : undefined,
-      warning: modelWarning,
-    };
-    context.dedupe.set(`sessions.spawn:${childRunId}`, {
+    const active = rows.filter((row) => row.status === "running").length;
+    const result: SessionsSubagentsResult = {
       ts: Date.now(),
-      ok: true,
-      payload,
-    });
-    respond(true, payload, undefined, { runId: childRunId });
+      requesterSessionKey,
+      count: rows.length,
+      active,
+      tasks: rows,
+    };
+    respond(true, result, undefined);
   },
   "sessions.preview": ({ params, respond }) => {
     if (!validateSessionsPreviewParams(params)) {

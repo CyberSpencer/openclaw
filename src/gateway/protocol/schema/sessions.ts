@@ -54,6 +54,15 @@ export const SessionsListParamsSchema = Type.Object(
   { additionalProperties: false },
 );
 
+export const SessionsSubagentsParamsSchema = Type.Object(
+  {
+    requesterSessionKey: NonEmptyString,
+    limit: Type.Optional(Type.Integer({ minimum: 1, maximum: 200 })),
+    includeCompleted: Type.Optional(Type.Boolean()),
+  },
+  { additionalProperties: false },
+);
+
 export const SessionsPreviewParamsSchema = Type.Object(
   {
     keys: Type.Array(NonEmptyString, { minItems: 1 }),
