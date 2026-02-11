@@ -16,7 +16,7 @@ const DEFAULT_TTS_PORT = 9002;
 const REQUEST_TIMEOUT_MS = 10_000;
 const DEFAULT_TTS_TIMEOUT_MS = 60_000;
 const MIN_TTS_TIMEOUT_MS = 30_000;
-const MAX_STT_AUDIO_BASE64_CHARS = 20_000_000;
+const MAX_STT_AUDIO_BASE64_CHARS = 2_600_000;
 const MAX_TTS_TEXT_CHARS = 12_000;
 
 // ---------------------------------------------------------------------------
@@ -247,6 +247,12 @@ export const sparkVoiceHandlers: GatewayRequestHandlers = {
       const controller = new AbortController();
       const timer = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
 
+      const formatLog = body.format ?? "webm";
+      const sampleRateLog = body.sample_rate ?? 16_000;
+      console.warn(
+        `[spark-voice] STT request: format=${formatLog} sample_rate=${sampleRateLog} audio_base64_len=${audioBase64.length}`,
+      );
+
       try {
         const response = await fetch(url, {
           method: "POST",
@@ -256,17 +262,29 @@ export const sparkVoiceHandlers: GatewayRequestHandlers = {
         });
 
         if (!response.ok) {
-          respond(
-            false,
-            undefined,
-            errorShape(ErrorCodes.UNAVAILABLE, `Spark STT returned HTTP ${response.status}`),
-          );
+          const bodyText = await response.text().catch(() => "");
+          console.warn(`[spark-voice] STT HTTP ${response.status}: ${bodyText.slice(0, 200)}`);
+          let detail = "";
+          try {
+            const parsed = JSON.parse(bodyText) as Record<string, unknown>;
+            detail = typeof parsed?.detail === "string" ? parsed.detail : "";
+          } catch {
+            /* not JSON */
+          }
+          const msg = detail
+            ? `Spark STT (${response.status}): ${detail}`
+            : `Spark STT returned HTTP ${response.status}`;
+          respond(false, undefined, errorShape(ErrorCodes.UNAVAILABLE, msg));
           return;
         }
 
         const result = (await response.json()) as Record<string, unknown>;
+        const text = result.text ?? "";
+        console.warn(
+          `[spark-voice] STT success: text_len=${typeof text === "string" ? text.length : 0}`,
+        );
         respond(true, {
-          text: result.text ?? "",
+          text,
           confidence: result.confidence,
           language_detected: result.language_detected,
         });
@@ -275,6 +293,7 @@ export const sparkVoiceHandlers: GatewayRequestHandlers = {
       }
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
+      console.warn(`[spark-voice] STT failed: ${message}`);
       respond(false, undefined, errorShape(ErrorCodes.UNAVAILABLE, `Spark STT failed: ${message}`));
     }
   },
@@ -352,11 +371,18 @@ export const sparkVoiceHandlers: GatewayRequestHandlers = {
         });
 
         if (!response.ok) {
-          respond(
-            false,
-            undefined,
-            errorShape(ErrorCodes.UNAVAILABLE, `Spark TTS returned HTTP ${response.status}`),
-          );
+          const bodyText = await response.text().catch(() => "");
+          let detail = "";
+          try {
+            const parsed = JSON.parse(bodyText) as Record<string, unknown>;
+            detail = typeof parsed?.detail === "string" ? parsed.detail : "";
+          } catch {
+            /* not JSON */
+          }
+          const msg = detail
+            ? `Spark TTS (${response.status}): ${detail}`
+            : `Spark TTS returned HTTP ${response.status}`;
+          respond(false, undefined, errorShape(ErrorCodes.UNAVAILABLE, msg));
           return;
         }
 

@@ -12,6 +12,17 @@ import { html, nothing } from "lit";
 import type { VoiceState, VoiceCapabilities, VoiceTimings } from "../controllers/voice.ts";
 import { icons } from "../icons.ts";
 
+/** Preset mood labels -> instruct strings for TTS (backend accepts natural-language style instructions). */
+export const TTS_MOOD_PRESETS: { value: string; label: string }[] = [
+  { value: "", label: "Default" },
+  { value: "Speak warmly and calmly", label: "Warm & calm" },
+  { value: "Speak happily", label: "Happy" },
+  { value: "Use a calm tone", label: "Calm" },
+  { value: "Sound serious", label: "Serious" },
+  { value: "Speak slowly and clearly", label: "Slow & clear" },
+  { value: "Friendly and warm", label: "Friendly" },
+];
+
 export type VoiceBarProps = {
   state: VoiceState;
   visible: boolean;
@@ -22,6 +33,14 @@ export type VoiceBarProps = {
   onStopConversation: () => void;
   onClose: () => void;
   onRetry: () => void;
+  /** Spark TTS: voice list from GET /v1/voices */
+  sparkVoices: { id: string; name: string; description?: string }[];
+  ttsVoice: string | null;
+  ttsInstruct: string | null;
+  ttsLanguage: string | null;
+  onTtsVoiceChange: (voice: string | null) => void;
+  onTtsInstructChange: (instruct: string | null) => void;
+  onTtsLanguageChange: (language: string | null) => void;
 };
 
 function renderCapabilityIndicator(capabilities: VoiceCapabilities | null) {
@@ -171,6 +190,13 @@ export function renderVoiceBar(props: VoiceBarProps) {
     onStopConversation,
     onClose,
     onRetry,
+    sparkVoices,
+    ttsVoice,
+    ttsInstruct,
+    ttsLanguage,
+    onTtsVoiceChange,
+    onTtsInstructChange,
+    onTtsLanguageChange,
   } = props;
 
   const sparkGate = state.mode !== "spark" || state.sparkVoiceAvailable;
@@ -248,6 +274,40 @@ export function renderVoiceBar(props: VoiceBarProps) {
         expanded
           ? html`
             <div class="voice-bar__details">
+              ${
+                state.mode === "spark"
+                  ? html`
+                    <div class="voice-bar__tts-options">
+                      <label class="voice-bar__tts-label">TTS voice</label>
+                      <select
+                        class="voice-bar__tts-select"
+                        .value=${ttsVoice ?? ""}
+                        @change=${(e: Event) =>
+                          onTtsVoiceChange((e.target as HTMLSelectElement).value || null)}
+                        title="Speaker identity (who speaks)"
+                      >
+                        <option value="">Default (Ryan)</option>
+                        ${sparkVoices.map(
+                          (v) =>
+                            html`<option value=${v.name} title=${v.description ?? ""}>${v.name}</option>`,
+                        )}
+                      </select>
+                      <label class="voice-bar__tts-label">Mood</label>
+                      <select
+                        class="voice-bar__tts-select"
+                        .value=${ttsInstruct ?? ""}
+                        @change=${(e: Event) =>
+                          onTtsInstructChange((e.target as HTMLSelectElement).value || null)}
+                        title="How it's said (tone, style)"
+                      >
+                        ${TTS_MOOD_PRESETS.map(
+                          (p) => html`<option value=${p.value}>${p.label}</option>`,
+                        )}
+                      </select>
+                    </div>
+                  `
+                  : nothing
+              }
               <label class="field checkbox voice-bar__parity-toggle">
                 <input
                   type="checkbox"
@@ -565,6 +625,27 @@ export const voiceBarStyles = `
 .voice-bar__details {
   padding: 1rem;
   border-top: 1px solid var(--border-color, #e0e0e0);
+}
+
+.voice-bar__tts-options {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 0.25rem 0.75rem;
+  align-items: center;
+  margin-bottom: 1rem;
+}
+
+.voice-bar__tts-label {
+  font-size: 0.8rem;
+  color: var(--text-muted, #666);
+}
+
+.voice-bar__tts-select {
+  font-size: 0.85rem;
+  padding: 0.35rem 0.5rem;
+  border: 1px solid var(--border-color, #e0e0e0);
+  border-radius: 6px;
+  background: var(--card-bg, #fff);
 }
 
 .voice-bar__capabilities {

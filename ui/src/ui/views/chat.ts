@@ -79,10 +79,11 @@ export type ChatProps = {
   sparkMicRecording?: boolean;
   onMicClick?: () => void;
   // Per-message actions (speaker = DGX TTS, copy = clipboard)
-  onSpeakClick?: (text: string) => void;
+  onSpeakClick?: (text: string, messageKey?: string) => void;
   // TTS playback progress and stop
   ttsSpeaking?: boolean;
   ttsProgress?: string | null;
+  ttsSpeakingMessageKey?: string | null;
   onStopSpeaking?: () => void;
 };
 
@@ -646,7 +647,7 @@ function renderTerminalEntry(props: ChatProps, item: TerminalItem): TemplateResu
                 type="button"
                 title="Speak with DGX TTS"
                 aria-label="Speak"
-                @click=${() => props.onSpeakClick?.(text.trim())}
+                @click=${() => props.onSpeakClick?.(text.trim(), item.key)}
               >
                 ${icons.speaker}
               </button>
@@ -657,6 +658,9 @@ function renderTerminalEntry(props: ChatProps, item: TerminalItem): TemplateResu
     `;
   }
 
+  const isThisMessageSpeaking =
+    props.ttsSpeaking && props.ttsProgress && props.ttsSpeakingMessageKey === item.key;
+
   if (item.kind === "stream") {
     const sparkAvailable = Boolean(props.sparkVoiceAvailable);
     return html`
@@ -665,6 +669,11 @@ function renderTerminalEntry(props: ChatProps, item: TerminalItem): TemplateResu
           <span class="terminal-entry__role">${item.who}</span>
           <span class="terminal-entry__time">${formatClock(item.ts)}</span>
           <span class="terminal-entry__badge">LIVE</span>
+          ${
+            isThisMessageSpeaking
+              ? html`<span class="pill terminal-entry__tts-status" role="status">${props.ttsProgress}</span>`
+              : nothing
+          }
           ${renderAssistantActions(item.text, sparkAvailable)}
         </div>
         <div class="terminal-entry__body">
@@ -781,6 +790,11 @@ ${item.text}<span class="terminal-cursor" aria-hidden="true"></span></pre>
       <div class="terminal-entry__meta">
         <span class="terminal-entry__role">${item.who}</span>
         <span class="terminal-entry__time">${formatClock(item.ts)}</span>
+        ${
+          isThisMessageSpeaking
+            ? html`<span class="pill terminal-entry__tts-status" role="status">${props.ttsProgress}</span>`
+            : nothing
+        }
         ${assistantActions}
       </div>
       <div class="terminal-entry__body">

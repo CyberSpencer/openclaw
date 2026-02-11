@@ -69,6 +69,11 @@ export type VoiceState = {
   error: string | null;
   capabilities: VoiceCapabilities | null;
   timings: VoiceTimings | null;
+
+  // Optional TTS steering (voice = who, instruct = mood/style, language = hint)
+  ttsVoice: string | null;
+  ttsInstruct: string | null;
+  ttsLanguage: string | null;
 };
 
 export type VoiceCapabilities = {
@@ -175,6 +180,11 @@ export function createVoiceState(): VoiceState {
     error: null,
     capabilities: null,
     timings: null,
+
+    // TTS steering (synced from app when starting conversation)
+    ttsVoice: null,
+    ttsInstruct: null,
+    ttsLanguage: null,
   };
 }
 
@@ -696,6 +706,7 @@ export async function processVoiceInputSpark(
     console.log("[Voice/Spark] STT result:", { text: state.transcription, sttMs });
 
     if (!state.transcription.trim()) {
+      state.error = "No speech detected";
       state.timings = { sttMs, totalMs: Date.now() - startedAt };
       return {
         sessionId: "",
@@ -773,11 +784,18 @@ export async function processVoiceInputSpark(
 
     const ttsStart = Date.now();
     let ttsResult: Record<string, unknown> | null = null;
+    const ttsParams: Record<string, string> = { text: ttsInput, format: "webm" };
+    if (state.ttsVoice != null && state.ttsVoice.trim() !== "") {
+      ttsParams.voice = state.ttsVoice.trim();
+    }
+    if (state.ttsInstruct != null && state.ttsInstruct.trim() !== "") {
+      ttsParams.instruct = state.ttsInstruct.trim();
+    }
+    if (state.ttsLanguage != null && state.ttsLanguage.trim() !== "") {
+      ttsParams.language = state.ttsLanguage.trim();
+    }
     try {
-      ttsResult = await state.client.request("spark.voice.tts", {
-        text: ttsInput,
-        format: "webm",
-      });
+      ttsResult = await state.client.request("spark.voice.tts", ttsParams);
     } catch (ttsErr) {
       console.error("[Voice/Spark] TTS error:", ttsErr);
       state.error = `TTS failed: ${ttsErr instanceof Error ? ttsErr.message : String(ttsErr)}`;

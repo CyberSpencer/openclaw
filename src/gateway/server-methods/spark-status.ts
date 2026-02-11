@@ -422,13 +422,16 @@ export const sparkStatusHandlers: GatewayRequestHandlers = {
         const statsPort = resolveDgxStatsPort(env);
         const stats = await fetchDgxStats(host, statsPort);
         if (stats) {
+          // When voice pipeline (STT/TTS) is up, treat Spark as active even if PersonaPlex or Moshi are down.
+          const voiceAvailable = stats.voice?.available ?? false;
+          const active = stats.overall !== "down" || voiceAvailable;
           const payload = {
             enabled: true,
-            active: stats.overall !== "down",
+            active,
             host,
             checkedAt,
             source: "dgx-stats" as const,
-            voiceAvailable: stats.voice?.available ?? false,
+            voiceAvailable,
             overall: stats.overall,
             counts: stats.counts ?? null,
             services: mapDgxServices(stats),
