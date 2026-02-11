@@ -22,6 +22,7 @@ import { talkHandlers } from "./server-methods/talk.js";
 import { ttsHandlers } from "./server-methods/tts.js";
 import { updateHandlers } from "./server-methods/update.js";
 import { usageHandlers } from "./server-methods/usage.js";
+import { voiceHandlers } from "./server-methods/voice.js";
 import { voicewakeHandlers } from "./server-methods/voicewake.js";
 import { webHandlers } from "./server-methods/web.js";
 import { wizardHandlers } from "./server-methods/wizard.js";
@@ -57,6 +58,8 @@ const READ_METHODS = new Set([
   "usage.cost",
   "tts.status",
   "tts.providers",
+  "voice.status",
+  "voice.config",
   "models.list",
   "agents.list",
   "agent.identity.get",
@@ -88,6 +91,10 @@ const WRITE_METHODS = new Set([
   "chat.send",
   "chat.abort",
   "browser.request",
+  "voice.process",
+  "voice.processText",
+  "voice.transcribe",
+  "voice.synthesize",
 ]);
 
 function authorizeGatewayMethod(method: string, client: GatewayRequestOptions["client"]) {
@@ -166,6 +173,7 @@ export const coreGatewayHandlers: GatewayRequestHandlers = {
   ...connectHandlers,
   ...logsHandlers,
   ...voicewakeHandlers,
+  ...voiceHandlers,
   ...healthHandlers,
   ...channelsHandlers,
   ...chatHandlers,
