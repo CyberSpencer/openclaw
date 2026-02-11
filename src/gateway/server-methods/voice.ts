@@ -236,6 +236,7 @@ export const voiceHandlers: GatewayRequestHandlers = {
           detectSensitive: config.router.detectSensitive,
           useComplexity: config.router.useComplexity,
           localModel: config.router.localModel,
+          cloudModel: config.router.cloudModel,
           complexityThreshold: config.router.complexityThreshold,
         },
         personaplex: {

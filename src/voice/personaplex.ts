@@ -284,7 +284,7 @@ async function processWithPersonaPlexWebSocket(
             return;
           }
 
-          const responseText = textParts.join("").replace(/\\s+/g, " ").trim();
+          const responseText = textParts.join("").replace(/\s+/g, " ").trim();
           await finish({
             success: true,
             audioBuffer: wavOut.wav,
