@@ -878,10 +878,7 @@ No filesystem access (messaging/session tools enabled):
             "gateway",
             "image",
           ],
-        },
-      },
-    ],
-  },
+
 }
 ```
 
