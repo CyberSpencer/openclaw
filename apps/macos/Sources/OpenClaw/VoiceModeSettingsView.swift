@@ -14,11 +14,13 @@ struct VoiceModeSettingsView: View {
     @State private var complexityThreshold: Double = 5
     @State private var localModel: String = "llama3:8b"
     @State private var personaplexEnabled: Bool = false
+    @State private var syncingFromManager = false
 
     var body: some View {
         Form {
             Section("Voice Mode") {
                 Picker("Mode", selection: $mode) {
+                    Text("Spark (DGX Voice)").tag(VoiceMode.spark)
                     Text("Option 2A (Local STT/TTS)").tag(VoiceMode.option2a)
                     Text("PersonaPlex S2S (Experimental)").tag(VoiceMode.personaplex)
                     Text("Hybrid (Auto-select)").tag(VoiceMode.hybrid)
@@ -137,10 +139,22 @@ struct VoiceModeSettingsView: View {
             await voiceManager.loadConfig()
             loadFromManager()
         }
+        .onChange(of: mode) { _, _ in syncToManager() }
+        .onChange(of: sttProvider) { _, _ in syncToManager() }
+        .onChange(of: ttsProvider) { _, _ in syncToManager() }
+        .onChange(of: routerEnabled) { _, _ in syncToManager() }
+        .onChange(of: routerMode) { _, _ in syncToManager() }
+        .onChange(of: sensitiveDetection) { _, _ in syncToManager() }
+        .onChange(of: complexityRouting) { _, _ in syncToManager() }
+        .onChange(of: complexityThreshold) { _, _ in syncToManager() }
+        .onChange(of: localModel) { _, _ in syncToManager() }
+        .onChange(of: personaplexEnabled) { _, _ in syncToManager() }
     }
 
     private var modeDescription: String {
         switch mode {
+        case .spark:
+            return "Uses DGX Spark STT/TTS services as the primary voice pipeline."
         case .option2a:
             return "Uses local whisper-cpp for speech recognition and ElevenLabs for synthesis. Routes requests through the model router."
         case .personaplex:
@@ -151,6 +165,7 @@ struct VoiceModeSettingsView: View {
     }
 
     private func loadFromManager() {
+        syncingFromManager = true
         mode = voiceManager.config.mode
         sttProvider = voiceManager.config.sttProvider
         ttsProvider = voiceManager.config.ttsProvider
@@ -161,6 +176,23 @@ struct VoiceModeSettingsView: View {
         complexityThreshold = Double(voiceManager.config.complexityThreshold)
         localModel = voiceManager.config.localModel
         personaplexEnabled = voiceManager.config.personaplexEnabled
+        syncingFromManager = false
+    }
+
+    private func syncToManager() {
+        guard !syncingFromManager else { return }
+        voiceManager.updateConfig { cfg in
+            cfg.mode = mode
+            cfg.sttProvider = sttProvider
+            cfg.ttsProvider = ttsProvider
+            cfg.routerEnabled = routerEnabled
+            cfg.routerMode = routerMode
+            cfg.sensitiveDetection = sensitiveDetection
+            cfg.complexityRouting = complexityRouting
+            cfg.complexityThreshold = Int(complexityThreshold)
+            cfg.localModel = localModel
+            cfg.personaplexEnabled = personaplexEnabled
+        }
     }
 }
 

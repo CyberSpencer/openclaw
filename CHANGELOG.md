@@ -329,10 +329,6 @@ Docs: https://docs.openclaw.ai
 
 - **BREAKING:** Memory Search now defaults to the `qdrant` store driver (was `sqlite`). Set `agents.defaults.memorySearch.store.driver: sqlite` to keep the previous behavior.
 
-### Breaking
-
-- **BREAKING:** Memory Search now defaults to the `qdrant` store driver (was `sqlite`). Set `agents.defaults.memorySearch.store.driver: sqlite` to keep the previous behavior.
-
 ### Fixes
 
 - Security: restrict local path extraction in media parser to prevent LFI. (#4880)

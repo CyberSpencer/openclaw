@@ -164,6 +164,7 @@ export async function transcribeFileWithWhisper(
     return {
       success: false,
       error: `Audio file not found: ${audioPath}`,
+      latencyMs: Date.now() - startTime,
     };
   }
 

@@ -139,9 +139,9 @@ const makeOpenAiConfig = (modelIds: string[]) =>
     },
   }) satisfies OpenClawConfig;
 
-const ensureModels = async (cfg: OpenClawConfig) => {
+const ensureModels = async (cfg: OpenClawConfig): Promise<void> => {
   const { ensureOpenClawModelsJson } = await import("./models-config.js");
-  return ensureOpenClawModelsJson(cfg, agentDir) as unknown;
+  await ensureOpenClawModelsJson(cfg, agentDir);
 };
 
 const nextSessionFile = () => {

@@ -336,14 +336,14 @@ export async function applySessionsPatchToStore(params: {
   }
 
   if ("taskPlan" in patch) {
-    const raw = (patch as { taskPlan?: unknown }).taskPlan;
+    const raw = patch.taskPlan;
     if (raw === null) {
-      delete (next as { taskPlan?: unknown }).taskPlan;
+      delete next.taskPlan;
     } else if (raw !== undefined) {
       // Best-effort normalization: ensure tasks array is capped.
       const plan = raw as { tasks?: unknown } & Record<string, unknown>;
       const tasks = Array.isArray(plan.tasks) ? plan.tasks.slice(0, 50) : [];
-      (next as { taskPlan?: unknown }).taskPlan = { ...plan, tasks };
+      next.taskPlan = { ...plan, tasks };
     }
   }
 

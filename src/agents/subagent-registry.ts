@@ -66,6 +66,14 @@ function resumeSubagentRun(runId: string) {
     if (!beginSubagentCleanup(runId)) {
       return;
     }
+    if (entry.outcome) {
+      void patchRequesterTaskPlanFromSubagent({
+        requesterSessionKey: entry.requesterSessionKey,
+        childSessionKey: entry.childSessionKey,
+        childRunId: entry.runId,
+        outcome: entry.outcome,
+      });
+    }
     const requesterOrigin = normalizeDeliveryContext(entry.requesterOrigin);
     void runSubagentAnnounceFlow({
       childSessionKey: entry.childSessionKey,
@@ -443,6 +451,12 @@ async function waitForSubagentCompletion(runId: string, waitTimeoutMs: number) {
     entry.outcome =
       wait.status === "error" ? { status: "error", error: waitError } : { status: "ok" };
     mutated = true;
+    void patchRequesterTaskPlanFromSubagent({
+      requesterSessionKey: entry.requesterSessionKey,
+      childSessionKey: entry.childSessionKey,
+      childRunId: entry.runId,
+      outcome: entry.outcome,
+    });
     if (mutated) {
       persistSubagentRuns();
     }

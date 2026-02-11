@@ -1,4 +1,5 @@
 import Foundation
+import Observation
 import OSLog
 
 /// Enhanced voice mode configuration supporting local STT/TTS and model routing.
@@ -8,7 +9,7 @@ import OSLog
 /// - Model routing (sensitive data detection, complexity heuristics)
 /// - PersonaPlex S2S experimental support
 struct VoiceModeConfig {
-    var mode: VoiceMode = .option2a
+    var mode: VoiceMode = .spark
     var sttProvider: STTProvider = .apple
     var ttsProvider: TTSProvider = .elevenlabs
     var routerEnabled: Bool = true
@@ -24,6 +25,7 @@ struct VoiceModeConfig {
 }
 
 enum VoiceMode: String, CaseIterable {
+    case spark = "spark"  // DGX Spark STT/TTS (primary)
     case option2a = "option2a"  // Local STT/TTS with model routing
     case personaplex = "personaplex"  // Speech-to-Speech (experimental)
     case hybrid = "hybrid"  // Auto-select based on context
@@ -62,6 +64,10 @@ final class VoiceModeManager {
     private(set) var personaplexAvailable: Bool = false
     private(set) var lastRouterDecision: RouterDecision?
 
+    func updateConfig(_ update: (inout VoiceModeConfig) -> Void) {
+        update(&self.config)
+    }
+
     /// Load voice mode configuration from gateway.
     func loadConfig() async {
         do {
@@ -95,7 +101,7 @@ final class VoiceModeManager {
 
     private func parseConfig(_ dict: [String: Any]) {
         if let mode = dict["mode"] as? String {
-            self.config.mode = VoiceMode(rawValue: mode) ?? .option2a
+            self.config.mode = VoiceMode(rawValue: mode) ?? .spark
         }
         if let stt = dict["sttProvider"] as? String {
             self.config.sttProvider = STTProvider(rawValue: stt) ?? .apple

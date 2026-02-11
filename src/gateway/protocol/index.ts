@@ -581,6 +581,7 @@ export type {
   SessionsDeleteParams,
   SessionsCompactParams,
   SessionsUsageParams,
+  SessionsSpawnParams,
   CronJob,
   CronListParams,
   CronStatusParams,

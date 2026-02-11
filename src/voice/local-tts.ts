@@ -6,10 +6,9 @@
  */
 
 import { spawn, execSync } from "node:child_process";
-import { existsSync, mkdirSync, unlinkSync, readFileSync } from "node:fs";
+import { existsSync, mkdirSync, unlinkSync, readFileSync, readdirSync, statSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
-
 import type { VoiceLocalTtsConfig } from "../config/types.voice.js";
 
 const DEFAULT_SAG_VOICE_ID = "pMsXgVXv3BLzUgSXRplE"; // Adam (default ElevenLabs voice)
@@ -343,7 +342,6 @@ export function cleanupTtsCache(): number {
     return 0;
   }
 
-  const { readdirSync, statSync } = require("node:fs");
   const fiveMinutesAgo = Date.now() - 5 * 60 * 1000;
   let cleaned = 0;
 
