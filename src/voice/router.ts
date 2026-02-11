@@ -11,7 +11,7 @@ import type { VoiceRouterConfig, VoiceRouterMode } from "../config/types.voice.j
 import { getDefaultRedactPatterns } from "../logging/redact.js";
 
 const DEFAULT_MODE: VoiceRouterMode = "auto";
-const DEFAULT_LOCAL_MODEL = "ollama/gpt-oss:120b";
+const DEFAULT_LOCAL_MODEL = "ollama/nemotron-3-nano:30b";
 const DEFAULT_CLOUD_MODEL = "openai-codex/gpt-5.3-codex";
 const DEFAULT_COMPLEXITY_THRESHOLD = 5;
 

@@ -1,11 +1,9 @@
 import { EventEmitter } from "node:events";
-import http from "node:http";
 import fs from "node:fs/promises";
+import http from "node:http";
 import os from "node:os";
 import path from "node:path";
-
 import { afterEach, describe, expect, it, vi } from "vitest";
-
 import { resolvePersonaPlexConfig, selectPersonaPlexEndpoint } from "./personaplex.js";
 
 async function createPersonaPlexInstallRoot(): Promise<string> {

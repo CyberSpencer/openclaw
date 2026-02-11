@@ -28,9 +28,7 @@ import { tmpdir } from "node:os";
 import os from "node:os";
 import path from "node:path";
 import { promisify } from "node:util";
-
 import WebSocket from "ws";
-
 import type { PersonaPlexConfig } from "../config/types.voice.js";
 import { prepareAudioForWhisper } from "./local-stt.js";
 
@@ -286,7 +284,7 @@ async function processWithPersonaPlexWebSocket(
             return;
           }
 
-          const responseText = textParts.join("").replace(/\\s+/g, " ").trim();
+          const responseText = textParts.join("").replace(/\s+/g, " ").trim();
           await finish({
             success: true,
             audioBuffer: wavOut.wav,

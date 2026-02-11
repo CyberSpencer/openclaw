@@ -10,12 +10,7 @@ export type VoiceTtsProvider = "elevenlabs" | "openai" | "edge" | "macos";
 
 export type VoiceRouterMode = "local" | "cloud" | "auto";
 
-/**
- * Voice mode used by runtime orchestration.
- * - spark: Spark STT/TTS + OpenClaw reply generation (primary)
- * - option2a/personaplex/hybrid: legacy values retained for compatibility
- */
-export type VoiceMode = "spark" | "option2a" | "personaplex" | "hybrid";
+export type VoiceMode = "option2a" | "personaplex" | "hybrid";
 
 export type VoiceWhisperConfig = {
   /** Path to whisper-cpp binary (default: looks in PATH). */
@@ -58,19 +53,6 @@ export type VoiceRouterConfig = {
   cloudModel?: string;
   /** Complexity threshold (0-10) above which to use cloud. */
   complexityThreshold?: number;
-};
-
-export type VoiceSparkTtsDefaultsConfig = {
-  /** Default voice name sent to Spark TTS when request omits one. */
-  voice?: string;
-  /** Alias for voice name. If both are set, speaker is preferred. */
-  speaker?: string;
-  /** Optional language hint for Spark TTS. */
-  language?: string;
-  /** Optional style prompt for Spark TTS. */
-  instruct?: string;
-  /** Optional default output format for Spark TTS. */
-  format?: "webm" | "wav" | "mp3";
 };
 
 export type PersonaPlexConfig = {
@@ -165,7 +147,7 @@ export type PersonaPlexConfig = {
 };
 
 export type VoiceConfig = {
-  /** Voice mode (default: spark). Legacy modes are accepted for compatibility. */
+  /** Voice mode: option2a (local STT+TTS), personaplex (S2S), hybrid (auto-select). */
   mode?: VoiceMode;
   /** Enable voice mode (default: false). */
   enabled?: boolean;
@@ -179,8 +161,6 @@ export type VoiceConfig = {
   localTts?: VoiceLocalTtsConfig;
   /** Model router configuration. */
   router?: VoiceRouterConfig;
-  /** Default Spark TTS request fields when caller omits per-request overrides. */
-  sparkTts?: VoiceSparkTtsDefaultsConfig;
   /** PersonaPlex S2S configuration (experimental). */
   personaplex?: PersonaPlexConfig;
   /** Enable streaming audio responses. */
@@ -195,12 +175,11 @@ export type VoiceConfig = {
 
 /** Resolved voice configuration with defaults applied. */
 export type ResolvedVoiceConfig = Required<
-  Omit<VoiceConfig, "whisper" | "localTts" | "router" | "sparkTts" | "personaplex">
+  Omit<VoiceConfig, "whisper" | "localTts" | "router" | "personaplex">
 > & {
   whisper: Required<VoiceWhisperConfig>;
   localTts: Required<VoiceLocalTtsConfig>;
   router: Required<VoiceRouterConfig>;
-  sparkTts: Required<VoiceSparkTtsDefaultsConfig>;
   personaplex: Required<PersonaPlexConfig>;
 };
 
