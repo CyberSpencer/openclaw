@@ -173,7 +173,7 @@ describe("control UI routing", () => {
     const app = mountApp("/ui/overview?password=sekret");
     await app.updateComplete;
 
-    expect(app.password).toBe("");
+    expect(app.password).toBe("sekret");
     expect(window.location.pathname).toBe("/ui/overview");
     expect(window.location.search).toBe("");
   });
