@@ -382,6 +382,9 @@ export class OpenClawApp extends LitElement {
   @state() chatThinkingLevel: string | null = null;
   @state() chatQueue: ChatQueueItem[] = [];
   @state() chatAttachments: ChatAttachment[] = [];
+  private chatDraftBySession: Record<string, string> = {};
+  private chatQueueBySession: Record<string, ChatQueueItem[]> = {};
+  private chatAttachmentsBySession: Record<string, ChatAttachment[]> = {};
   // ChatGPT-style thread list (separate from Sessions tab state)
   @state() chatThreadsLoading = false;
   @state() chatThreadsResult: SessionsListResult | null = null;
@@ -733,6 +736,9 @@ export class OpenClawApp extends LitElement {
     }
     if (this.connected && changed.has("sessionKey")) {
       void this.loadOrchestratorFromGateway({ seedIfMissing: true });
+    }
+    if (changed.has("chatMessage") || changed.has("chatQueue") || changed.has("chatAttachments")) {
+      this.persistComposeStateForSession(this.sessionKey);
     }
     this.handleSubagentMonitorUpdated(changed);
   }
@@ -1772,18 +1778,46 @@ export class OpenClawApp extends LitElement {
     }
   }
 
+  private persistComposeStateForSession(sessionKey: string) {
+    const key = sessionKey.trim();
+    if (!key) {
+      return;
+    }
+    this.chatDraftBySession[key] = this.chatMessage;
+    this.chatQueueBySession[key] = (this.chatQueue ?? []).map((item) => ({
+      ...item,
+      attachments: item.attachments ? [...item.attachments] : undefined,
+    }));
+    this.chatAttachmentsBySession[key] = [...(this.chatAttachments ?? [])];
+  }
+
+  private restoreComposeStateForSession(sessionKey: string) {
+    const key = sessionKey.trim();
+    this.chatMessage = key ? (this.chatDraftBySession[key] ?? "") : "";
+    this.chatQueue = key
+      ? (this.chatQueueBySession[key] ?? []).map((item) => ({
+          ...item,
+          attachments: item.attachments ? [...item.attachments] : undefined,
+        }))
+      : [];
+    this.chatAttachments = key ? [...(this.chatAttachmentsBySession[key] ?? [])] : [];
+  }
+
   openChatSession(sessionKey: string) {
     const key = sessionKey.trim();
     if (!key) {
       return;
     }
+    const previousSessionKey = (this.sessionKey ?? "").trim();
+    if (previousSessionKey) {
+      this.persistComposeStateForSession(previousSessionKey);
+    }
+
     this.sessionKey = key;
-    this.chatMessage = "";
-    this.chatAttachments = [];
+    this.restoreComposeStateForSession(key);
     this.chatStream = null;
     this.chatStreamStartedAt = null;
     this.chatRunId = null;
-    this.chatQueue = [];
     this.subagentMonitorResult = null;
     this.subagentMonitorError = null;
     this.resetToolStream();
