@@ -109,6 +109,7 @@ const WRITE_METHODS = new Set([
   "router.setEnabled",
   "spark.voice.stt",
   "spark.voice.tts",
+  "sessions.spawn",
 ]);
 
 function authorizeGatewayMethod(method: string, client: GatewayRequestOptions["client"]) {

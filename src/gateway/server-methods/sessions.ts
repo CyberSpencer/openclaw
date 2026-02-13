@@ -1,10 +1,12 @@
 import { randomUUID } from "node:crypto";
 import fs from "node:fs";
+import type { GatewayMessageChannel } from "../../utils/message-channel.js";
 import type { SessionsSubagentsResult, SubagentTaskRow } from "../session-utils.types.js";
 import type { GatewayRequestHandlers } from "./types.js";
 import { resolveDefaultAgentId } from "../../agents/agent-scope.js";
 import { abortEmbeddedPiRun, waitForEmbeddedPiRunEnd } from "../../agents/pi-embedded.js";
 import { listSubagentRunsForRequester } from "../../agents/subagent-registry.js";
+import { createSessionsSpawnTool } from "../../agents/tools/sessions-spawn-tool.js";
 import { stopSubagentsForRequester } from "../../auto-reply/reply/abort.js";
 import { clearSessionQueues } from "../../auto-reply/reply/queue.js";
 import { loadConfig } from "../../config/config.js";
@@ -28,6 +30,7 @@ import {
   validateSessionsPreviewParams,
   validateSessionsResetParams,
   validateSessionsResolveParams,
+  validateSessionsSpawnParams,
 } from "../protocol/index.js";
 import {
   archiveFileOnDisk,
@@ -151,6 +154,66 @@ export const sessionsHandlers: GatewayRequestHandlers = {
       tasks: rows,
     };
     respond(true, result, undefined);
+  },
+  "sessions.spawn": async ({ params, respond }) => {
+    if (!validateSessionsSpawnParams(params)) {
+      respond(
+        false,
+        undefined,
+        errorShape(
+          ErrorCodes.INVALID_REQUEST,
+          `invalid sessions.spawn params: ${formatValidationErrors(validateSessionsSpawnParams.errors)}`,
+        ),
+      );
+      return;
+    }
+
+    const p = params;
+    const cfg = loadConfig();
+    const rawRequester = String(p.requesterSessionKey ?? "").trim();
+    if (!rawRequester) {
+      respond(
+        false,
+        undefined,
+        errorShape(ErrorCodes.INVALID_REQUEST, "requesterSessionKey required"),
+      );
+      return;
+    }
+    const requesterSessionKey = rawRequester === "main" ? resolveMainSessionKey(cfg) : rawRequester;
+
+    const spawnTool = createSessionsSpawnTool({
+      agentSessionKey: requesterSessionKey,
+      agentChannel:
+        typeof p.channel === "string" ? (p.channel as GatewayMessageChannel) : undefined,
+      agentAccountId: typeof p.accountId === "string" ? p.accountId : undefined,
+      agentTo: typeof p.to === "string" ? p.to : undefined,
+      agentThreadId:
+        typeof p.threadId === "string" || typeof p.threadId === "number" ? p.threadId : undefined,
+      agentGroupId: typeof p.groupId === "string" ? p.groupId : undefined,
+      agentGroupChannel: typeof p.groupChannel === "string" ? p.groupChannel : undefined,
+      agentGroupSpace: typeof p.groupSpace === "string" ? p.groupSpace : undefined,
+    });
+
+    try {
+      const spawnResult = await spawnTool.execute("gateway.sessions.spawn", {
+        task: p.task,
+        label: p.label,
+        agentId: p.agentId,
+        model: p.model,
+        thinking: p.thinking,
+        runTimeoutSeconds: p.runTimeoutSeconds,
+        timeoutSeconds: p.timeoutSeconds,
+        cleanup: p.cleanup,
+      });
+      const payload =
+        spawnResult && typeof spawnResult === "object" && "details" in spawnResult
+          ? (spawnResult.details as Record<string, unknown> | undefined)
+          : undefined;
+      respond(true, payload ?? { status: "error", error: "sessions.spawn failed" }, undefined);
+    } catch (err) {
+      const message = err instanceof Error ? err.message : typeof err === "string" ? err : "error";
+      respond(false, undefined, errorShape(ErrorCodes.UNAVAILABLE, message));
+    }
   },
   "sessions.preview": ({ params, respond }) => {
     if (!validateSessionsPreviewParams(params)) {
