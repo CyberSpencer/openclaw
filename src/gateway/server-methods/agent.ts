@@ -93,6 +93,11 @@ export const agentHandlers: GatewayRequestHandlers = {
     };
     const cfg = loadConfig();
     const idem = request.idempotencyKey;
+    const dedupeRootConversationId =
+      typeof request.rootConversationId === "string" ? request.rootConversationId.trim() : "";
+    const dedupeThreadId = typeof request.threadId === "string" ? request.threadId.trim() : "";
+    const dedupeScope = `${dedupeRootConversationId}|${dedupeThreadId}`;
+    const dedupeKey = dedupeScope === "|" ? `agent:${idem}` : `agent:${idem}:${dedupeScope}`;
     const groupIdRaw = typeof request.groupId === "string" ? request.groupId.trim() : "";
     const groupChannelRaw =
       typeof request.groupChannel === "string" ? request.groupChannel.trim() : "";
@@ -102,7 +107,7 @@ export const agentHandlers: GatewayRequestHandlers = {
     let resolvedGroupSpace: string | undefined = groupSpaceRaw || undefined;
     let spawnedByValue =
       typeof request.spawnedBy === "string" ? request.spawnedBy.trim() : undefined;
-    const cached = context.dedupe.get(`agent:${idem}`);
+    const cached = context.dedupe.get(dedupeKey);
     if (cached) {
       respond(cached.ok, cached.payload, cached.error, {
         cached: true,
@@ -401,7 +406,7 @@ export const agentHandlers: GatewayRequestHandlers = {
       acceptedAt: Date.now(),
     };
     // Store an in-flight ack so retries do not spawn a second run.
-    context.dedupe.set(`agent:${idem}`, {
+    context.dedupe.set(dedupeKey, {
       ts: Date.now(),
       ok: true,
       payload: accepted,
@@ -452,7 +457,7 @@ export const agentHandlers: GatewayRequestHandlers = {
           summary: "completed",
           result,
         };
-        context.dedupe.set(`agent:${idem}`, {
+        context.dedupe.set(dedupeKey, {
           ts: Date.now(),
           ok: true,
           payload,
@@ -468,7 +473,7 @@ export const agentHandlers: GatewayRequestHandlers = {
           status: "error" as const,
           summary: String(err),
         };
-        context.dedupe.set(`agent:${idem}`, {
+        context.dedupe.set(dedupeKey, {
           ts: Date.now(),
           ok: false,
           payload,

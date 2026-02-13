@@ -213,4 +213,63 @@ describe("gateway agent handler", () => {
     expect(capturedEntry?.cliSessionIds).toBeUndefined();
     expect(capturedEntry?.claudeCliSessionId).toBeUndefined();
   });
+
+  it("does not dedupe identical idempotency keys across different lineage scopes", async () => {
+    mocks.loadSessionEntry.mockReturnValue({
+      cfg: {},
+      storePath: "/tmp/sessions.json",
+      entry: {
+        sessionId: "existing-session-id",
+        updatedAt: Date.now(),
+      },
+      canonicalKey: "agent:main:main",
+    });
+    mocks.updateSessionStore.mockImplementation(async (_path, updater) => {
+      const store: Record<string, unknown> = {};
+      await updater(store);
+    });
+    mocks.agentCommand.mockResolvedValue({
+      payloads: [{ text: "ok" }],
+      meta: { durationMs: 100 },
+    });
+
+    const context = makeContext();
+
+    const callsBefore = mocks.agentCommand.mock.calls.length;
+
+    await agentHandlers.agent({
+      params: {
+        message: "first",
+        agentId: "main",
+        sessionKey: "agent:main:main",
+        idempotencyKey: "same-idem",
+        rootConversationId: "conv-a",
+        threadId: "thread-1",
+      },
+      respond: vi.fn(),
+      context,
+      req: { type: "req", id: "3", method: "agent" },
+      client: null,
+      isWebchatConnect: () => false,
+    });
+
+    await agentHandlers.agent({
+      params: {
+        message: "second",
+        agentId: "main",
+        sessionKey: "agent:main:main",
+        idempotencyKey: "same-idem",
+        rootConversationId: "conv-b",
+        threadId: "thread-2",
+      },
+      respond: vi.fn(),
+      context,
+      req: { type: "req", id: "4", method: "agent" },
+      client: null,
+      isWebchatConnect: () => false,
+    });
+
+    await vi.waitFor(() => expect(mocks.agentCommand.mock.calls.length - callsBefore).toBe(2));
+    expect(context.dedupe.size).toBe(2);
+  });
 });
