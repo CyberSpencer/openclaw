@@ -10,7 +10,7 @@ describe("renderTable", () => {
         { key: "Item", header: "Item", minWidth: 10 },
         { key: "Value", header: "Value", flex: true, minWidth: 24 },
       ],
-      rows: [{ Item: "Dashboard", Value: "http://127.0.0.1:18789/" }],
+      rows: [{ Item: "Dashboard", Value: "http://127.0.0.1:32555/" }],
     });
 
     expect(out).toContain("Dashboard");

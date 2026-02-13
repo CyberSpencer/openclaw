@@ -157,7 +157,7 @@ Split your config into multiple files using the `$include` directive. This is us
 ```json5
 // ~/.openclaw/openclaw.json
 {
-  gateway: { port: 18789 },
+  gateway: { port: 32555 },
 
   // Include a single file (replaces the key's value)
   agents: { $include: "./agents.json5" },
@@ -227,7 +227,7 @@ Included files can themselves contain `$include` directives (up to 10 levels dee
 ```json5
 // ~/.openclaw/openclaw.json
 {
-  gateway: { port: 18789, auth: { token: "secret" } },
+  gateway: { port: 32555, auth: { token: "secret" } },
 
   // Common agent defaults
   agents: {
@@ -878,7 +878,10 @@ No filesystem access (messaging/session tools enabled):
             "gateway",
             "image",
           ],
-
+        },
+      },
+    ],
+  },
 }
 ```
 
@@ -1544,8 +1547,8 @@ The `responsePrefix` string can include template variables that resolve dynamica
 
 | Variable          | Description            | Example                     |
 | ----------------- | ---------------------- | --------------------------- |
-| `{model}`         | Short model name       | `claude-opus-4-6`, `gpt-4o` |
-| `{modelFull}`     | Full model identifier  | `anthropic/claude-opus-4-6` |
+| `{model}`         | Short model name       | `claude-opus-4-5`, `gpt-4o` |
+| `{modelFull}`     | Full model identifier  | `anthropic/claude-opus-4-5` |
 | `{provider}`      | Provider name          | `anthropic`, `openai`       |
 | `{thinkingLevel}` | Current thinking level | `high`, `low`, `off`        |
 | `{identity.name}` | Agent identity name    | (same as `"auto"` mode)     |
@@ -1723,11 +1726,11 @@ Example: Opus 4.6 primary with MiniMax M2.1 fallback (hosted MiniMax):
   agents: {
     defaults: {
       models: {
-        "anthropic/claude-opus-4-6": { alias: "opus" },
+        "anthropic/claude-opus-4-5": { alias: "opus" },
         "minimax/MiniMax-M2.1": { alias: "minimax" },
       },
       model: {
-        primary: "anthropic/claude-opus-4-6",
+        primary: "anthropic/claude-opus-4-5",
         fallbacks: ["minimax/MiniMax-M2.1"],
       },
     },
@@ -2486,7 +2489,7 @@ the built-in `opencode` provider from pi-ai; set `OPENCODE_API_KEY` (or
 
 Notes:
 
-- Model refs use `opencode/<modelId>` (example: `opencode/claude-opus-4-6`).
+- Model refs use `opencode/<modelId>` (example: `opencode/claude-opus-4-5`).
 - If you enable an allowlist via `agents.defaults.models`, add each model you plan to use.
 - Shortcut: `openclaw onboard --auth-choice opencode-zen`.
 
@@ -2494,8 +2497,8 @@ Notes:
 {
   agents: {
     defaults: {
-      model: { primary: "opencode/claude-opus-4-6" },
-      models: { "opencode/claude-opus-4-6": { alias: "Opus" } },
+      model: { primary: "opencode/claude-opus-4-5" },
+      models: { "opencode/claude-opus-4-5": { alias: "Opus" } },
     },
   },
 }
@@ -2576,17 +2579,40 @@ Notes:
   - Run `openclaw onboard --auth-choice moonshot-api-key-cn` (wizard will set `https://api.moonshot.cn/v1`), or
   - Manually set `baseUrl: "https://api.moonshot.cn/v1"` in `models.providers.moonshot`.
 
-### Kimi Coding
+### Kimi Code
 
-Use Moonshot AI's Kimi Coding endpoint (Anthropic-compatible, built-in provider):
+Use Kimi Code's dedicated OpenAI-compatible endpoint (separate from Moonshot):
 
 ```json5
 {
-  env: { KIMI_API_KEY: "sk-..." },
+  env: { KIMICODE_API_KEY: "sk-..." },
   agents: {
     defaults: {
-      model: { primary: "kimi-coding/k2p5" },
-      models: { "kimi-coding/k2p5": { alias: "Kimi K2.5" } },
+      model: { primary: "kimi-code/kimi-for-coding" },
+      models: { "kimi-code/kimi-for-coding": { alias: "Kimi Code" } },
+    },
+  },
+  models: {
+    mode: "merge",
+    providers: {
+      "kimi-code": {
+        baseUrl: "https://api.kimi.com/coding/v1",
+        apiKey: "${KIMICODE_API_KEY}",
+        api: "openai-completions",
+        models: [
+          {
+            id: "kimi-for-coding",
+            name: "Kimi For Coding",
+            reasoning: true,
+            input: ["text"],
+            cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+            contextWindow: 262144,
+            maxTokens: 32768,
+            headers: { "User-Agent": "KimiCLI/0.77" },
+            compat: { supportsDeveloperRole: false },
+          },
+        ],
+      },
     },
   },
 }
@@ -2594,8 +2620,8 @@ Use Moonshot AI's Kimi Coding endpoint (Anthropic-compatible, built-in provider)
 
 Notes:
 
-- Set `KIMI_API_KEY` in the environment or use `openclaw onboard --auth-choice kimi-code-api-key`.
-- Model ref: `kimi-coding/k2p5`.
+- Set `KIMICODE_API_KEY` in the environment or use `openclaw onboard --auth-choice kimi-code-api-key`.
+- Model ref: `kimi-code/kimi-for-coding`.
 
 ### Synthetic (Anthropic-compatible)
 
@@ -2653,7 +2679,7 @@ Use MiniMax M2.1 directly without LM Studio:
   agent: {
     model: { primary: "minimax/MiniMax-M2.1" },
     models: {
-      "anthropic/claude-opus-4-6": { alias: "Opus" },
+      "anthropic/claude-opus-4-5": { alias: "Opus" },
       "minimax/MiniMax-M2.1": { alias: "Minimax" },
     },
   },
@@ -2756,7 +2782,7 @@ Controls session scoping, reset policy, reset triggers, and where the session st
     },
     resetByType: {
       thread: { mode: "daily", atHour: 4 },
-      direct: { mode: "idle", idleMinutes: 240 },
+      dm: { mode: "idle", idleMinutes: 240 },
       group: { mode: "idle", idleMinutes: 120 },
     },
     resetTriggers: ["/new", "/reset"],
@@ -2956,13 +2982,13 @@ Defaults:
 
 - mode: **unset** (treated as “do not auto-start”)
 - bind: `loopback`
-- port: `18789` (single port for WS + HTTP)
+- port: `32555` (single port for WS + HTTP)
 
 ```json5
 {
   gateway: {
     mode: "local", // or "remote"
-    port: 18789, // WS + HTTP multiplex
+    port: 32555, // WS + HTTP multiplex
     bind: "loopback",
     // controlUi: { enabled: true, basePath: "/openclaw" }
     // auth: { mode: "token", token: "your-token" } // token gates WS + Control UI access
@@ -3001,7 +3027,7 @@ Notes:
 - `openclaw gateway` refuses to start unless `gateway.mode` is set to `local` (or you pass the override flag).
 - `gateway.port` controls the single multiplexed port used for WebSocket + HTTP (control UI, hooks, A2UI).
 - OpenAI Chat Completions endpoint: **disabled by default**; enable with `gateway.http.endpoints.chatCompletions.enabled: true`.
-- Precedence: `--port` > `OPENCLAW_GATEWAY_PORT` > `gateway.port` > default `18789`.
+- Precedence: `--port` > `OPENCLAW_GATEWAY_PORT` > `gateway.port` > default `32555`.
 - Gateway auth is required by default (token/password or Tailscale Serve identity). Non-loopback binds require a shared token/password.
 - The onboarding wizard generates a gateway token by default (even on loopback).
 - `gateway.remote.token` is **only** for remote CLI calls; it does not enable local gateway auth. `gateway.token` is ignored.
@@ -3026,7 +3052,7 @@ Auth and Tailscale:
 Remote client defaults (CLI):
 
 - `gateway.remote.url` sets the default Gateway WebSocket URL for CLI calls when `gateway.mode = "remote"`.
-- `gateway.remote.transport` selects the macOS remote transport (`ssh` default, `direct` for ws/wss). When `direct`, `gateway.remote.url` must be `ws://` or `wss://`. `ws://host` defaults to port `18789`.
+- `gateway.remote.transport` selects the macOS remote transport (`ssh` default, `direct` for ws/wss). When `direct`, `gateway.remote.url` must be `ws://` or `wss://`. `ws://host` defaults to port `32555`.
 - `gateway.remote.token` supplies the token for remote calls (leave unset for no auth).
 - `gateway.remote.password` supplies the password for remote calls (leave unset for no auth).
 
@@ -3041,7 +3067,7 @@ macOS app behavior:
   gateway: {
     mode: "remote",
     remote: {
-      url: "ws://gateway.tailnet:18789",
+      url: "ws://gateway.tailnet:32555",
       token: "your-token",
       password: "your-password",
     },
@@ -3122,7 +3148,7 @@ To run multiple gateways on one host (for redundancy or a rescue bot), isolate p
 
 Convenience flags (CLI):
 
-- `openclaw --dev …` → uses `~/.openclaw-dev` + shifts ports from base `19001`
+- `openclaw --dev …` → uses `~/.openclaw-dev` + shifts ports from base `55532`
 - `openclaw --profile <name> …` → uses `~/.openclaw-<name>` (port via config/env/flags)
 
 See [Gateway runbook](/gateway) for the derived port mapping (gateway/browser/canvas).
@@ -3133,7 +3159,7 @@ Example:
 ```bash
 OPENCLAW_CONFIG_PATH=~/.openclaw/a.json \
 OPENCLAW_STATE_DIR=~/.openclaw-a \
-openclaw gateway --port 19001
+openclaw gateway --port 55532
 ```
 
 ### `hooks` (Gateway webhooks)
@@ -3204,7 +3230,7 @@ Gmail helper config (used by `openclaw webhooks gmail setup` / `run`):
       topic: "projects/<project-id>/topics/gog-gmail-watch",
       subscription: "gog-gmail-watch-push",
       pushToken: "shared-push-token",
-      hookUrl: "http://127.0.0.1:18789/hooks/gmail",
+      hookUrl: "http://127.0.0.1:32555/hooks/gmail",
       includeBody: true,
       maxBytes: 20000,
       renewEveryMinutes: 720,

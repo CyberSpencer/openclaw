@@ -43,7 +43,7 @@ function createProps(overrides: Partial<ChatProps> = {}): ChatProps {
     onDraftChange: () => undefined,
     onSend: () => undefined,
     onQueueRemove: () => undefined,
-    onNewSession: () => undefined,
+    onNewChat: () => undefined,
     ...overrides,
   };
 }
@@ -130,28 +130,28 @@ describe("chat view", () => {
     expect(stopButton).not.toBeUndefined();
     stopButton?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
     expect(onAbort).toHaveBeenCalledTimes(1);
-    expect(container.textContent).not.toContain("New session");
+    expect(container.textContent).not.toContain("New chat");
   });
 
-  it("shows a new session button when aborting is unavailable", () => {
+  it("shows a new chat button when aborting is unavailable", () => {
     const container = document.createElement("div");
-    const onNewSession = vi.fn();
+    const onNewChat = vi.fn();
     render(
       renderChat(
         createProps({
           canAbort: false,
-          onNewSession,
+          onNewChat,
         }),
       ),
       container,
     );
 
-    const newSessionButton = Array.from(container.querySelectorAll("button")).find(
-      (btn) => btn.textContent?.trim() === "New session",
+    const newChatButton = Array.from(container.querySelectorAll("button")).find(
+      (btn) => btn.textContent?.trim() === "New chat",
     );
-    expect(newSessionButton).not.toBeUndefined();
-    newSessionButton?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
-    expect(onNewSession).toHaveBeenCalledTimes(1);
+    expect(newChatButton).not.toBeUndefined();
+    newChatButton?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    expect(onNewChat).toHaveBeenCalledTimes(1);
     expect(container.textContent).not.toContain("Stop");
   });
 });

@@ -133,7 +133,7 @@ describe("runReplyAgent claude-cli routing", () => {
 
     expect(runCliAgentMock).toHaveBeenCalledTimes(1);
     expect(runEmbeddedPiAgentMock).not.toHaveBeenCalled();
-    expect(lifecyclePhases).toEqual(["start", "end"]);
+    expect(lifecyclePhases).toEqual(["model-selected", "start", "end"]);
     expect(result).toMatchObject({ text: "ok" });
   });
 });

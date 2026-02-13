@@ -39,6 +39,14 @@ export function computeMemoryManagerCacheKey(params: {
       store: {
         driver: settings.store.driver,
         path: settings.store.path,
+        qdrant: settings.store.qdrant
+          ? {
+              url: settings.store.qdrant.url,
+              collection: settings.store.qdrant.collection,
+              apiKey: settings.store.qdrant.apiKey ? "set" : undefined,
+              timeoutMs: settings.store.qdrant.timeoutMs,
+            }
+          : undefined,
         vector: {
           enabled: settings.store.vector.enabled,
           extensionPath: settings.store.vector.extensionPath,

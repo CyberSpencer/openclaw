@@ -137,7 +137,7 @@ describe("memory indexing with OpenAI batches", () => {
           memorySearch: {
             provider: "openai",
             model: "text-embedding-3-small",
-            store: { path: indexPath },
+            store: { driver: "sqlite", path: indexPath, vector: { enabled: false } },
             sync: { watch: false, onSessionStart: false, onSearch: false },
             query: { minScore: 0 },
             remote: { batch: { enabled: true, wait: true, pollIntervalMs: 1 } },
@@ -249,7 +249,7 @@ describe("memory indexing with OpenAI batches", () => {
           memorySearch: {
             provider: "openai",
             model: "text-embedding-3-small",
-            store: { path: indexPath },
+            store: { driver: "sqlite", path: indexPath, vector: { enabled: false } },
             sync: { watch: false, onSessionStart: false, onSearch: false },
             query: { minScore: 0 },
             remote: { batch: { enabled: true, wait: true, pollIntervalMs: 1 } },
@@ -350,7 +350,7 @@ describe("memory indexing with OpenAI batches", () => {
           memorySearch: {
             provider: "openai",
             model: "text-embedding-3-small",
-            store: { path: indexPath },
+            store: { driver: "sqlite", path: indexPath, vector: { enabled: false } },
             sync: { watch: false, onSessionStart: false, onSearch: false },
             query: { minScore: 0 },
             remote: { batch: { enabled: true, wait: true, pollIntervalMs: 1 } },
@@ -451,7 +451,7 @@ describe("memory indexing with OpenAI batches", () => {
           memorySearch: {
             provider: "openai",
             model: "text-embedding-3-small",
-            store: { path: indexPath },
+            store: { driver: "sqlite", path: indexPath, vector: { enabled: false } },
             sync: { watch: false, onSessionStart: false, onSearch: false },
             query: { minScore: 0 },
             remote: { batch: { enabled: true, wait: true, pollIntervalMs: 1 } },

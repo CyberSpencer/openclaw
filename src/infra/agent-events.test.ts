@@ -17,6 +17,59 @@ describe("agent-events sequencing", () => {
     expect(getAgentRunContext("run-1")).toBeUndefined();
   });
 
+  test("propagates identity envelope fields from run context", async () => {
+    let seen:
+      | {
+          rootConversationId?: string;
+          threadId?: string;
+          parentRunId?: string;
+          subagentGroupId?: string;
+          taskId?: string;
+          requesterSessionKey?: string;
+          spawnedBySessionKey?: string;
+        }
+      | undefined;
+
+    registerAgentRunContext("run-env", {
+      sessionKey: "main",
+      rootConversationId: "conv-1",
+      threadId: "thread-1",
+      parentRunId: "run-parent",
+      subagentGroupId: "sg-1",
+      taskId: "task-1",
+      requesterSessionKey: "main",
+      spawnedBySessionKey: "agent:main:sub",
+    });
+
+    const stop = onAgentEvent((evt) => {
+      if (evt.runId !== "run-env") {
+        return;
+      }
+      seen = {
+        rootConversationId: evt.rootConversationId,
+        threadId: evt.threadId,
+        parentRunId: evt.parentRunId,
+        subagentGroupId: evt.subagentGroupId,
+        taskId: evt.taskId,
+        requesterSessionKey: evt.requesterSessionKey,
+        spawnedBySessionKey: evt.spawnedBySessionKey,
+      };
+    });
+
+    emitAgentEvent({ runId: "run-env", stream: "lifecycle", data: {} });
+    stop();
+
+    expect(seen).toEqual({
+      rootConversationId: "conv-1",
+      threadId: "thread-1",
+      parentRunId: "run-parent",
+      subagentGroupId: "sg-1",
+      taskId: "task-1",
+      requesterSessionKey: "main",
+      spawnedBySessionKey: "agent:main:sub",
+    });
+  });
+
   test("maintains monotonic seq per runId", async () => {
     const seen: Record<string, number[]> = {};
     const stop = onAgentEvent((evt) => {

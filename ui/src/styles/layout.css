@@ -493,24 +493,9 @@
   gap: 8px;
 }
 
-/* Chat view header adjustments */
+/* Chat view header adjustments (ChatGPT-style threads sidebar lives in nav). */
 .content--chat .content-header {
-  flex-direction: row;
-  align-items: center;
-  justify-content: space-between;
-  gap: 16px;
-}
-
-.content--chat .content-header > div:first-child {
-  text-align: left;
-}
-
-.content--chat .page-meta {
-  justify-content: flex-start;
-}
-
-.content--chat .chat-controls {
-  flex-shrink: 0;
+  display: none;
 }
 
 /* ===========================================

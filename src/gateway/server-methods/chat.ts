@@ -5,10 +5,17 @@ import type { MsgContext } from "../../auto-reply/templating.js";
 import type { GatewayRequestContext, GatewayRequestHandlers } from "./types.js";
 import { resolveSessionAgentId } from "../../agents/agent-scope.js";
 import { resolveThinkingDefault } from "../../agents/model-selection.js";
+import {
+  isEmbeddedPiRunActive,
+  isEmbeddedPiRunStreaming,
+  queueEmbeddedPiMessage,
+} from "../../agents/pi-embedded.js";
 import { resolveAgentTimeoutMs } from "../../agents/timeout.js";
 import { dispatchInboundMessage } from "../../auto-reply/dispatch.js";
+import { stopSubagentsForRequester } from "../../auto-reply/reply/abort.js";
 import { createReplyDispatcher } from "../../auto-reply/reply/reply-dispatcher.js";
 import { createReplyPrefixOptions } from "../../channels/reply-prefix.js";
+import { getAgentRunContext } from "../../infra/agent-events.js";
 import { resolveSendPolicy } from "../../sessions/send-policy.js";
 import { INTERNAL_MESSAGE_CHANNEL } from "../../utils/message-channel.js";
 import {
@@ -28,6 +35,7 @@ import {
   validateChatHistoryParams,
   validateChatInjectParams,
   validateChatSendParams,
+  validateChatSteerParams,
 } from "../protocol/index.js";
 import { getMaxChatHistoryMessagesBytes } from "../server-constants.js";
 import {
@@ -170,9 +178,15 @@ function broadcastChatFinal(params: {
   message?: Record<string, unknown>;
 }) {
   const seq = nextChatSeq({ agentRunSeq: params.context.agentRunSeq }, params.runId);
+  const runContext = getAgentRunContext(params.runId);
   const payload = {
     runId: params.runId,
     sessionKey: params.sessionKey,
+    rootConversationId: runContext?.rootConversationId,
+    threadId: runContext?.threadId,
+    parentRunId: runContext?.parentRunId,
+    subagentGroupId: runContext?.subagentGroupId,
+    taskId: runContext?.taskId,
     seq,
     state: "final" as const,
     message: params.message,
@@ -188,9 +202,15 @@ function broadcastChatError(params: {
   errorMessage?: string;
 }) {
   const seq = nextChatSeq({ agentRunSeq: params.context.agentRunSeq }, params.runId);
+  const runContext = getAgentRunContext(params.runId);
   const payload = {
     runId: params.runId,
     sessionKey: params.sessionKey,
+    rootConversationId: runContext?.rootConversationId,
+    threadId: runContext?.threadId,
+    parentRunId: runContext?.parentRunId,
+    subagentGroupId: runContext?.subagentGroupId,
+    taskId: runContext?.taskId,
     seq,
     state: "error" as const,
     errorMessage: params.errorMessage,
@@ -251,6 +271,7 @@ export const chatHandlers: GatewayRequestHandlers = {
       messages: capped,
       thinkingLevel,
       verboseLevel,
+      taskPlan: entry?.taskPlan ?? null,
     });
   },
   "chat.abort": ({ params, respond, context }) => {
@@ -281,18 +302,29 @@ export const chatHandlers: GatewayRequestHandlers = {
       nodeSendToSession: context.nodeSendToSession,
     };
 
+    const { cfg } = loadSessionEntry(sessionKey);
+    const { stopped: stoppedSubagents } = stopSubagentsForRequester({
+      cfg,
+      requesterSessionKey: sessionKey,
+    });
+
     if (!runId) {
       const res = abortChatRunsForSessionKey(ops, {
         sessionKey,
         stopReason: "rpc",
       });
-      respond(true, { ok: true, aborted: res.aborted, runIds: res.runIds });
+      respond(true, {
+        ok: true,
+        aborted: res.aborted,
+        runIds: res.runIds,
+        stoppedSubagents,
+      });
       return;
     }
 
     const active = context.chatAbortControllers.get(runId);
     if (!active) {
-      respond(true, { ok: true, aborted: false, runIds: [] });
+      respond(true, { ok: true, aborted: false, runIds: [], stoppedSubagents });
       return;
     }
     if (active.sessionKey !== sessionKey) {
@@ -313,7 +345,95 @@ export const chatHandlers: GatewayRequestHandlers = {
       ok: true,
       aborted: res.aborted,
       runIds: res.aborted ? [runId] : [],
+      stoppedSubagents,
     });
+  },
+  "chat.steer": ({ params, respond, context }) => {
+    if (!validateChatSteerParams(params)) {
+      respond(
+        false,
+        undefined,
+        errorShape(
+          ErrorCodes.INVALID_REQUEST,
+          `invalid chat.steer params: ${formatValidationErrors(validateChatSteerParams.errors)}`,
+        ),
+      );
+      return;
+    }
+
+    const p = params as { sessionKey: string; message: string; idempotencyKey: string };
+    const sessionKey = String(p.sessionKey ?? "").trim();
+    const message = String(p.message ?? "").trim();
+    const clientRunId = String(p.idempotencyKey ?? "").trim();
+
+    if (!sessionKey) {
+      respond(false, undefined, errorShape(ErrorCodes.INVALID_REQUEST, "sessionKey required"));
+      return;
+    }
+    if (!message) {
+      respond(false, undefined, errorShape(ErrorCodes.INVALID_REQUEST, "message required"));
+      return;
+    }
+    if (message.length > 20_000) {
+      respond(false, undefined, errorShape(ErrorCodes.INVALID_REQUEST, "message too long"));
+      return;
+    }
+    if (!clientRunId) {
+      respond(false, undefined, errorShape(ErrorCodes.INVALID_REQUEST, "idempotencyKey required"));
+      return;
+    }
+
+    const cached = context.dedupe.get(`chat.steer:${clientRunId}`);
+    if (cached) {
+      respond(cached.ok, cached.payload, cached.error, {
+        cached: true,
+      });
+      return;
+    }
+
+    const { entry } = loadSessionEntry(sessionKey);
+    const sessionId = entry?.sessionId;
+    if (!sessionId) {
+      const payload = { ok: true, status: "session_not_found" as const };
+      context.dedupe.set(`chat.steer:${clientRunId}`, {
+        ts: Date.now(),
+        ok: true,
+        payload,
+      });
+      respond(true, payload, undefined);
+      return;
+    }
+
+    if (!isEmbeddedPiRunActive(sessionId)) {
+      const payload = { ok: true, status: "no_active_run" as const };
+      context.dedupe.set(`chat.steer:${clientRunId}`, {
+        ts: Date.now(),
+        ok: true,
+        payload,
+      });
+      respond(true, payload, undefined);
+      return;
+    }
+
+    if (!isEmbeddedPiRunStreaming(sessionId)) {
+      const payload = { ok: true, status: "not_streaming" as const };
+      context.dedupe.set(`chat.steer:${clientRunId}`, {
+        ts: Date.now(),
+        ok: true,
+        payload,
+      });
+      respond(true, payload, undefined);
+      return;
+    }
+
+    const steered = queueEmbeddedPiMessage(sessionId, message);
+    const payload = { ok: true, status: steered ? ("steered" as const) : ("compacting" as const) };
+    context.dedupe.set(`chat.steer:${clientRunId}`, {
+      ts: Date.now(),
+      ok: true,
+      payload,
+    });
+    respond(true, payload, undefined);
   },
   "chat.send": async ({ params, respond, context, client }) => {
     if (!validateChatSendParams(params)) {
@@ -423,7 +543,12 @@ export const chatHandlers: GatewayRequestHandlers = {
         },
         { sessionKey: rawSessionKey, stopReason: "stop" },
       );
-      respond(true, { ok: true, aborted: res.aborted, runIds: res.runIds });
+      const { cfg } = loadSessionEntry(p.sessionKey);
+      const { stopped: stoppedSubagents } = stopSubagentsForRequester({
+        cfg,
+        requesterSessionKey: p.sessionKey,
+      });
+      respond(true, { ok: true, aborted: res.aborted, runIds: res.runIds, stoppedSubagents });
       return;
     }
 

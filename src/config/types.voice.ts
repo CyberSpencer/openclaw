@@ -10,7 +10,7 @@ export type VoiceTtsProvider = "elevenlabs" | "openai" | "edge" | "macos";
 
 export type VoiceRouterMode = "local" | "cloud" | "auto";
 
-export type VoiceMode = "option2a" | "personaplex" | "hybrid";
+export type VoiceMode = "spark" | "option2a" | "personaplex" | "hybrid";
 
 export type VoiceWhisperConfig = {
   /** Path to whisper-cpp binary (default: looks in PATH). */
@@ -147,7 +147,7 @@ export type PersonaPlexConfig = {
 };
 
 export type VoiceConfig = {
-  /** Voice mode: option2a (local STT+TTS), personaplex (S2S), hybrid (auto-select). */
+  /** Voice mode: spark (DGX STT/TTS), option2a (local STT+TTS), personaplex (S2S), hybrid (auto-select). */
   mode?: VoiceMode;
   /** Enable voice mode (default: false). */
   enabled?: boolean;

@@ -107,8 +107,12 @@ function resolveThinkLevelPatchValue(value: string, isBinary: boolean): string |
   return value;
 }
 
+const RENDER_LIMIT = 500;
+
 export function renderSessions(props: SessionsProps) {
   const rows = props.result?.sessions ?? [];
+  const renderRows = rows.length > RENDER_LIMIT ? rows.slice(0, RENDER_LIMIT) : rows;
+  const hiddenCount = rows.length - renderRows.length;
   return html`
     <section class="card">
       <div class="row" style="justify-content: space-between;">
@@ -188,6 +192,16 @@ export function renderSessions(props: SessionsProps) {
         ${props.result ? `Store: ${props.result.path}` : ""}
       </div>
 
+      ${
+        hiddenCount > 0
+          ? html`
+              <div class="callout" style="margin-top: 12px;">
+                Rendering first ${renderRows.length} of ${rows.length} sessions. Tighten filters or raise Limit to reduce load.
+              </div>
+            `
+          : nothing
+      }
+
       <div class="table" style="margin-top: 16px;">
         <div class="table-head">
           <div>Key</div>
@@ -205,7 +219,7 @@ export function renderSessions(props: SessionsProps) {
             ? html`
                 <div class="muted">No sessions found.</div>
               `
-            : rows.map((row) =>
+            : renderRows.map((row) =>
                 renderRow(row, props.basePath, props.onPatch, props.onDelete, props.loading),
               )
         }

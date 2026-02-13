@@ -16,7 +16,7 @@ vi.mock("../config/config.js", async (importOriginal) => {
         agentToAgent: { maxPingPongTurns: 2 },
       },
     }),
-    resolveGatewayPort: () => 18789,
+    resolveGatewayPort: () => 32555,
   };
 });
 

@@ -80,7 +80,7 @@ enum GatewayEnvironment {
             return configPort
         }
         let stored = UserDefaults.standard.integer(forKey: "gatewayPort")
-        return stored > 0 ? stored : 18789
+        return stored > 0 ? stored : 32555
     }
 
     static func expectedGatewayVersion() -> Semver? {

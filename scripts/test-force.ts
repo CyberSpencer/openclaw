@@ -4,7 +4,7 @@ import os from "node:os";
 import path from "node:path";
 import { forceFreePort, type PortProcess } from "../src/cli/ports.js";
 
-const DEFAULT_PORT = 18789;
+const DEFAULT_PORT = 32555;
 
 function killGatewayListeners(port: number): PortProcess[] {
   try {

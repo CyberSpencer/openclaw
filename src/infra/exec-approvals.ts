@@ -498,7 +498,7 @@ function normalizeMatchTarget(value: string): string {
     const stripped = value.replace(/^\\\\[?.]\\/, "");
     return stripped.replace(/\\/g, "/").toLowerCase();
   }
-  return value.replace(/\\\\/g, "/");
+  return value.replace(/\\/g, "/");
 }
 
 function tryRealpath(value: string): string | null {

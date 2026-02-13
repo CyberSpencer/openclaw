@@ -6,14 +6,14 @@
  * Multi-instance: callers may pass an explicit range to avoid collisions.
  *
  * Reserved ports (do not use for CDP):
- *   18789 - Gateway WebSocket
+ *   32555 - Gateway WebSocket
  *   18790 - Bridge
  *   18791 - Browser control server
  *   18792-18799 - Reserved for future one-off services (canvas at 18793)
  */
 
-export const CDP_PORT_RANGE_START = 18800;
-export const CDP_PORT_RANGE_END = 18899;
+export const CDP_PORT_RANGE_START = 32566;
+export const CDP_PORT_RANGE_END = 32665;
 
 export const PROFILE_NAME_REGEX = /^[a-z0-9][a-z0-9-]*$/;
 

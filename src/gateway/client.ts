@@ -39,7 +39,7 @@ type Pending = {
 };
 
 export type GatewayClientOptions = {
-  url?: string; // ws://127.0.0.1:18789
+  url?: string; // ws://127.0.0.1:32555
   token?: string;
   password?: string;
   instanceId?: string;
@@ -102,7 +102,7 @@ export class GatewayClient {
     if (this.closed) {
       return;
     }
-    const url = this.opts.url ?? "ws://127.0.0.1:18789";
+    const url = this.opts.url ?? "ws://127.0.0.1:32555";
     if (this.opts.tlsFingerprint && !url.startsWith("wss://")) {
       this.opts.onConnectError?.(new Error("gateway tls fingerprint requires wss:// gateway url"));
       return;
@@ -412,7 +412,7 @@ export class GatewayClient {
     return null;
   }
 
-  async request<T = Record<string, unknown>>(
+  async request<T = unknown>(
     method: string,
     params?: unknown,
     opts?: { expectFinal?: boolean },

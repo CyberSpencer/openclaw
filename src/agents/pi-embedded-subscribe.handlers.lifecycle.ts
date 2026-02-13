@@ -61,18 +61,6 @@ export function handleAutoCompactionEnd(
 
 export function handleAgentEnd(ctx: EmbeddedPiSubscribeContext) {
   ctx.log.debug(`embedded run agent end: runId=${ctx.params.runId}`);
-  emitAgentEvent({
-    runId: ctx.params.runId,
-    stream: "lifecycle",
-    data: {
-      phase: "end",
-      endedAt: Date.now(),
-    },
-  });
-  void ctx.params.onAgentEvent?.({
-    stream: "lifecycle",
-    data: { phase: "end" },
-  });
 
   if (ctx.params.onBlockReply) {
     if (ctx.blockChunker?.hasBuffered()) {
@@ -88,9 +76,26 @@ export function handleAgentEnd(ctx: EmbeddedPiSubscribeContext) {
   ctx.state.blockState.final = false;
   ctx.state.blockState.inlineCode = createInlineCodeState();
 
+  // When we're in a compaction retry, the run is not actually ending — we're
+  // about to retry the prompt after compaction. Do not emit lifecycle "end"
+  // so the UI does not clear run state and show idle.
   if (ctx.state.pendingCompactionRetry > 0) {
     ctx.resolveCompactionRetry();
-  } else {
-    ctx.maybeResolveCompactionWait();
+    return;
   }
+
+  emitAgentEvent({
+    runId: ctx.params.runId,
+    stream: "lifecycle",
+    data: {
+      phase: "end",
+      endedAt: Date.now(),
+    },
+  });
+  void ctx.params.onAgentEvent?.({
+    stream: "lifecycle",
+    data: { phase: "end" },
+  });
+
+  ctx.maybeResolveCompactionWait();
 }

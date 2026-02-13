@@ -1,11 +1,9 @@
 /**
  * Voice mode orchestrator.
  *
- * Primary mode: PersonaPlex S2S (native speech-to-speech)
- * Fallback mode: STT → LLM → TTS pipeline
- *
- * PersonaPlex is used as the primary path when available.
- * The traditional pipeline is only used when PersonaPlex is unavailable or fails.
+ * Legacy PersonaPlex paths are kept for backward compatibility and future reuse.
+ * Current desktop deployment is typically Spark STT/TTS on a separate device,
+ * so macOS local PersonaPlex and local STT/TTS are fallback or maintenance paths.
  */
 
 import net from "node:net";
@@ -43,7 +41,7 @@ import {
   type RouterDecision,
 } from "./router.js";
 
-const DEFAULT_MODE: VoiceMode = "personaplex"; // PersonaPlex as default
+const DEFAULT_MODE: VoiceMode = "personaplex"; // Legacy default, prefer explicit voice.mode in runtime config
 const DEFAULT_BUFFER_MS = 100;
 const DEFAULT_MAX_RECORDING_SECONDS = 60;
 const DEFAULT_VAD_SENSITIVITY = 0.5;
@@ -173,15 +171,17 @@ export type VoiceCapabilities = {
 
 /**
  * Resolve voice configuration with defaults.
- * PersonaPlex S2S is the default mode - STT/TTS are only fallbacks.
+ *
+ * Note: this module preserves legacy PersonaPlex defaults for compatibility.
+ * Runtime config should set voice mode explicitly for the active deployment.
  */
 export function resolveVoiceConfig(config?: VoiceConfig): ResolvedVoiceConfig {
   const resolvedPersonaPlex = resolvePersonaPlexConfig(config?.personaplex);
   return {
-    mode: config?.mode ?? DEFAULT_MODE, // "personaplex" is default
+    mode: config?.mode ?? DEFAULT_MODE, // Keep compatibility, production should set this explicitly
     enabled: config?.enabled ?? false,
-    sttProvider: config?.sttProvider ?? "whisper", // Fallback STT
-    ttsProvider: config?.ttsProvider ?? "macos", // Fallback TTS (macos say is reliable)
+    sttProvider: config?.sttProvider ?? "whisper", // Local fallback STT path
+    ttsProvider: config?.ttsProvider ?? "macos", // Local fallback TTS path
     streaming: config?.streaming ?? false,
     bufferMs: config?.bufferMs ?? DEFAULT_BUFFER_MS,
     maxRecordingSeconds: config?.maxRecordingSeconds ?? DEFAULT_MAX_RECORDING_SECONDS,
@@ -191,8 +191,8 @@ export function resolveVoiceConfig(config?: VoiceConfig): ResolvedVoiceConfig {
     router: resolveRouterConfig(config?.router),
     personaplex: {
       ...resolvedPersonaPlex,
-      enabled: config?.personaplex?.enabled ?? true, // Enabled by default
-      autoStart: config?.personaplex?.autoStart ?? true, // Auto-start by default
+      enabled: config?.personaplex?.enabled ?? true, // Kept enabled by default for backward compatibility
+      autoStart: config?.personaplex?.autoStart ?? true, // Legacy default, can be disabled per deployment
     },
   };
 }
@@ -461,10 +461,10 @@ async function runFallbackPipeline(params: {
 }
 
 /**
- * Process voice input through PersonaPlex S2S (primary) or fallback pipeline.
+ * Process voice input.
  *
- * Primary path: PersonaPlex S2S (audio in → audio out, native)
- * Fallback path: STT → LLM → TTS (only when PersonaPlex unavailable)
+ * If mode requests PersonaPlex, attempt S2S first.
+ * Otherwise, or on PersonaPlex failure, run STT → LLM → TTS fallback.
  *
  * @param audioBuffer - Raw audio data (WAV or webm format - auto-converted)
  * @param config - Voice configuration
@@ -479,7 +479,7 @@ export async function processVoiceInput(
   const sessionId = generateSessionId();
   const startTime = Date.now();
 
-  // PRIMARY PATH: Try PersonaPlex S2S first (native speech-to-speech)
+  // Legacy macOS PersonaPlex path, retained for future reuse and compatibility.
   if (config.mode === "personaplex" || config.mode === "hybrid") {
     const personaplexConfig = resolvePersonaPlexConfig(config.personaplex);
 
@@ -551,7 +551,7 @@ export async function processVoiceInput(
     }
   }
 
-  // FALLBACK PATH: STT → LLM → TTS (when PersonaPlex unavailable or failed)
+  // Standard fallback path: STT → LLM → TTS (used when PersonaPlex is disabled, unavailable, or fails)
   return runFallbackPipeline({
     audioBuffer,
     config,

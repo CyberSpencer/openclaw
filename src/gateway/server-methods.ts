@@ -14,9 +14,13 @@ import { healthHandlers } from "./server-methods/health.js";
 import { logsHandlers } from "./server-methods/logs.js";
 import { modelsHandlers } from "./server-methods/models.js";
 import { nodeHandlers } from "./server-methods/nodes.js";
+import { orchestratorHandlers } from "./server-methods/orchestrator.js";
+import { routerStatusHandlers } from "./server-methods/router-status.js";
 import { sendHandlers } from "./server-methods/send.js";
 import { sessionsHandlers } from "./server-methods/sessions.js";
 import { skillsHandlers } from "./server-methods/skills.js";
+import { sparkStatusHandlers } from "./server-methods/spark-status.js";
+import { sparkVoiceHandlers } from "./server-methods/spark-voice.js";
 import { systemHandlers } from "./server-methods/system.js";
 import { talkHandlers } from "./server-methods/talk.js";
 import { ttsHandlers } from "./server-methods/tts.js";
@@ -66,7 +70,12 @@ const READ_METHODS = new Set([
   "skills.status",
   "voicewake.get",
   "sessions.list",
+  "sessions.subagents",
   "sessions.preview",
+  "orchestrator.get",
+  "router.status",
+  "spark.status",
+  "spark.voice.voices",
   "cron.list",
   "cron.status",
   "cron.runs",
@@ -95,6 +104,12 @@ const WRITE_METHODS = new Set([
   "voice.processText",
   "voice.transcribe",
   "voice.synthesize",
+  "orchestrator.set",
+  "orchestrator.reset",
+  "router.setEnabled",
+  "spark.voice.stt",
+  "spark.voice.tts",
+  "sessions.spawn",
 ]);
 
 function authorizeGatewayMethod(method: string, client: GatewayRequestOptions["client"]) {
@@ -187,7 +202,11 @@ export const coreGatewayHandlers: GatewayRequestHandlers = {
   ...talkHandlers,
   ...ttsHandlers,
   ...skillsHandlers,
+  ...sparkStatusHandlers,
+  ...sparkVoiceHandlers,
   ...sessionsHandlers,
+  ...orchestratorHandlers,
+  ...routerStatusHandlers,
   ...systemHandlers,
   ...updateHandlers,
   ...nodeHandlers,

@@ -402,6 +402,7 @@ export async function agentCommand(
       const spawnedBy = opts.spawnedBy ?? sessionEntry?.spawnedBy;
       // Safety: if the prompt appears to contain secrets, disable model fallback so we never
       // accidentally spill to cloud providers during failover attempts.
+      // (promptHasSecrets was computed earlier in the pre-flight check.)
       let fallbacksOverride = resolveAgentModelFallbacksOverride(cfg, sessionAgentId);
       if (promptHasSecrets) {
         fallbacksOverride = [];
@@ -462,7 +463,8 @@ export async function agentCommand(
             clientTools: opts.clientTools,
             provider: providerOverride,
             model: modelOverride,
-            disableModelRouter: providerOverride !== provider || modelOverride !== model,
+            disableModelRouter:
+              promptHasSecrets || providerOverride !== provider || modelOverride !== model,
             authProfileId,
             authProfileIdSource: authProfileId
               ? sessionEntry?.authProfileOverrideSource
@@ -506,6 +508,8 @@ export async function agentCommand(
       }
     } catch (err) {
       if (!lifecycleEnded) {
+        // Emit lifecycle "error" so server-chat sends chat "error" with errorMessage
+        // and the Control UI can show a clear run-failed message instead of going Idle silently.
         emitAgentEvent({
           runId,
           stream: "lifecycle",

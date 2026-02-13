@@ -45,7 +45,7 @@ describe("gateway --force helpers", () => {
       err.status = 1; // lsof uses exit 1 for no matches
       throw err;
     });
-    expect(listPortListeners(18789)).toEqual([]);
+    expect(listPortListeners(32555)).toEqual([]);
   });
 
   it("throws when lsof missing", () => {
@@ -55,7 +55,7 @@ describe("gateway --force helpers", () => {
       err.code = "ENOENT";
       throw err;
     });
-    expect(() => listPortListeners(18789)).toThrow(/lsof not found/);
+    expect(() => listPortListeners(32555)).toThrow(/lsof not found/);
   });
 
   it("kills each listener and returns metadata", () => {
@@ -66,7 +66,7 @@ describe("gateway --force helpers", () => {
     // @ts-expect-error override for test
     process.kill = killMock;
 
-    const killed = forceFreePort(18789);
+    const killed = forceFreePort(32555);
 
     expect(execFileSync).toHaveBeenCalled();
     expect(killMock).toHaveBeenCalledTimes(2);
@@ -97,7 +97,7 @@ describe("gateway --force helpers", () => {
     // @ts-expect-error override for test
     process.kill = killMock;
 
-    const promise = forceFreePortAndWait(18789, {
+    const promise = forceFreePortAndWait(32555, {
       timeoutMs: 500,
       intervalMs: 100,
       sigtermTimeoutMs: 400,
@@ -130,7 +130,7 @@ describe("gateway --force helpers", () => {
     // @ts-expect-error override for test
     process.kill = killMock;
 
-    const promise = forceFreePortAndWait(18789, {
+    const promise = forceFreePortAndWait(32555, {
       timeoutMs: 800,
       intervalMs: 100,
       sigtermTimeoutMs: 300,

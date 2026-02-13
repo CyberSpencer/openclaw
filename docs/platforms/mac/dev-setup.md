@@ -98,7 +98,7 @@ openclaw gateway status
 openclaw gateway stop
 
 # If you’re not using a LaunchAgent (dev mode / manual runs), find the listener:
-lsof -nP -iTCP:18789 -sTCP:LISTEN
+lsof -nP -iTCP:32555 -sTCP:LISTEN
 ```
 
 If a manual run is holding the port, stop that process (Ctrl+C). As a last resort, kill the PID you found above.

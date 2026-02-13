@@ -93,7 +93,7 @@ Set `stream: true` to receive Server-Sent Events (SSE):
 Non-streaming:
 
 ```bash
-curl -sS http://127.0.0.1:18789/v1/chat/completions \
+curl -sS http://127.0.0.1:32555/v1/chat/completions \
   -H 'Authorization: Bearer YOUR_TOKEN' \
   -H 'Content-Type: application/json' \
   -H 'x-openclaw-agent-id: main' \
@@ -106,7 +106,7 @@ curl -sS http://127.0.0.1:18789/v1/chat/completions \
 Streaming:
 
 ```bash
-curl -N http://127.0.0.1:18789/v1/chat/completions \
+curl -N http://127.0.0.1:32555/v1/chat/completions \
   -H 'Authorization: Bearer YOUR_TOKEN' \
   -H 'Content-Type: application/json' \
   -H 'x-openclaw-agent-id: main' \

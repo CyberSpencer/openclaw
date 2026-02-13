@@ -14,7 +14,7 @@ describe("formatHealthCheckFailure", () => {
     const err = new Error(
       [
         "gateway closed (1006 abnormal closure (no close frame)): no close reason",
-        "Gateway target: ws://127.0.0.1:19001",
+        "Gateway target: ws://127.0.0.1:55532",
         "Source: local loopback",
         "Config: /Users/steipete/.openclaw-dev/openclaw.json",
         "Bind: loopback",
@@ -24,7 +24,7 @@ describe("formatHealthCheckFailure", () => {
     expect(stripAnsi(formatHealthCheckFailure(err, { rich: true }))).toBe(
       [
         "Health check failed: gateway closed (1006 abnormal closure (no close frame)): no close reason",
-        "  Gateway target: ws://127.0.0.1:19001",
+        "  Gateway target: ws://127.0.0.1:55532",
         "  Source: local loopback",
         "  Config: /Users/steipete/.openclaw-dev/openclaw.json",
         "  Bind: loopback",

@@ -22,6 +22,25 @@ export type SessionOrigin = {
   threadId?: string | number;
 };
 
+export type TaskPlanStatus = "todo" | "running" | "done" | "blocked" | "skipped";
+
+export type TaskPlanTask = {
+  id: string;
+  title: string;
+  detail?: string;
+  status?: TaskPlanStatus;
+  assignedSessionKey?: string;
+  assignedRunId?: string;
+  failureReason?: "error" | "timeout" | "unknown";
+  resultSummary?: string;
+};
+
+export type TaskPlan = {
+  id: string;
+  goal?: string;
+  tasks: TaskPlanTask[];
+};
+
 export type SessionEntry = {
   /**
    * Last delivered heartbeat payload (used to suppress duplicate heartbeat notifications).
@@ -35,6 +54,10 @@ export type SessionEntry = {
   sessionFile?: string;
   /** Parent session key that spawned this session (used for sandbox session-tool scoping). */
   spawnedBy?: string;
+  /** Stable root conversation identity for orchestration lineage. */
+  rootConversationId?: string;
+  /** Stable thread identity under a root conversation. */
+  threadId?: string;
   systemSent?: boolean;
   abortedLastRun?: boolean;
   chatType?: SessionChatType;
@@ -93,6 +116,7 @@ export type SessionEntry = {
   lastThreadId?: string | number;
   skillsSnapshot?: SessionSkillSnapshot;
   systemPromptReport?: SessionSystemPromptReport;
+  taskPlan?: TaskPlan;
 };
 
 export function mergeSessionEntry(

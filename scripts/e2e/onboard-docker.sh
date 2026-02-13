@@ -93,16 +93,16 @@ TRASH
     done
   }
 
-	  start_gateway() {
-	    node "$OPENCLAW_ENTRY" gateway --port 18789 --bind loopback --allow-unconfigured > /tmp/gateway-e2e.log 2>&1 &
-	    GATEWAY_PID="$!"
-	  }
+  start_gateway() {
+    node dist/index.js gateway --port 32555 --bind loopback --allow-unconfigured > /tmp/gateway-e2e.log 2>&1 &
+    GATEWAY_PID="$!"
+  }
 
   wait_for_gateway() {
     for _ in $(seq 1 20); do
       if node --input-type=module -e "
         import net from 'node:net';
-        const socket = net.createConnection({ host: '127.0.0.1', port: 18789 });
+        const socket = net.createConnection({ host: '127.0.0.1', port: 32555 });
         const timeout = setTimeout(() => {
           socket.destroy();
           process.exit(1);
@@ -119,7 +119,7 @@ TRASH
       " >/dev/null 2>&1; then
         return 0
       fi
-      if [ -f /tmp/gateway-e2e.log ] && grep -E -q "listening on ws://[^ ]+:18789" /tmp/gateway-e2e.log; then
+      if [ -f /tmp/gateway-e2e.log ] && grep -E -q "listening on ws://[^ ]+:32555" /tmp/gateway-e2e.log; then
         if [ -n "${GATEWAY_PID:-}" ] && kill -0 "$GATEWAY_PID" 2>/dev/null; then
           return 0
         fi
@@ -354,11 +354,11 @@ NODE
     local home_dir
     home_dir="$(make_home remote-non-interactive)"
     export HOME="$home_dir"
-	    mkdir -p "$HOME"
-	    # Smoke test non-interactive remote config write.
-	    node "$OPENCLAW_ENTRY" onboard --non-interactive --accept-risk \
-	      --mode remote \
-	      --remote-url ws://gateway.local:18789 \
+    mkdir -p "$HOME"
+    # Smoke test non-interactive remote config write.
+    node dist/index.js onboard --non-interactive --accept-risk \
+      --mode remote \
+      --remote-url ws://gateway.local:32555 \
       --remote-token remote-token \
       --skip-skills \
       --skip-health
@@ -376,7 +376,7 @@ const errors = [];
 if (cfg?.gateway?.mode !== "remote") {
   errors.push(`gateway.mode mismatch (got ${cfg?.gateway?.mode ?? "unset"})`);
 }
-if (cfg?.gateway?.remote?.url !== "ws://gateway.local:18789") {
+if (cfg?.gateway?.remote?.url !== "ws://gateway.local:32555") {
   errors.push(`gateway.remote.url mismatch (got ${cfg?.gateway?.remote?.url ?? "unset"})`);
 }
 if (cfg?.gateway?.remote?.token !== "remote-token") {
@@ -404,7 +404,7 @@ NODE
   "agents": { "defaults": { "workspace": "/root/old" } },
   "gateway": {
     "mode": "remote",
-    "remote": { "url": "ws://old.example:18789", "token": "old-token" }
+    "remote": { "url": "ws://old.example:32555", "token": "old-token" }
   }
 }
 JSON

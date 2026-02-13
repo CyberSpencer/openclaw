@@ -210,6 +210,19 @@ describe("readLastMessagePreviewFromTranscript", () => {
     expect(result).toBe("Final assistant reply");
   });
 
+  test("handles message.text format", () => {
+    const sessionId = "test-last-text-field";
+    const transcriptPath = path.join(tmpDir, `${sessionId}.jsonl`);
+    const lines = [
+      JSON.stringify({ message: { role: "user", content: "User question" } }),
+      JSON.stringify({ message: { role: "assistant", text: "Assistant reply via text field" } }),
+    ];
+    fs.writeFileSync(transcriptPath, lines.join("\n"), "utf-8");
+
+    const result = readLastMessagePreviewFromTranscript(sessionId, storePath);
+    expect(result).toBe("Assistant reply via text field");
+  });
+
   test("skips system messages to find last user/assistant", () => {
     const sessionId = "test-last-skip-system";
     const transcriptPath = path.join(tmpDir, `${sessionId}.jsonl`);

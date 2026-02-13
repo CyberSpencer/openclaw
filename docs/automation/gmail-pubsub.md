@@ -185,7 +185,7 @@ gog gmail watch serve \
   --port 8788 \
   --path /gmail-pubsub \
   --token <shared> \
-  --hook-url http://127.0.0.1:18789/hooks/gmail \
+  --hook-url http://127.0.0.1:32555/hooks/gmail \
   --hook-token OPENCLAW_HOOK_TOKEN \
   --include-body \
   --max-bytes 20000

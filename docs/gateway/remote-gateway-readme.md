@@ -10,41 +10,24 @@ OpenClaw.app uses SSH tunneling to connect to a remote gateway. This guide shows
 
 ## Overview
 
-```mermaid
-%%{init: {
-  'theme': 'base',
-  'themeVariables': {
-    'primaryColor': '#ffffff',
-    'primaryTextColor': '#000000',
-    'primaryBorderColor': '#000000',
-    'lineColor': '#000000',
-    'secondaryColor': '#f9f9fb',
-    'tertiaryColor': '#ffffff',
-    'clusterBkg': '#f9f9fb',
-    'clusterBorder': '#000000',
-    'nodeBorder': '#000000',
-    'mainBkg': '#ffffff',
-    'edgeLabelBackground': '#ffffff'
-  }
-}}%%
-flowchart TB
-    subgraph Client["Client Machine"]
-        direction TB
-        A["OpenClaw.app"]
-        B["ws://127.0.0.1:18789\n(local port)"]
-        T["SSH Tunnel"]
-
-        A --> B
-        B --> T
-    end
-    subgraph Remote["Remote Machine"]
-        direction TB
-        C["Gateway WebSocket"]
-        D["ws://127.0.0.1:18789"]
-
-        C --> D
-    end
-    T --> C
+```
+┌─────────────────────────────────────────────────────────────┐
+│                        Client Machine                          │
+│                                                              │
+│  OpenClaw.app ──► ws://127.0.0.1:32555 (local port)           │
+│                     │                                        │
+│                     ▼                                        │
+│  SSH Tunnel ────────────────────────────────────────────────│
+│                     │                                        │
+└─────────────────────┼──────────────────────────────────────┘
+                      │
+                      ▼
+┌─────────────────────────────────────────────────────────────┐
+│                         Remote Machine                        │
+│                                                              │
+│  Gateway WebSocket ──► ws://127.0.0.1:32555 ──►              │
+│                                                              │
+└─────────────────────────────────────────────────────────────┘
 ```
 
 ## Quick Setup
@@ -57,7 +40,7 @@ Edit `~/.ssh/config` and add:
 Host remote-gateway
     HostName <REMOTE_IP>          # e.g., 172.27.187.184
     User <REMOTE_USER>            # e.g., jefferson
-    LocalForward 18789 127.0.0.1:18789
+    LocalForward 32555 127.0.0.1:32555
     IdentityFile ~/.ssh/id_rsa
 ```
 
@@ -130,7 +113,6 @@ launchctl bootstrap gui/$UID ~/Library/LaunchAgents/bot.molt.ssh-tunnel.plist
 ```
 
 The tunnel will now:
-
 - Start automatically when you log in
 - Restart if it crashes
 - Keep running in the background
@@ -145,7 +127,7 @@ Legacy note: remove any leftover `com.openclaw.ssh-tunnel` LaunchAgent if presen
 
 ```bash
 ps aux | grep "ssh -N remote-gateway" | grep -v grep
-lsof -i :18789
+lsof -i :32555
 ```
 
 **Restart the tunnel:**
@@ -164,11 +146,11 @@ launchctl bootout gui/$UID/bot.molt.ssh-tunnel
 
 ## How It Works
 
-| Component                            | What It Does                                                 |
-| ------------------------------------ | ------------------------------------------------------------ |
-| `LocalForward 18789 127.0.0.1:18789` | Forwards local port 18789 to remote port 18789               |
-| `ssh -N`                             | SSH without executing remote commands (just port forwarding) |
-| `KeepAlive`                          | Automatically restarts tunnel if it crashes                  |
-| `RunAtLoad`                          | Starts tunnel when the agent loads                           |
+| Component | What It Does |
+|-----------|--------------|
+| `LocalForward 32555 127.0.0.1:32555` | Forwards local port 32555 to remote port 32555 |
+| `ssh -N` | SSH without executing remote commands (just port forwarding) |
+| `KeepAlive` | Automatically restarts tunnel if it crashes |
+| `RunAtLoad` | Starts tunnel when the agent loads |
 
-OpenClaw.app connects to `ws://127.0.0.1:18789` on your client machine. The SSH tunnel forwards that connection to port 18789 on the remote machine where the Gateway is running.
+OpenClaw.app connects to `ws://127.0.0.1:32555` on your client machine. The SSH tunnel forwards that connection to port 32555 on the remote machine where the Gateway is running.

@@ -138,7 +138,7 @@ describe("callGateway url resolution", () => {
     loadConfig.mockReturnValue({
       gateway: { mode: "remote", bind: "loopback", remote: {} },
     });
-    resolveGatewayPort.mockReturnValue(18789);
+    resolveGatewayPort.mockReturnValue(32555);
     pickPrimaryTailnetIPv4.mockReturnValue(undefined);
 
     await callGateway({
@@ -183,18 +183,18 @@ describe("buildGatewayConnectionDetails", () => {
     loadConfig.mockReturnValue({
       gateway: { mode: "remote", bind: "loopback", remote: {} },
     });
-    resolveGatewayPort.mockReturnValue(18789);
+    resolveGatewayPort.mockReturnValue(32555);
     pickPrimaryTailnetIPv4.mockReturnValue(undefined);
 
     const details = buildGatewayConnectionDetails();
 
-    expect(details.url).toBe("ws://127.0.0.1:18789");
+    expect(details.url).toBe("ws://127.0.0.1:32555");
     expect(details.urlSource).toBe("missing gateway.remote.url (fallback local)");
     expect(details.bindDetail).toBe("Bind: loopback");
     expect(details.remoteFallbackNote).toContain(
       "gateway.mode=remote but gateway.remote.url is missing",
     );
-    expect(details.message).toContain("Gateway target: ws://127.0.0.1:18789");
+    expect(details.message).toContain("Gateway target: ws://127.0.0.1:32555");
   });
 
   it("uses LAN IP and reports lan source when bind is lan", () => {
@@ -255,7 +255,7 @@ describe("callGateway error details", () => {
     loadConfig.mockReturnValue({
       gateway: { mode: "local", bind: "loopback" },
     });
-    resolveGatewayPort.mockReturnValue(18789);
+    resolveGatewayPort.mockReturnValue(32555);
     pickPrimaryTailnetIPv4.mockReturnValue(undefined);
 
     let err: Error | null = null;
@@ -266,7 +266,7 @@ describe("callGateway error details", () => {
     }
 
     expect(err?.message).toContain("gateway closed (1006");
-    expect(err?.message).toContain("Gateway target: ws://127.0.0.1:18789");
+    expect(err?.message).toContain("Gateway target: ws://127.0.0.1:32555");
     expect(err?.message).toContain("Source: local loopback");
     expect(err?.message).toContain("Bind: loopback");
   });
@@ -276,7 +276,7 @@ describe("callGateway error details", () => {
     loadConfig.mockReturnValue({
       gateway: { mode: "local", bind: "loopback" },
     });
-    resolveGatewayPort.mockReturnValue(18789);
+    resolveGatewayPort.mockReturnValue(32555);
     pickPrimaryTailnetIPv4.mockReturnValue(undefined);
 
     vi.useFakeTimers();
@@ -289,7 +289,7 @@ describe("callGateway error details", () => {
     await promise;
 
     expect(err?.message).toContain("gateway timeout after 5ms");
-    expect(err?.message).toContain("Gateway target: ws://127.0.0.1:18789");
+    expect(err?.message).toContain("Gateway target: ws://127.0.0.1:32555");
     expect(err?.message).toContain("Source: local loopback");
     expect(err?.message).toContain("Bind: loopback");
   });
@@ -378,7 +378,7 @@ describe("callGateway password resolution", () => {
     closeCode = 1006;
     closeReason = "";
     delete process.env.OPENCLAW_GATEWAY_PASSWORD;
-    resolveGatewayPort.mockReturnValue(18789);
+    resolveGatewayPort.mockReturnValue(32555);
     pickPrimaryTailnetIPv4.mockReturnValue(undefined);
   });
 
@@ -423,7 +423,7 @@ describe("callGateway password resolution", () => {
     loadConfig.mockReturnValue({
       gateway: {
         mode: "remote",
-        remote: { url: "ws://remote.example:18789", password: "remote-secret" },
+        remote: { url: "ws://remote.example:32555", password: "remote-secret" },
         auth: { password: "from-config" },
       },
     });
@@ -438,7 +438,7 @@ describe("callGateway password resolution", () => {
     loadConfig.mockReturnValue({
       gateway: {
         mode: "remote",
-        remote: { url: "ws://remote.example:18789", password: "remote-secret" },
+        remote: { url: "ws://remote.example:32555", password: "remote-secret" },
         auth: { password: "from-config" },
       },
     });
@@ -480,7 +480,7 @@ describe("callGateway token resolution", () => {
     closeCode = 1006;
     closeReason = "";
     delete process.env.OPENCLAW_GATEWAY_TOKEN;
-    resolveGatewayPort.mockReturnValue(18789);
+    resolveGatewayPort.mockReturnValue(32555);
     pickPrimaryTailnetIPv4.mockReturnValue(undefined);
   });
 

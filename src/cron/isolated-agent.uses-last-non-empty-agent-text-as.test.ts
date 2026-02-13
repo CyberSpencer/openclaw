@@ -469,7 +469,7 @@ describe("runCronIsolatedAgentTurn", () => {
     });
   });
 
-  it("rejects invalid model override", async () => {
+  it("clears invalid model override and continues with default model", async () => {
     await withTempHome(async (home) => {
       const storePath = await writeSessionStore(home);
       const deps: CliDeps = {
@@ -479,24 +479,31 @@ describe("runCronIsolatedAgentTurn", () => {
         sendMessageSignal: vi.fn(),
         sendMessageIMessage: vi.fn(),
       };
-      vi.mocked(runEmbeddedPiAgent).mockReset();
+      vi.mocked(runEmbeddedPiAgent).mockResolvedValue({
+        payloads: [{ text: "ok" }],
+        meta: {
+          durationMs: 5,
+          agentMeta: { sessionId: "s", provider: "p", model: "m" },
+        },
+      });
 
+      const job = makeJob({
+        kind: "agentTurn",
+        message: "do it",
+        model: "openai/",
+      });
       const res = await runCronIsolatedAgentTurn({
         cfg: makeCfg(home, storePath),
         deps,
-        job: makeJob({
-          kind: "agentTurn",
-          message: "do it",
-          model: "openai/",
-        }),
+        job,
         message: "do it",
         sessionKey: "cron:job-1",
         lane: "cron",
       });
 
-      expect(res.status).toBe("error");
-      expect(res.error).toMatch("invalid model");
-      expect(vi.mocked(runEmbeddedPiAgent)).not.toHaveBeenCalled();
+      expect(res.status).toBe("ok");
+      expect((job.payload as { model?: string }).model).toBeUndefined();
+      expect(vi.mocked(runEmbeddedPiAgent)).toHaveBeenCalled();
     });
   });
 

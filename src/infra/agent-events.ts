@@ -9,10 +9,24 @@ export type AgentEventPayload = {
   ts: number;
   data: Record<string, unknown>;
   sessionKey?: string;
+  rootConversationId?: string;
+  threadId?: string;
+  parentRunId?: string;
+  subagentGroupId?: string;
+  taskId?: string;
+  requesterSessionKey?: string;
+  spawnedBySessionKey?: string;
 };
 
 export type AgentRunContext = {
   sessionKey?: string;
+  rootConversationId?: string;
+  threadId?: string;
+  parentRunId?: string;
+  subagentGroupId?: string;
+  taskId?: string;
+  requesterSessionKey?: string;
+  spawnedBySessionKey?: string;
   verboseLevel?: VerboseLevel;
   isHeartbeat?: boolean;
 };
@@ -33,6 +47,27 @@ export function registerAgentRunContext(runId: string, context: AgentRunContext)
   }
   if (context.sessionKey && existing.sessionKey !== context.sessionKey) {
     existing.sessionKey = context.sessionKey;
+  }
+  if (context.rootConversationId && existing.rootConversationId !== context.rootConversationId) {
+    existing.rootConversationId = context.rootConversationId;
+  }
+  if (context.threadId && existing.threadId !== context.threadId) {
+    existing.threadId = context.threadId;
+  }
+  if (context.parentRunId && existing.parentRunId !== context.parentRunId) {
+    existing.parentRunId = context.parentRunId;
+  }
+  if (context.subagentGroupId && existing.subagentGroupId !== context.subagentGroupId) {
+    existing.subagentGroupId = context.subagentGroupId;
+  }
+  if (context.taskId && existing.taskId !== context.taskId) {
+    existing.taskId = context.taskId;
+  }
+  if (context.requesterSessionKey && existing.requesterSessionKey !== context.requesterSessionKey) {
+    existing.requesterSessionKey = context.requesterSessionKey;
+  }
+  if (context.spawnedBySessionKey && existing.spawnedBySessionKey !== context.spawnedBySessionKey) {
+    existing.spawnedBySessionKey = context.spawnedBySessionKey;
   }
   if (context.verboseLevel && existing.verboseLevel !== context.verboseLevel) {
     existing.verboseLevel = context.verboseLevel;
@@ -62,9 +97,42 @@ export function emitAgentEvent(event: Omit<AgentEventPayload, "seq" | "ts">) {
     typeof event.sessionKey === "string" && event.sessionKey.trim()
       ? event.sessionKey
       : context?.sessionKey;
+  const rootConversationId =
+    typeof event.rootConversationId === "string" && event.rootConversationId.trim()
+      ? event.rootConversationId
+      : context?.rootConversationId;
+  const threadId =
+    typeof event.threadId === "string" && event.threadId.trim()
+      ? event.threadId
+      : context?.threadId;
+  const parentRunId =
+    typeof event.parentRunId === "string" && event.parentRunId.trim()
+      ? event.parentRunId
+      : context?.parentRunId;
+  const subagentGroupId =
+    typeof event.subagentGroupId === "string" && event.subagentGroupId.trim()
+      ? event.subagentGroupId
+      : context?.subagentGroupId;
+  const taskId =
+    typeof event.taskId === "string" && event.taskId.trim() ? event.taskId : context?.taskId;
+  const requesterSessionKey =
+    typeof event.requesterSessionKey === "string" && event.requesterSessionKey.trim()
+      ? event.requesterSessionKey
+      : context?.requesterSessionKey;
+  const spawnedBySessionKey =
+    typeof event.spawnedBySessionKey === "string" && event.spawnedBySessionKey.trim()
+      ? event.spawnedBySessionKey
+      : context?.spawnedBySessionKey;
   const enriched: AgentEventPayload = {
     ...event,
     sessionKey,
+    rootConversationId,
+    threadId,
+    parentRunId,
+    subagentGroupId,
+    taskId,
+    requesterSessionKey,
+    spawnedBySessionKey,
     seq: nextSeq,
     ts: Date.now(),
   };

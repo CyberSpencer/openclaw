@@ -50,7 +50,8 @@ function buildMemorySection(params: {
   }
   const lines = [
     "## Memory Recall",
-    "Before answering anything about prior work, decisions, dates, people, preferences, or todos: run memory_search on MEMORY.md + memory/*.md; then use memory_get to pull only the needed lines. If low confidence after search, say you checked.",
+    "Before answering any user request: run memory_search on MEMORY.md + memory/*.md; then use memory_get to pull only the needed lines. If low confidence after search, say you checked.",
+    "",
   ];
   if (params.citationsMode === "off") {
     lines.push(
@@ -63,6 +64,25 @@ function buildMemorySection(params: {
   }
   lines.push("");
   return lines;
+}
+
+function buildOrchestrationSection(params: { isMinimal: boolean; availableTools: Set<string> }) {
+  if (params.isMinimal) {
+    return [];
+  }
+  if (!params.availableTools.has("orchestration_plan")) {
+    return [];
+  }
+  return [
+    "## Agent Orchestration",
+    "For non-trivial requests, treat orchestration as a first-class artifact:",
+    "- Start by creating a short task plan (to-do list) and publish it with `orchestration_plan`.",
+    "- Keep task statuses updated: todo, running, done, blocked, skipped.",
+    "- Mark tasks `todo` until assigned. The system will auto-spawn subagents for `todo` tasks with no assignedSessionKey, then patch the plan with assignedSessionKey + status=running.",
+    "- Only call sessions_spawn manually for truly ad-hoc work (and then record assignedSessionKey/assignedRunId on the task).",
+    "- Update the plan as work completes; the Control UI renders progress from it.",
+    "",
+  ];
 }
 
 function buildUserIdentitySection(ownerLine: string | undefined, isMinimal: boolean) {
@@ -240,6 +260,8 @@ export function buildAgentSystemPrompt(params: {
     sessions_history: "Fetch history for another session/sub-agent",
     sessions_send: "Send a message to another session/sub-agent",
     sessions_spawn: "Spawn a sub-agent session",
+    orchestration_plan:
+      "Publish/update a structured task plan (to-do list) used by the Control UI for progress + subagent mapping",
     session_status:
       "Show a /status-equivalent status card (usage + time + Reasoning/Verbose/Elevated); use for model-use questions (📊 session_status); optional per-session model override",
     image: "Analyze an image with the configured image model",
@@ -268,6 +290,7 @@ export function buildAgentSystemPrompt(params: {
     "sessions_history",
     "sessions_send",
     "session_status",
+    "orchestration_plan",
     "image",
   ];
 
@@ -365,6 +388,7 @@ export function buildAgentSystemPrompt(params: {
     availableTools,
     citationsMode: params.memoryCitationsMode,
   });
+  const orchestrationSection = buildOrchestrationSection({ isMinimal, availableTools });
   const docsSection = buildDocsSection({
     docsPath: params.docsPath,
     isMinimal,
@@ -423,6 +447,7 @@ export function buildAgentSystemPrompt(params: {
     "",
     ...skillsSection,
     ...memorySection,
+    ...orchestrationSection,
     // Skip self-update for subagent/none modes
     hasGateway && !isMinimal ? "## OpenClaw Self-Update" : "",
     hasGateway && !isMinimal

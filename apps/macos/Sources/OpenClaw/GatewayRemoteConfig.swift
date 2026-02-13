@@ -43,7 +43,7 @@ enum GatewayRemoteConfig {
             guard var components = URLComponents(url: url, resolvingAgainstBaseURL: false) else {
                 return url
             }
-            components.port = 18789
+            components.port = 32555
             return components.url
         }
         return url
@@ -56,7 +56,7 @@ enum GatewayRemoteConfig {
         case "wss":
             return 443
         case "ws":
-            return 18789
+            return 32555
         default:
             return nil
         }

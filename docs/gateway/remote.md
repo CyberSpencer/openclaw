@@ -4,7 +4,6 @@ read_when:
   - Running or troubleshooting remote gateway setups
 title: "Remote Access"
 ---
-
 # Remote access (SSH, tunnels, and tailnets)
 
 This repo supports “remote over SSH” by keeping a single Gateway (the master) running on a dedicated host (desktop/server) and connecting clients to it.
@@ -14,7 +13,7 @@ This repo supports “remote over SSH” by keeping a single Gateway (the master
 
 ## The core idea
 
-- The Gateway WebSocket binds to **loopback** on your configured port (defaults to 18789).
+- The Gateway WebSocket binds to **loopback** on your configured port (defaults to 32555).
 - For remote use, you forward that loopback port over SSH (or use a tailnet/VPN and tunnel less).
 
 ## Common VPN/tailnet setups (where the agent lives)
@@ -55,14 +54,12 @@ Guide: [Tailscale](/gateway/tailscale) and [Web overview](/web).
 One gateway service owns state + channels. Nodes are peripherals.
 
 Flow example (Telegram → node):
-
 - Telegram message arrives at the **Gateway**.
 - Gateway runs the **agent** and decides whether to call a node tool.
 - Gateway calls the **node** over the Gateway WebSocket (`node.*` RPC).
 - Node returns the result; Gateway replies back out to Telegram.
 
 Notes:
-
 - **Nodes do not run the gateway service.** Only one gateway should run per host unless you intentionally run isolated profiles (see [Multiple gateways](/gateway/multiple-gateways)).
 - macOS app “node mode” is just a node client over the Gateway WebSocket.
 
@@ -71,17 +68,14 @@ Notes:
 Create a local tunnel to the remote Gateway WS:
 
 ```bash
-ssh -N -L 18789:127.0.0.1:18789 user@host
+ssh -N -L 32555:127.0.0.1:32555 user@host
 ```
 
 With the tunnel up:
-
-- `openclaw health` and `openclaw status --deep` now reach the remote gateway via `ws://127.0.0.1:18789`.
+- `openclaw health` and `openclaw status --deep` now reach the remote gateway via `ws://127.0.0.1:32555`.
 - `openclaw gateway {status,health,send,agent,call}` can also target the forwarded URL via `--url` when needed.
 
-Note: replace `18789` with your configured `gateway.port` (or `--port`/`OPENCLAW_GATEWAY_PORT`).
-Note: when you pass `--url`, the CLI does not fall back to config or environment credentials.
-Include `--token` or `--password` explicitly. Missing explicit credentials is an error.
+Note: replace `32555` with your configured `gateway.port` (or `--port`/`OPENCLAW_GATEWAY_PORT`).
 
 ## CLI remote defaults
 
@@ -92,20 +86,20 @@ You can persist a remote target so CLI commands use it by default:
   gateway: {
     mode: "remote",
     remote: {
-      url: "ws://127.0.0.1:18789",
-      token: "your-token",
-    },
-  },
+      url: "ws://127.0.0.1:32555",
+      token: "your-token"
+    }
+  }
 }
 ```
 
-When the gateway is loopback-only, keep the URL at `ws://127.0.0.1:18789` and open the SSH tunnel first.
+When the gateway is loopback-only, keep the URL at `ws://127.0.0.1:32555` and open the SSH tunnel first.
 
 ## Chat UI over SSH
 
 WebChat no longer uses a separate HTTP port. The SwiftUI chat UI connects directly to the Gateway WebSocket.
 
-- Forward `18789` over SSH (see above), then connect clients to `ws://127.0.0.1:18789`.
+- Forward `32555` over SSH (see above), then connect clients to `ws://127.0.0.1:32555`.
 - On macOS, prefer the app’s “Remote over SSH” mode, which manages the tunnel automatically.
 
 ## macOS app “Remote over SSH”

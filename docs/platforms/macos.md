@@ -182,7 +182,7 @@ components can talk to a remote Gateway as if it were on localhost.
 ### Control tunnel (Gateway WebSocket port)
 
 - **Purpose:** health checks, status, Web Chat, config, and other control-plane calls.
-- **Local port:** the Gateway port (default `18789`), always stable.
+- **Local port:** the Gateway port (default `32555`), always stable.
 - **Remote port:** the same Gateway port on the remote host.
 - **Behavior:** no random local port; the app reuses an existing healthy tunnel
   or restarts it if needed.

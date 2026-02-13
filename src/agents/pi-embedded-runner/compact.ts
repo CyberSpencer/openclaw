@@ -31,6 +31,7 @@ import { DEFAULT_MODEL, DEFAULT_PROVIDER } from "../defaults.js";
 import { resolveOpenClawDocsPath } from "../docs-path.js";
 import { getApiKeyForModel, resolveModelAuthMode } from "../model-auth.js";
 import { ensureOpenClawModelsJson } from "../models-config.js";
+import { resolveProviderEndpointConfig } from "../provider-endpoints.js";
 import {
   ensureSessionHeader,
   validateAnthropicTurns,
@@ -41,7 +42,6 @@ import {
   resolveCompactionReserveTokensFloor,
 } from "../pi-settings.js";
 import { createOpenClawCodingTools } from "../pi-tools.js";
-import { resolveProviderEndpointConfig } from "../provider-endpoints.js";
 import { resolveSandboxContext } from "../sandbox.js";
 import { repairSessionFileIfNeeded } from "../session-file-repair.js";
 import { guardSessionManager } from "../session-tool-result-guard-wrapper.js";

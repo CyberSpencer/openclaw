@@ -107,9 +107,9 @@ The gateway binds to loopback by default. To access the Control UI:
 
 ```bash
 # From your local machine
-ssh -L 18789:localhost:18789 root@YOUR_DROPLET_IP
+ssh -L 32555:localhost:32555 root@YOUR_DROPLET_IP
 
-# Then open: http://localhost:18789
+# Then open: http://localhost:32555
 ```
 
 **Option B: Tailscale Serve (HTTPS, loopback-only)**
@@ -138,7 +138,7 @@ openclaw config set gateway.bind tailnet
 openclaw gateway restart
 ```
 
-Open: `http://<tailscale-ip>:18789` (token required).
+Open: `http://<tailscale-ip>:32555` (token required).
 
 ## 7) Connect Your Channels
 
@@ -238,7 +238,7 @@ journalctl -u openclaw --no-pager -n 50
 ### Port already in use
 
 ```bash
-lsof -i :18789
+lsof -i :32555
 kill <PID>
 ```
 

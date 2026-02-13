@@ -5,7 +5,7 @@ import { discoverGatewayBeacons } from "../infra/bonjour-discovery.js";
 import { resolveWideAreaDiscoveryDomain } from "../infra/widearea-dns.js";
 import { detectBinary } from "./onboard-helpers.js";
 
-const DEFAULT_GATEWAY_URL = "ws://127.0.0.1:18789";
+const DEFAULT_GATEWAY_URL = "ws://127.0.0.1:32555";
 
 function pickHost(beacon: GatewayBonjourBeacon): string | undefined {
   return beacon.tailnetDns || beacon.lanHost || beacon.host;
@@ -13,7 +13,7 @@ function pickHost(beacon: GatewayBonjourBeacon): string | undefined {
 
 function buildLabel(beacon: GatewayBonjourBeacon): string {
   const host = pickHost(beacon);
-  const port = beacon.gatewayPort ?? beacon.port ?? 18789;
+  const port = beacon.gatewayPort ?? beacon.port ?? 32555;
   const title = beacon.displayName ?? beacon.instanceName;
   const hint = host ? `${host}:${port}` : "host unknown";
   return `${title} (${hint})`;
@@ -80,8 +80,7 @@ export async function promptRemoteGatewayConfig(
 
   if (selectedBeacon) {
     const host = pickHost(selectedBeacon);
-    const port = selectedBeacon.gatewayPort ?? selectedBeacon.port ?? 18789;
-
+    const port = selectedBeacon.gatewayPort ?? selectedBeacon.port ?? 32555;
     if (host) {
       const mode = await prompter.select({
         message: "Connection method",
@@ -100,7 +99,7 @@ export async function promptRemoteGatewayConfig(
         await prompter.note(
           [
             "Start a tunnel before using the CLI:",
-            `ssh -N -L 18789:127.0.0.1:${port}${
+            `ssh -N -L 32555:127.0.0.1:${port}${
               selectedBeacon.sshPort ? ` -p ${selectedBeacon.sshPort}` : ""
             } <user>@${host}`,
             "Docs: https://docs.openclaw.ai/gateway/remote",

@@ -267,7 +267,7 @@ export class DiscordExecApprovalHandler {
     logDebug("discord exec approvals: starting handler");
 
     this.gatewayClient = new GatewayClient({
-      url: this.opts.gatewayUrl ?? "ws://127.0.0.1:18789",
+      url: this.opts.gatewayUrl ?? "ws://127.0.0.1:32555",
       clientName: GATEWAY_CLIENT_NAMES.GATEWAY_CLIENT,
       clientDisplayName: "Discord Exec Approvals",
       mode: GATEWAY_CLIENT_MODES.BACKEND,

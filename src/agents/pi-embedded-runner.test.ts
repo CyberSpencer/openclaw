@@ -4,7 +4,10 @@ import path from "node:path";
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import "./test-helpers/fast-coding-tools.js";
 import type { OpenClawConfig } from "../config/config.js";
-import { ensureOpenClawModelsJson } from "./models-config.js";
+
+vi.mock("./bedrock-discovery.js", () => ({
+  discoverBedrockModels: vi.fn(async () => []),
+}));
 
 vi.mock("@mariozechner/pi-ai", async () => {
   const actual = await vi.importActual<typeof import("@mariozechner/pi-ai")>("@mariozechner/pi-ai");
@@ -136,7 +139,10 @@ const makeOpenAiConfig = (modelIds: string[]) =>
     },
   }) satisfies OpenClawConfig;
 
-const ensureModels = (cfg: OpenClawConfig) => ensureOpenClawModelsJson(cfg, agentDir) as unknown;
+const ensureModels = async (cfg: OpenClawConfig) => {
+  const { ensureOpenClawModelsJson } = await import("./models-config.js");
+  return ensureOpenClawModelsJson(cfg, agentDir) as unknown;
+};
 
 const nextSessionFile = () => {
   sessionCounter += 1;
@@ -198,6 +204,8 @@ describe("runEmbeddedPiAgent", () => {
         },
       },
     } satisfies OpenClawConfig;
+
+    await ensureModels(cfg);
 
     await expect(
       runEmbeddedPiAgent({

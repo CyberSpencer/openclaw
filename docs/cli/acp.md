@@ -19,7 +19,7 @@ over WebSocket. It keeps ACP sessions mapped to Gateway session keys.
 openclaw acp
 
 # Remote Gateway
-openclaw acp --url wss://gateway-host:18789 --token <token>
+openclaw acp --url wss://gateway-host:32555 --token <token>
 
 # Attach to an existing session key
 openclaw acp --session agent:main:main
@@ -40,10 +40,10 @@ It spawns the ACP bridge and lets you type prompts interactively.
 openclaw acp client
 
 # Point the spawned bridge at a remote Gateway
-openclaw acp client --server-args --url wss://gateway-host:18789 --token <token>
+openclaw acp client --server-args --url wss://gateway-host:32555 --token <token>
 
 # Override the server command (default: openclaw)
-openclaw acp client --server "node" --server-args openclaw.mjs acp --url ws://127.0.0.1:19001
+openclaw acp client --server "node" --server-args openclaw.mjs acp --url ws://127.0.0.1:55532
 ```
 
 ## How to use this
@@ -58,14 +58,14 @@ it to drive a OpenClaw Gateway session.
 Example config (persisted):
 
 ```bash
-openclaw config set gateway.remote.url wss://gateway-host:18789
+openclaw config set gateway.remote.url wss://gateway-host:32555
 openclaw config set gateway.remote.token <token>
 ```
 
 Example direct run (no config write):
 
 ```bash
-openclaw acp --url wss://gateway-host:18789 --token <token>
+openclaw acp --url wss://gateway-host:32555 --token <token>
 ```
 
 ## Selecting agents
@@ -111,12 +111,9 @@ To target a specific Gateway or agent:
       "command": "openclaw",
       "args": [
         "acp",
-        "--url",
-        "wss://gateway-host:18789",
-        "--token",
-        "<token>",
-        "--session",
-        "agent:design:main"
+        "--url", "wss://gateway-host:32555",
+        "--token", "<token>",
+        "--session", "agent:design:main"
       ],
       "env": {}
     }

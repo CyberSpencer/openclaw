@@ -112,7 +112,7 @@ openclaw health
 
 ### Common footguns
 
-- **Wrong port:** Gateway WS defaults to `ws://127.0.0.1:18789`; keep app + CLI on the same port.
+- **Wrong port:** Gateway WS defaults to `ws://127.0.0.1:32555`; keep app + CLI on the same port.
 - **Where state lives:**
   - Credentials: `~/.openclaw/credentials/`
   - Sessions: `~/.openclaw/agents/<agentId>/sessions/`

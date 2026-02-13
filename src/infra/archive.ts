@@ -23,6 +23,19 @@ export function resolveArchiveKind(filePath: string): ArchiveKind | null {
   return null;
 }
 
+function isSafeTarEntry(entryPath: string, destDir: string): boolean {
+  const normalized = entryPath.replaceAll("\\", "/");
+  if (!normalized || normalized.startsWith("/")) {
+    return false;
+  }
+  if (normalized === ".." || normalized.startsWith("../") || normalized.includes("/../")) {
+    return false;
+  }
+  const resolved = path.resolve(destDir, normalized);
+  const root = path.resolve(destDir);
+  return resolved === root || resolved.startsWith(root + path.sep);
+}
+
 export async function resolvePackedRootDir(extractDir: string): Promise<string> {
   const direct = path.join(extractDir, "package");
   try {
@@ -109,7 +122,16 @@ export async function extractArchive(params: {
   const label = kind === "zip" ? "extract zip" : "extract tar";
   if (kind === "tar") {
     await withTimeout(
-      tar.x({ file: params.archivePath, cwd: params.destDir }),
+      tar.x({
+        file: params.archivePath,
+        cwd: params.destDir,
+        filter: (entryPath: string) => {
+          if (isSafeTarEntry(entryPath, params.destDir)) {
+            return true;
+          }
+          throw new Error(`tar entry escapes destination: ${entryPath}`);
+        },
+      }),
       params.timeoutMs,
       label,
     );

@@ -28,7 +28,7 @@ afterEach(() => {
 });
 
 describe("chat markdown rendering", () => {
-  it("renders markdown inside tool output sidebar", async () => {
+  it("opens tool output in sidebar from terminal tool entries", async () => {
     const app = mountApp("/chat");
     await app.updateComplete;
 
@@ -46,16 +46,16 @@ describe("chat markdown rendering", () => {
 
     await app.updateComplete;
 
-    const toolCards = Array.from(app.querySelectorAll<HTMLElement>(".chat-tool-card"));
-    const toolCard = toolCards.find((card) =>
-      card.querySelector(".chat-tool-card__preview, .chat-tool-card__inline"),
-    );
-    expect(toolCard).not.toBeUndefined();
-    toolCard?.click();
+    const toolEntry = app.querySelector<HTMLElement>(".terminal-entry--tool");
+    expect(toolEntry).not.toBeNull();
+
+    const viewButton = toolEntry?.querySelector<HTMLButtonElement>(".terminal-entry__open");
+    expect(viewButton).not.toBeNull();
+    viewButton?.click();
 
     await app.updateComplete;
 
-    const strong = app.querySelector(".sidebar-markdown strong");
-    expect(strong?.textContent).toBe("world");
+    const code = app.querySelector(".sidebar-markdown code");
+    expect(code?.textContent).toContain("Hello **world**");
   });
 });

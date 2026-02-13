@@ -25,7 +25,7 @@ cd apps/android
 
 1) Start the gateway (on your “master” machine):
 ```bash
-pnpm openclaw gateway --port 18789 --verbose
+pnpm openclaw gateway --port 32555 --verbose
 ```
 
 2) In the Android app:

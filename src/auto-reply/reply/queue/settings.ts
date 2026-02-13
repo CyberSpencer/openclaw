@@ -5,6 +5,13 @@ import { normalizeQueueDropPolicy, normalizeQueueMode } from "./normalize.js";
 import { DEFAULT_QUEUE_CAP, DEFAULT_QUEUE_DEBOUNCE_MS, DEFAULT_QUEUE_DROP } from "./state.js";
 
 function defaultQueueModeForChannel(_channel?: string): QueueMode {
+  const channel = typeof _channel === "string" ? _channel.trim().toLowerCase() : "";
+  // Control UI/WebChat should feel "steer-first": while a run is active, messages (including
+  // subagent announcements) should inject into the live turn by default unless the user
+  // explicitly opts into queuing.
+  if (channel === "webchat") {
+    return "steer";
+  }
   return "collect";
 }
 

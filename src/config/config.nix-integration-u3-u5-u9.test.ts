@@ -204,9 +204,9 @@ describe("Nix integration (U3, U5, U9)", () => {
     });
 
     it("prefers OPENCLAW_GATEWAY_PORT over config", async () => {
-      await withEnvOverride({ OPENCLAW_GATEWAY_PORT: "19001" }, async () => {
+      await withEnvOverride({ OPENCLAW_GATEWAY_PORT: "55532" }, async () => {
         const { resolveGatewayPort } = await import("./config.js");
-        expect(resolveGatewayPort({ gateway: { port: 19002 } })).toBe(19001);
+        expect(resolveGatewayPort({ gateway: { port: 19002 } })).toBe(55532);
       });
     });
 

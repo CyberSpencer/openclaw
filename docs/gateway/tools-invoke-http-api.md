@@ -74,7 +74,7 @@ To help group policies resolve context, you can optionally set:
 ## Example
 
 ```bash
-curl -sS http://127.0.0.1:18789/tools/invoke \
+curl -sS http://127.0.0.1:32555/tools/invoke \
   -H 'Authorization: Bearer YOUR_TOKEN' \
   -H 'Content-Type: application/json' \
   -d '{

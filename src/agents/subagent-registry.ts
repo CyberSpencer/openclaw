@@ -1,4 +1,9 @@
 import { loadConfig } from "../config/config.js";
+import {
+  resolveAgentIdFromSessionKey,
+  resolveStorePath,
+  updateSessionStore,
+} from "../config/sessions.js";
 import { callGateway } from "../gateway/call.js";
 import { onAgentEvent } from "../infra/agent-events.js";
 import { type DeliveryContext, normalizeDeliveryContext } from "../utils/delivery-context.js";
@@ -18,6 +23,15 @@ export type SubagentRunRecord = {
   task: string;
   cleanup: "delete" | "keep";
   label?: string;
+  model?: string;
+  modelApplied?: boolean;
+  routing?: "explicit" | "simple-kimi" | "configured-default";
+  complexity?: "simple" | "complex";
+  rootConversationId?: string;
+  threadId?: string;
+  parentRunId?: string;
+  subagentGroupId?: string;
+  taskId?: string;
   createdAt: number;
   startedAt?: number;
   endedAt?: number;
@@ -139,6 +153,127 @@ function resolveSubagentWaitTimeoutMs(
   return resolveAgentTimeoutMs({ cfg, overrideSeconds: runTimeoutSeconds });
 }
 
+export function deriveTaskPlanTerminalStateForOutcome(outcome: SubagentRunOutcome): {
+  status: "done" | "blocked";
+  failureReason?: "error" | "timeout" | "unknown";
+  resultSummary?: string;
+} {
+  if (outcome.status === "ok") {
+    return { status: "done" };
+  }
+  if (outcome.status === "error") {
+    return {
+      status: "blocked",
+      failureReason: "error",
+      resultSummary: outcome.error?.trim() || "Subagent run failed with an error.",
+    };
+  }
+  if (outcome.status === "timeout") {
+    return {
+      status: "blocked",
+      failureReason: "timeout",
+      resultSummary: "Subagent run timed out before completion.",
+    };
+  }
+  return {
+    status: "blocked",
+    failureReason: "unknown",
+    resultSummary: "Subagent run ended with unknown outcome.",
+  };
+}
+
+async function patchRequesterTaskPlanFromSubagent(params: {
+  requesterSessionKey: string;
+  childSessionKey: string;
+  childRunId: string;
+  outcome: SubagentRunOutcome;
+}) {
+  const requesterKey = params.requesterSessionKey.trim();
+  const childKey = params.childSessionKey.trim();
+  const runId = params.childRunId.trim();
+  if (!requesterKey || !childKey || !runId) {
+    return;
+  }
+
+  const cfg = loadConfig();
+  const agentId = resolveAgentIdFromSessionKey(requesterKey);
+  const storePath = resolveStorePath(cfg.session?.store, { agentId });
+  const terminal = deriveTaskPlanTerminalStateForOutcome(params.outcome);
+
+  try {
+    await updateSessionStore(storePath, (store) => {
+      const entry = store[requesterKey];
+      const plan = entry?.taskPlan as
+        | { id?: unknown; goal?: unknown; tasks?: unknown }
+        | null
+        | undefined;
+      const tasksRaw =
+        plan && typeof plan === "object" && Array.isArray(plan.tasks) ? plan.tasks : [];
+      if (!entry || !plan || tasksRaw.length === 0) {
+        return;
+      }
+
+      let mutated = false;
+      const nextTasks = tasksRaw.map((task) => {
+        if (!task || typeof task !== "object" || Array.isArray(task)) {
+          return task;
+        }
+        const t = task as Record<string, unknown>;
+        const assignedSessionKey =
+          typeof t.assignedSessionKey === "string" ? t.assignedSessionKey.trim() : "";
+        const assignedRunId = typeof t.assignedRunId === "string" ? t.assignedRunId.trim() : "";
+        const matches =
+          (assignedSessionKey && assignedSessionKey === childKey) ||
+          (assignedRunId && assignedRunId === runId);
+        if (!matches) {
+          return task;
+        }
+
+        const currentStatus = typeof t.status === "string" ? t.status.trim().toLowerCase() : "";
+        const currentFailureReason =
+          typeof t.failureReason === "string" ? t.failureReason.trim().toLowerCase() : "";
+        const currentResultSummary =
+          typeof t.resultSummary === "string" ? t.resultSummary.trim() : "";
+        const nextFailureReason = terminal.failureReason ?? "";
+        const nextResultSummary = terminal.resultSummary ?? "";
+        if (
+          currentStatus === terminal.status &&
+          currentFailureReason === nextFailureReason &&
+          currentResultSummary === nextResultSummary
+        ) {
+          return task;
+        }
+        mutated = true;
+        const nextTask: Record<string, unknown> = { ...t, status: terminal.status };
+        if (terminal.failureReason) {
+          nextTask.failureReason = terminal.failureReason;
+        } else {
+          delete nextTask.failureReason;
+        }
+        if (terminal.resultSummary) {
+          nextTask.resultSummary = terminal.resultSummary;
+        } else {
+          delete nextTask.resultSummary;
+        }
+        return nextTask;
+      });
+
+      if (!mutated) {
+        return;
+      }
+
+      entry.taskPlan = {
+        ...(plan as Record<string, unknown>),
+        tasks: nextTasks,
+      } as typeof entry.taskPlan;
+      entry.updatedAt = Date.now();
+      store[requesterKey] = entry;
+    });
+  } catch {
+    // Best-effort
+  }
+}
+
 function startSweeper() {
   if (sweeper) {
     return;
@@ -219,6 +354,13 @@ function ensureListener() {
     }
     persistSubagentRuns();
 
+    void patchRequesterTaskPlanFromSubagent({
+      requesterSessionKey: entry.requesterSessionKey,
+      childSessionKey: entry.childSessionKey,
+      childRunId: entry.runId,
+      outcome: entry.outcome,
+    });
+
     if (!beginSubagentCleanup(evt.runId)) {
       return;
     }
@@ -288,6 +430,15 @@ export function registerSubagentRun(params: {
   task: string;
   cleanup: "delete" | "keep";
   label?: string;
+  model?: string;
+  modelApplied?: boolean;
+  routing?: "explicit" | "simple-kimi" | "configured-default";
+  complexity?: "simple" | "complex";
+  rootConversationId?: string;
+  threadId?: string;
+  parentRunId?: string;
+  subagentGroupId?: string;
+  taskId?: string;
   runTimeoutSeconds?: number;
 }) {
   const now = Date.now();
@@ -305,6 +456,15 @@ export function registerSubagentRun(params: {
     task: params.task,
     cleanup: params.cleanup,
     label: params.label,
+    model: params.model,
+    modelApplied: params.modelApplied,
+    routing: params.routing,
+    complexity: params.complexity,
+    rootConversationId: params.rootConversationId,
+    threadId: params.threadId,
+    parentRunId: params.parentRunId,
+    subagentGroupId: params.subagentGroupId,
+    taskId: params.taskId,
     createdAt: now,
     startedAt: now,
     archiveAtMs,

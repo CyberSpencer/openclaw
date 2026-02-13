@@ -619,7 +619,32 @@ actor GatewayEndpointStore {
 }
 
 extension GatewayEndpointStore {
-    static func dashboardURL(for config: GatewayConnection.Config) throws -> URL {
+    private static func normalizeDashboardPath(_ raw: String) -> String {
+        let trimmed = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+        if trimmed.isEmpty { return "/" }
+        if trimmed.hasPrefix("/") { return trimmed }
+        return "/\(trimmed)"
+    }
+
+    private static func buildDashboardFragment(token: String?, password: String?) -> String? {
+        var items: [URLQueryItem] = []
+        if let token = token?.trimmingCharacters(in: .whitespacesAndNewlines), !token.isEmpty {
+            items.append(URLQueryItem(name: "token", value: token))
+        }
+        if let password = password?.trimmingCharacters(in: .whitespacesAndNewlines), !password.isEmpty {
+            items.append(URLQueryItem(name: "password", value: password))
+        }
+        guard !items.isEmpty else { return nil }
+        var comp = URLComponents()
+        comp.queryItems = items
+        return comp.percentEncodedQuery
+    }
+
+    static func dashboardURL(
+        for config: GatewayConnection.Config,
+        path: String = "/",
+        session: String? = nil) throws -> URL
+    {
         guard var components = URLComponents(url: config.url, resolvingAgainstBaseURL: false) else {
             throw NSError(domain: "Dashboard", code: 1, userInfo: [
                 NSLocalizedDescriptionKey: "Invalid gateway URL",
@@ -633,19 +658,15 @@ extension GatewayEndpointStore {
         default:
             components.scheme = "http"
         }
-        components.path = "/"
-        var queryItems: [URLQueryItem] = []
-        if let token = config.token?.trimmingCharacters(in: .whitespacesAndNewlines),
-           !token.isEmpty
+        components.path = Self.normalizeDashboardPath(path)
+        if let session = session?.trimmingCharacters(in: .whitespacesAndNewlines),
+           !session.isEmpty
         {
-            queryItems.append(URLQueryItem(name: "token", value: token))
+            components.queryItems = [URLQueryItem(name: "session", value: session)]
+        } else {
+            components.queryItems = nil
         }
-        if let password = config.password?.trimmingCharacters(in: .whitespacesAndNewlines),
-           !password.isEmpty
-        {
-            queryItems.append(URLQueryItem(name: "password", value: password))
-        }
-        components.queryItems = queryItems.isEmpty ? nil : queryItems
+        components.fragment = Self.buildDashboardFragment(token: config.token, password: config.password)
         guard let url = components.url else {
             throw NSError(domain: "Dashboard", code: 2, userInfo: [
                 NSLocalizedDescriptionKey: "Failed to build dashboard URL",

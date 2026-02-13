@@ -44,8 +44,8 @@
 - Config: use `openclaw config set ...`; ensure `gateway.mode=local` is set.
 - Discord: store raw token only (no `DISCORD_BOT_TOKEN=` prefix).
 - Restart: stop old gateway and run:
-  `pkill -9 -f openclaw-gateway || true; nohup openclaw gateway run --bind loopback --port 18789 --force > /tmp/openclaw-gateway.log 2>&1 &`
-- Verify: `openclaw channels status --probe`, `ss -ltnp | rg 18789`, `tail -n 120 /tmp/openclaw-gateway.log`.
+  `pkill -9 -f openclaw-gateway || true; nohup openclaw gateway run --bind loopback --port 32555 --force > /tmp/openclaw-gateway.log 2>&1 &`
+- Verify: `openclaw channels status --probe`, `ss -ltnp | rg 32555`, `tail -n 120 /tmp/openclaw-gateway.log`.
 
 ## Build, Test, and Development Commands
 

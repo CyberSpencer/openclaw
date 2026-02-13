@@ -114,6 +114,7 @@ const MAX_LINES_TO_SCAN = 10;
 type TranscriptMessage = {
   role?: string;
   content?: string | Array<{ type: string; text?: string }>;
+  text?: string;
 };
 
 function extractTextFromContent(content: TranscriptMessage["content"]): string | null {
@@ -136,6 +137,23 @@ function extractTextFromContent(content: TranscriptMessage["content"]): string |
   }
   return null;
 }
+
+function extractTextFromMessage(message: TranscriptMessage | undefined): string | null {
+  if (!message || typeof message !== "object") {
+    return null;
+  }
+  const fromContent = extractTextFromContent(message.content);
+  if (fromContent) {
+    return fromContent;
+  }
+  if (typeof message.text === "string") {
+    const trimmed = message.text.trim();
+    return trimmed ? trimmed : null;
+  }
+  return null;
+}
+
+const LAST_MESSAGE_PREVIEW_MAX_CHARS = 400;
 
 export function readFirstUserMessageFromTranscript(
   sessionId: string,
@@ -168,7 +186,7 @@ export function readFirstUserMessageFromTranscript(
         const parsed = JSON.parse(line);
         const msg = parsed?.message as TranscriptMessage | undefined;
         if (msg?.role === "user") {
-          const text = extractTextFromContent(msg.content);
+          const text = extractTextFromMessage(msg);
           if (text) {
             return text;
           }
@@ -226,9 +244,12 @@ export function readLastMessagePreviewFromTranscript(
         const parsed = JSON.parse(line);
         const msg = parsed?.message as TranscriptMessage | undefined;
         if (msg?.role === "user" || msg?.role === "assistant") {
-          const text = extractTextFromContent(msg.content);
+          let text = extractTextFromMessage(msg);
           if (text) {
-            return text;
+            if (msg.role === "user") {
+              text = stripEnvelope(text);
+            }
+            return truncatePreviewText(text, LAST_MESSAGE_PREVIEW_MAX_CHARS);
           }
         }
       } catch {

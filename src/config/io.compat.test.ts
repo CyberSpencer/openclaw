@@ -29,13 +29,13 @@ async function writeConfig(
 describe("config io paths", () => {
   it("uses ~/.openclaw/openclaw.json when config exists", async () => {
     await withTempHome(async (home) => {
-      const configPath = await writeConfig(home, ".openclaw", 19001);
+      const configPath = await writeConfig(home, ".openclaw", 55532);
       const io = createConfigIO({
         env: {} as NodeJS.ProcessEnv,
         homedir: () => home,
       });
       expect(io.configPath).toBe(configPath);
-      expect(io.loadConfig().gateway?.port).toBe(19001);
+      expect(io.loadConfig().gateway?.port).toBe(55532);
     });
   });
 

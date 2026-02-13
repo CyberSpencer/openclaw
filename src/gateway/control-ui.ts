@@ -1,6 +1,7 @@
 import type { IncomingMessage, ServerResponse } from "node:http";
 import fs from "node:fs";
 import path from "node:path";
+import { fileURLToPath } from "node:url";
 import type { OpenClawConfig } from "../config/config.js";
 import { resolveControlUiRootSync } from "../infra/control-ui-assets.js";
 import { DEFAULT_ASSISTANT_IDENTITY, resolveAssistantIdentity } from "./assistant-identity.js";
@@ -72,10 +73,16 @@ function applyControlUiSecurityHeaders(res: ServerResponse) {
   res.setHeader("X-Content-Type-Options", "nosniff");
 }
 
+function applyControlUiNoStoreHeaders(res: ServerResponse) {
+  res.setHeader("Cache-Control", "no-store");
+  res.setHeader("Pragma", "no-cache");
+  res.setHeader("Expires", "0");
+}
+
 function sendJson(res: ServerResponse, status: number, body: unknown) {
   res.statusCode = status;
   res.setHeader("Content-Type", "application/json; charset=utf-8");
-  res.setHeader("Cache-Control", "no-cache");
+  applyControlUiNoStoreHeaders(res);
   res.end(JSON.stringify(body));
 }
 
@@ -136,7 +143,7 @@ export function handleControlUiAvatarRequest(
   if (req.method === "HEAD") {
     res.statusCode = 200;
     res.setHeader("Content-Type", contentTypeForExt(path.extname(resolved.filePath).toLowerCase()));
-    res.setHeader("Cache-Control", "no-cache");
+    applyControlUiNoStoreHeaders(res);
     res.end();
     return true;
   }
@@ -148,15 +155,14 @@ export function handleControlUiAvatarRequest(
 function respondNotFound(res: ServerResponse) {
   res.statusCode = 404;
   res.setHeader("Content-Type", "text/plain; charset=utf-8");
+  applyControlUiNoStoreHeaders(res);
   res.end("Not Found");
 }
 
 function serveFile(res: ServerResponse, filePath: string) {
   const ext = path.extname(filePath).toLowerCase();
   res.setHeader("Content-Type", contentTypeForExt(ext));
-  // Static UI should never be cached aggressively while iterating; allow the
-  // browser to revalidate.
-  res.setHeader("Cache-Control", "no-cache");
+  applyControlUiNoStoreHeaders(res);
   res.end(fs.readFileSync(filePath));
 }
 
@@ -164,10 +170,11 @@ interface ControlUiInjectionOpts {
   basePath: string;
   assistantName?: string;
   assistantAvatar?: string;
+  buildMeta?: unknown;
 }
 
 function injectControlUiConfig(html: string, opts: ControlUiInjectionOpts): string {
-  const { basePath, assistantName, assistantAvatar } = opts;
+  const { basePath, assistantName, assistantAvatar, buildMeta } = opts;
   const script =
     `<script>` +
     `window.__OPENCLAW_CONTROL_UI_BASE_PATH__=${JSON.stringify(basePath)};` +
@@ -177,6 +184,7 @@ function injectControlUiConfig(html: string, opts: ControlUiInjectionOpts): stri
     `window.__OPENCLAW_ASSISTANT_AVATAR__=${JSON.stringify(
       assistantAvatar ?? DEFAULT_ASSISTANT_IDENTITY.avatar,
     )};` +
+    (buildMeta ? `window.__OPENCLAW_CONTROL_UI_META__=${JSON.stringify(buildMeta)};` : "") +
     `</script>`;
   // Check if already injected
   if (html.includes("__OPENCLAW_ASSISTANT_NAME__")) {
@@ -195,6 +203,33 @@ interface ServeIndexHtmlOpts {
   agentId?: string;
 }
 
+type GatewayBuildInfo = {
+  version: string | null;
+  commit: string | null;
+  builtAt: string | null;
+};
+
+function loadGatewayBuildInfo(): GatewayBuildInfo | null {
+  try {
+    const distDir = path.dirname(fileURLToPath(import.meta.url));
+    const buildInfoPath = path.join(distDir, "build-info.json");
+    const raw = fs.readFileSync(buildInfoPath, "utf8");
+    const parsed = JSON.parse(raw) as Record<string, unknown> | null;
+    if (!parsed || typeof parsed !== "object") {
+      return null;
+    }
+    const version = typeof parsed.version === "string" ? parsed.version : null;
+    const commit = typeof parsed.commit === "string" ? parsed.commit : null;
+    const builtAt = typeof parsed.builtAt === "string" ? parsed.builtAt : null;
+    if (!version && !commit && !builtAt) {
+      return null;
+    }
+    return { version, commit, builtAt };
+  } catch {
+    return null;
+  }
+}
+
 function serveIndexHtml(res: ServerResponse, indexPath: string, opts: ServeIndexHtmlOpts) {
   const { basePath, config, agentId } = opts;
   const identity = config
@@ -211,13 +246,24 @@ function serveIndexHtml(res: ServerResponse, indexPath: string, opts: ServeIndex
       basePath,
     }) ?? identity.avatar;
   res.setHeader("Content-Type", "text/html; charset=utf-8");
-  res.setHeader("Cache-Control", "no-cache");
+  applyControlUiNoStoreHeaders(res);
   const raw = fs.readFileSync(indexPath, "utf8");
+  const uiIndexMtimeMs = (() => {
+    try {
+      return fs.statSync(indexPath).mtimeMs;
+    } catch {
+      return null;
+    }
+  })();
   res.end(
     injectControlUiConfig(raw, {
       basePath,
       assistantName: identity.name,
       assistantAvatar: avatarValue,
+      buildMeta: {
+        uiIndexMtimeMs,
+        gatewayBuild: loadGatewayBuildInfo(),
+      },
     }),
   );
 }
