@@ -308,6 +308,29 @@ function cleanupInterruptMonitor(state: VoiceState): void {
   state.interruptAnalyser = null;
 }
 
+function isLiveMicStream(stream: MediaStream | null): stream is MediaStream {
+  if (!stream) {
+    return false;
+  }
+  return stream.getTracks().some((track) => track.readyState !== "ended");
+}
+
+export async function ensureConversationMicStream(state: VoiceState): Promise<MediaStream> {
+  if (isLiveMicStream(state.mediaStream)) {
+    return state.mediaStream;
+  }
+
+  const stream = await navigator.mediaDevices.getUserMedia({
+    audio: {
+      echoCancellation: true,
+      noiseSuppression: true,
+      sampleRate: 16000,
+    },
+  });
+  state.mediaStream = stream;
+  return stream;
+}
+
 async function startBargeInMonitor(state: VoiceState, onInterrupt: () => void): Promise<void> {
   cleanupInterruptMonitor(state);
 
@@ -460,27 +483,13 @@ async function startRecordingWithVAD(
     if (state.mediaRecorder && state.mediaRecorder.state !== "inactive") {
       state.mediaRecorder.stop();
     }
-    if (state.mediaStream) {
-      for (const track of state.mediaStream.getTracks()) {
-        track.stop();
-      }
-      state.mediaStream = null;
-    }
     if (state.audioContext) {
       void state.audioContext.close().catch(() => undefined);
       state.audioContext = null;
     }
 
-    // Request microphone access
-    const stream = await navigator.mediaDevices.getUserMedia({
-      audio: {
-        echoCancellation: true,
-        noiseSuppression: true,
-        sampleRate: 16000,
-      },
-    });
-
-    state.mediaStream = stream;
+    // Reuse a live conversation mic stream when available to reduce per-turn startup latency.
+    const stream = await ensureConversationMicStream(state);
 
     // Setup VAD monitoring
     setupVAD(state, stream, onSpeechEnd, onUpdate);
@@ -523,7 +532,8 @@ function stopRecordingGetAudio(state: VoiceState): Promise<Blob | null> {
     stopVAD(state);
 
     const finalize = (blob: Blob | null) => {
-      if (state.mediaStream) {
+      const keepStreamHot = state.conversationActive;
+      if (!keepStreamHot && state.mediaStream) {
         for (const track of state.mediaStream.getTracks()) {
           track.stop();
         }
