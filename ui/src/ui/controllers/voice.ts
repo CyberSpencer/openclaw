@@ -59,7 +59,9 @@ export type VoiceState = {
 
   // Low-latency worklet capture path (conversation mode)
   captureWorkletContext: AudioContext | null;
+  captureWorkletSource: MediaStreamAudioSourceNode | null;
   captureWorkletNode: AudioWorkletNode | null;
+  captureWorkletSink: GainNode | null;
   capturePcmFrames: Int16Array[];
   captureUsingWorklet: boolean;
   captureWorkletDisabledForSession: boolean;
@@ -217,7 +219,9 @@ export function createVoiceState(): VoiceState {
 
     // Low-latency worklet capture path
     captureWorkletContext: null,
+    captureWorkletSource: null,
     captureWorkletNode: null,
+    captureWorkletSink: null,
     capturePcmFrames: [],
     captureUsingWorklet: false,
     captureWorkletDisabledForSession: false,
@@ -561,6 +565,7 @@ async function startConversationWorkletCapture(
   let ctx: AudioContext | null = null;
   let source: MediaStreamAudioSourceNode | null = null;
   let node: AudioWorkletNode | null = null;
+  let sink: GainNode | null = null;
 
   try {
     ctx = new AudioContext({ sampleRate: 16000 });
@@ -589,8 +594,16 @@ async function startConversationWorkletCapture(
     node.port.start();
     source.connect(node);
 
+    // Keep the worklet node in an active render graph without audible output.
+    sink = ctx.createGain();
+    sink.gain.value = 0;
+    node.connect(sink);
+    sink.connect(ctx.destination);
+
     state.captureWorkletContext = ctx;
+    state.captureWorkletSource = source;
     state.captureWorkletNode = node;
+    state.captureWorkletSink = sink;
     state.captureUsingWorklet = true;
     return true;
   } catch (err) {
@@ -598,6 +611,10 @@ async function startConversationWorkletCapture(
     state.captureWorkletDisabledForSession = true;
     state.captureUsingWorklet = false;
     state.capturePcmFrames = [];
+    state.captureWorkletSource = null;
+    state.captureWorkletNode = null;
+    state.captureWorkletSink = null;
+    state.captureWorkletContext = null;
     try {
       source?.disconnect();
     } catch {
@@ -605,6 +622,11 @@ async function startConversationWorkletCapture(
     }
     try {
       node?.disconnect();
+    } catch {
+      // ignore
+    }
+    try {
+      sink?.disconnect();
     } catch {
       // ignore
     }
@@ -626,13 +648,27 @@ async function stopConversationWorkletCapture(state: VoiceState): Promise<Blob |
   state.capturePcmFrames = [];
   state.captureUsingWorklet = false;
 
+  const source = state.captureWorkletSource;
   const node = state.captureWorkletNode;
+  const sink = state.captureWorkletSink;
   const ctx = state.captureWorkletContext;
+  state.captureWorkletSource = null;
   state.captureWorkletNode = null;
+  state.captureWorkletSink = null;
   state.captureWorkletContext = null;
 
   try {
+    source?.disconnect();
+  } catch {
+    // ignore
+  }
+  try {
     node?.disconnect();
+  } catch {
+    // ignore
+  }
+  try {
+    sink?.disconnect();
   } catch {
     // ignore
   }
@@ -677,6 +713,10 @@ async function startRecordingWithVAD(
 
     state.captureUsingWorklet = false;
     state.capturePcmFrames = [];
+    state.captureWorkletSource = null;
+    state.captureWorkletNode = null;
+    state.captureWorkletSink = null;
+    state.captureWorkletContext = null;
 
     // Prefer low-latency worklet capture when available.
     const usingWorklet = await startConversationWorkletCapture(state, stream);
@@ -788,6 +828,14 @@ function cleanupAudio(state: VoiceState): void {
     state.audioContext = null;
   }
 
+  if (state.captureWorkletSource) {
+    try {
+      state.captureWorkletSource.disconnect();
+    } catch {
+      // ignore
+    }
+    state.captureWorkletSource = null;
+  }
   if (state.captureWorkletNode) {
     try {
       state.captureWorkletNode.disconnect();
@@ -795,6 +843,14 @@ function cleanupAudio(state: VoiceState): void {
       // ignore
     }
     state.captureWorkletNode = null;
+  }
+  if (state.captureWorkletSink) {
+    try {
+      state.captureWorkletSink.disconnect();
+    } catch {
+      // ignore
+    }
+    state.captureWorkletSink = null;
   }
   if (state.captureWorkletContext) {
     void state.captureWorkletContext.close().catch(() => undefined);
