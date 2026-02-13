@@ -49,6 +49,102 @@ import {
 import { applySessionsPatchToStore } from "../sessions-patch.js";
 import { resolveSessionKeyFromResolveParams } from "../sessions-resolve.js";
 
+function normalizeLineageValue(value: unknown): string {
+  return typeof value === "string" ? value.trim() : "";
+}
+
+function collectTaskPlanLineageWarnings(params: {
+  requesterSessionKey: string;
+  requesterRootConversationId?: string;
+  requesterThreadId?: string;
+  taskPlan: unknown;
+}): Array<Record<string, unknown>> {
+  const warnings: Array<Record<string, unknown>> = [];
+  const requesterSessionKey = params.requesterSessionKey.trim();
+  if (!requesterSessionKey) {
+    return warnings;
+  }
+  const recordRuns = listSubagentRunsForRequester(requesterSessionKey);
+  if (recordRuns.length === 0) {
+    return warnings;
+  }
+
+  const taskPlan = params.taskPlan as { tasks?: unknown } | undefined;
+  const tasks = Array.isArray(taskPlan?.tasks) ? taskPlan.tasks : [];
+
+  const taskRoots = new Set<string>();
+  const taskThreads = new Set<string>();
+  const mismatchedTasks: string[] = [];
+
+  for (const task of tasks) {
+    if (!task || typeof task !== "object" || Array.isArray(task)) {
+      continue;
+    }
+    const t = task as Record<string, unknown>;
+    const taskId = normalizeLineageValue(t.id) || "unknown";
+    const assignedRunId = normalizeLineageValue(t.assignedRunId);
+    const assignedSessionKey = normalizeLineageValue(t.assignedSessionKey);
+
+    const matched = recordRuns.find((entry) => {
+      if (assignedRunId && entry.runId === assignedRunId) {
+        return true;
+      }
+      if (assignedSessionKey && entry.childSessionKey === assignedSessionKey) {
+        return true;
+      }
+      return false;
+    });
+    if (!matched) {
+      continue;
+    }
+
+    const rootConversationId = normalizeLineageValue(matched.rootConversationId);
+    const threadId = normalizeLineageValue(matched.threadId);
+    if (rootConversationId) {
+      taskRoots.add(rootConversationId);
+    }
+    if (threadId) {
+      taskThreads.add(threadId);
+    }
+
+    const requesterRoot = normalizeLineageValue(params.requesterRootConversationId);
+    const requesterThread = normalizeLineageValue(params.requesterThreadId);
+    const rootMismatch =
+      requesterRoot && rootConversationId && requesterRoot !== rootConversationId;
+    const threadMismatch = requesterThread && threadId && requesterThread !== threadId;
+    if (rootMismatch || threadMismatch) {
+      mismatchedTasks.push(taskId);
+    }
+  }
+
+  if (taskRoots.size > 1) {
+    warnings.push({
+      type: "task_plan_lineage_mixed_root",
+      requesterSessionKey,
+      roots: Array.from(taskRoots),
+    });
+  }
+  if (taskThreads.size > 1) {
+    warnings.push({
+      type: "task_plan_lineage_mixed_thread",
+      requesterSessionKey,
+      threads: Array.from(taskThreads),
+    });
+  }
+  if (mismatchedTasks.length > 0) {
+    warnings.push({
+      type: "task_plan_lineage_requester_mismatch",
+      requesterSessionKey,
+      taskIds: mismatchedTasks,
+      requesterRootConversationId:
+        normalizeLineageValue(params.requesterRootConversationId) || undefined,
+      requesterThreadId: normalizeLineageValue(params.requesterThreadId) || undefined,
+    });
+  }
+
+  return warnings;
+}
+
 export const sessionsHandlers: GatewayRequestHandlers = {
   "sessions.list": ({ params, respond }) => {
     if (!validateSessionsListParams(params)) {
@@ -373,6 +469,24 @@ export const sessionsHandlers: GatewayRequestHandlers = {
       respond(false, undefined, applied.error);
       return;
     }
+
+    if (p.taskPlan && applied.entry?.taskPlan) {
+      const lineageWarnings = collectTaskPlanLineageWarnings({
+        requesterSessionKey: target.canonicalKey,
+        requesterRootConversationId: applied.entry.rootConversationId,
+        requesterThreadId:
+          typeof applied.entry.threadId === "string"
+            ? applied.entry.threadId
+            : typeof applied.entry.threadId === "number"
+              ? String(applied.entry.threadId)
+              : undefined,
+        taskPlan: applied.entry.taskPlan,
+      });
+      for (const warning of lineageWarnings) {
+        context.logGateway.warn(`sessions.patch lineage warning: ${JSON.stringify(warning)}`);
+      }
+    }
+
     const parsed = parseAgentSessionKey(target.canonicalKey ?? key);
     const agentId = normalizeAgentId(parsed?.agentId ?? resolveDefaultAgentId(cfg));
     const resolved = resolveSessionModelRef(cfg, applied.entry, agentId);

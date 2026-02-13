@@ -284,6 +284,47 @@ function loadSessionEntryByKey(sessionKey: string) {
   return store[sessionKey];
 }
 
+function normalizeLineageValue(value: unknown): string {
+  return typeof value === "string" ? value.trim() : "";
+}
+
+function warnAnnounceLineageMismatch(params: {
+  requesterSessionKey: string;
+  childSessionKey: string;
+  requesterRootConversationId?: string;
+  requesterThreadId?: string;
+  childRootConversationId?: string;
+  childThreadId?: string;
+}) {
+  const requesterRootConversationId = normalizeLineageValue(params.requesterRootConversationId);
+  const requesterThreadId = normalizeLineageValue(params.requesterThreadId);
+  const childRootConversationId = normalizeLineageValue(params.childRootConversationId);
+  const childThreadId = normalizeLineageValue(params.childThreadId);
+
+  const rootMismatch =
+    requesterRootConversationId &&
+    childRootConversationId &&
+    requesterRootConversationId !== childRootConversationId;
+  const threadMismatch = requesterThreadId && childThreadId && requesterThreadId !== childThreadId;
+  if (!rootMismatch && !threadMismatch) {
+    return;
+  }
+
+  defaultRuntime.warn?.(
+    `[subagent-announce] lineage warning ${JSON.stringify({
+      type: "announce_target_lineage_mismatch",
+      requesterSessionKey: params.requesterSessionKey,
+      childSessionKey: params.childSessionKey,
+      requesterRootConversationId: requesterRootConversationId || undefined,
+      requesterThreadId: requesterThreadId || undefined,
+      childRootConversationId: childRootConversationId || undefined,
+      childThreadId: childThreadId || undefined,
+      rootMismatch,
+      threadMismatch,
+    })}`,
+  );
+}
+
 async function readLatestAssistantReplyWithRetry(params: {
   sessionKey: string;
   initialReply?: string;
@@ -391,12 +432,30 @@ export async function runSubagentAnnounceFlow(params: {
   let shouldDeleteChildSession = params.cleanup === "delete";
   try {
     const requesterOrigin = normalizeDeliveryContext(params.requesterOrigin);
-    const childSessionId = (() => {
-      const entry = loadSessionEntryByKey(params.childSessionKey);
-      return typeof entry?.sessionId === "string" && entry.sessionId.trim()
-        ? entry.sessionId.trim()
+    const { entry: requesterEntry } = loadRequesterSessionEntry(params.requesterSessionKey);
+    const childEntry = loadSessionEntryByKey(params.childSessionKey);
+    warnAnnounceLineageMismatch({
+      requesterSessionKey: params.requesterSessionKey,
+      childSessionKey: params.childSessionKey,
+      requesterRootConversationId: requesterEntry?.rootConversationId,
+      requesterThreadId:
+        typeof requesterEntry?.threadId === "string"
+          ? requesterEntry.threadId
+          : typeof requesterEntry?.threadId === "number"
+            ? String(requesterEntry.threadId)
+            : undefined,
+      childRootConversationId: childEntry?.rootConversationId,
+      childThreadId:
+        typeof childEntry?.threadId === "string"
+          ? childEntry.threadId
+          : typeof childEntry?.threadId === "number"
+            ? String(childEntry.threadId)
+            : undefined,
+    });
+    const childSessionId =
+      typeof childEntry?.sessionId === "string" && childEntry.sessionId.trim()
+        ? childEntry.sessionId.trim()
         : undefined;
-    })();
     const settleTimeoutMs = Math.min(Math.max(params.timeoutMs, 1), 120_000);
     let reply = params.roundOneReply;
     let outcome: SubagentRunOutcome | undefined = params.outcome;

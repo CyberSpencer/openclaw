@@ -567,4 +567,45 @@ describe("subagent announce formatting", () => {
     expect(accountIds).toContain("acct-b");
     expect(agentSpy).toHaveBeenCalledTimes(2);
   });
+
+  it("warns when requester and child lineage do not match", async () => {
+    const { defaultRuntime } = await import("../runtime.js");
+    const originalWarn = defaultRuntime.warn;
+    const warnSpy = vi.fn();
+    (defaultRuntime as { warn?: (...args: unknown[]) => void }).warn = warnSpy;
+    try {
+      const { runSubagentAnnounceFlow } = await import("./subagent-announce.js");
+
+      sessionStore = {
+        "agent:main:main": {
+          sessionId: "session-main",
+          rootConversationId: "conv-main",
+          threadId: "thread-main",
+        },
+        "agent:main:subagent:lineage": {
+          sessionId: "session-child",
+          rootConversationId: "conv-child",
+          threadId: "thread-child",
+        },
+      };
+
+      await runSubagentAnnounceFlow({
+        childSessionKey: "agent:main:subagent:lineage",
+        childRunId: "run-lineage",
+        requesterSessionKey: "agent:main:main",
+        requesterDisplayKey: "main",
+        task: "lineage check",
+        timeoutMs: 1000,
+        cleanup: "keep",
+        waitForCompletion: false,
+        outcome: { status: "ok" },
+      });
+
+      expect(warnSpy).toHaveBeenCalledWith(
+        expect.stringContaining("announce_target_lineage_mismatch"),
+      );
+    } finally {
+      (defaultRuntime as { warn?: (...args: unknown[]) => void }).warn = originalWarn;
+    }
+  });
 });
