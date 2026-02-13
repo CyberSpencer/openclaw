@@ -5,6 +5,8 @@ import type { AnyAgentTool } from "./common.js";
 import { formatThinkingLevels, normalizeThinkLevel } from "../../auto-reply/thinking.js";
 import { loadConfig } from "../../config/config.js";
 import { callGateway } from "../../gateway/call.js";
+import { loadSessionEntry } from "../../gateway/session-utils.js";
+import { deriveDefaultRootConversationId } from "../../orchestration/identity.js";
 import {
   isSubagentSessionKey,
   normalizeAgentId,
@@ -33,6 +35,9 @@ const SessionsSpawnToolSchema = Type.Object({
   // Back-compat alias. Prefer runTimeoutSeconds.
   timeoutSeconds: Type.Optional(Type.Number({ minimum: 0 })),
   cleanup: optionalStringEnum(["delete", "keep"] as const),
+  parentRunId: Type.Optional(Type.String()),
+  subagentGroupId: Type.Optional(Type.String()),
+  taskId: Type.Optional(Type.String()),
 });
 
 function splitModelRef(ref?: string) {
@@ -119,6 +124,9 @@ export function createSessionsSpawnTool(opts?: {
       const requestedAgentId = readStringParam(params, "agentId");
       const modelOverride = readStringParam(params, "model");
       const thinkingOverrideRaw = readStringParam(params, "thinking");
+      const parentRunId = readStringParam(params, "parentRunId");
+      const subagentGroupId = readStringParam(params, "subagentGroupId");
+      const taskId = readStringParam(params, "taskId");
       const cleanup =
         params.cleanup === "keep" || params.cleanup === "delete" ? params.cleanup : "delete";
       const requesterOrigin = normalizeDeliveryContext({
@@ -165,6 +173,32 @@ export function createSessionsSpawnTool(opts?: {
         alias,
         mainKey,
       });
+
+      let requesterRootConversationId: string | undefined;
+      let requesterThreadId: string | undefined;
+      try {
+        const requesterEntry = loadSessionEntry(requesterInternalKey)?.entry;
+        requesterRootConversationId = requesterEntry?.rootConversationId?.trim();
+        const threadRaw = requesterEntry?.threadId;
+        if (typeof threadRaw === "string" && threadRaw.trim()) {
+          requesterThreadId = threadRaw.trim();
+        } else if (typeof threadRaw === "number" && Number.isFinite(threadRaw)) {
+          requesterThreadId = String(threadRaw);
+        }
+      } catch {
+        requesterRootConversationId = undefined;
+        requesterThreadId = undefined;
+      }
+      requesterRootConversationId =
+        requesterRootConversationId ?? deriveDefaultRootConversationId(requesterInternalKey);
+      if (!requesterThreadId) {
+        const originThread = requesterOrigin?.threadId;
+        if (typeof originThread === "string" && originThread.trim()) {
+          requesterThreadId = originThread.trim();
+        } else if (typeof originThread === "number" && Number.isFinite(originThread)) {
+          requesterThreadId = String(originThread);
+        }
+      }
 
       const requesterAgentId = normalizeAgentId(
         opts?.requesterAgentIdOverride ?? parseAgentSessionKey(requesterInternalKey)?.agentId,
@@ -333,6 +367,11 @@ export function createSessionsSpawnTool(opts?: {
         model: resolvedModel,
         modelApplied: resolvedModel ? modelApplied : undefined,
         routing,
+        rootConversationId: requesterRootConversationId,
+        threadId: requesterThreadId,
+        parentRunId,
+        subagentGroupId,
+        taskId,
         runTimeoutSeconds,
       });
 

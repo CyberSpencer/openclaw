@@ -27,6 +27,11 @@ export type SubagentRunRecord = {
   modelApplied?: boolean;
   routing?: "explicit" | "simple-kimi" | "configured-default";
   complexity?: "simple" | "complex";
+  rootConversationId?: string;
+  threadId?: string;
+  parentRunId?: string;
+  subagentGroupId?: string;
+  taskId?: string;
   createdAt: number;
   startedAt?: number;
   endedAt?: number;
@@ -429,6 +434,11 @@ export function registerSubagentRun(params: {
   modelApplied?: boolean;
   routing?: "explicit" | "simple-kimi" | "configured-default";
   complexity?: "simple" | "complex";
+  rootConversationId?: string;
+  threadId?: string;
+  parentRunId?: string;
+  subagentGroupId?: string;
+  taskId?: string;
   runTimeoutSeconds?: number;
 }) {
   const now = Date.now();
@@ -450,6 +460,11 @@ export function registerSubagentRun(params: {
     modelApplied: params.modelApplied,
     routing: params.routing,
     complexity: params.complexity,
+    rootConversationId: params.rootConversationId,
+    threadId: params.threadId,
+    parentRunId: params.parentRunId,
+    subagentGroupId: params.subagentGroupId,
+    taskId: params.taskId,
     createdAt: now,
     startedAt: now,
     archiveAtMs,

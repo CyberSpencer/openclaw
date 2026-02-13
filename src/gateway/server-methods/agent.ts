@@ -15,6 +15,7 @@ import {
   resolveAgentDeliveryPlan,
   resolveAgentOutboundTarget,
 } from "../../infra/outbound/agent-delivery.js";
+import { deriveDefaultRootConversationId } from "../../orchestration/identity.js";
 import { normalizeAgentId } from "../../routing/session-key.js";
 import { defaultRuntime } from "../../runtime.js";
 import { resolveSendPolicy } from "../../sessions/send-policy.js";
@@ -76,6 +77,10 @@ export const agentHandlers: GatewayRequestHandlers = {
       accountId?: string;
       replyAccountId?: string;
       threadId?: string;
+      rootConversationId?: string;
+      parentRunId?: string;
+      subagentGroupId?: string;
+      taskId?: string;
       groupId?: string;
       groupChannel?: string;
       groupSpace?: string;
@@ -206,6 +211,27 @@ export const agentHandlers: GatewayRequestHandlers = {
         return;
       }
     }
+    const explicitThreadId =
+      typeof request.threadId === "string" && request.threadId.trim()
+        ? request.threadId.trim()
+        : undefined;
+    const explicitRootConversationId =
+      typeof request.rootConversationId === "string" && request.rootConversationId.trim()
+        ? request.rootConversationId.trim()
+        : undefined;
+    const explicitParentRunId =
+      typeof request.parentRunId === "string" && request.parentRunId.trim()
+        ? request.parentRunId.trim()
+        : undefined;
+    const explicitSubagentGroupId =
+      typeof request.subagentGroupId === "string" && request.subagentGroupId.trim()
+        ? request.subagentGroupId.trim()
+        : undefined;
+    const explicitTaskId =
+      typeof request.taskId === "string" && request.taskId.trim()
+        ? request.taskId.trim()
+        : undefined;
+
     let resolvedSessionId = request.sessionId?.trim() || undefined;
     let sessionEntry: SessionEntry | undefined;
     let bestEffortDeliver = false;
@@ -237,6 +263,17 @@ export const agentHandlers: GatewayRequestHandlers = {
       resolvedGroupChannel = resolvedGroupChannel || inheritedGroup?.groupChannel;
       resolvedGroupSpace = resolvedGroupSpace || inheritedGroup?.groupSpace;
       const deliveryFields = normalizeSessionDeliveryFields(entry);
+      const resolvedThreadId =
+        explicitThreadId ??
+        (typeof entry?.threadId === "string" && entry.threadId.trim()
+          ? entry.threadId.trim()
+          : typeof entry?.threadId === "number" && Number.isFinite(entry.threadId)
+            ? String(entry.threadId)
+            : undefined);
+      const resolvedRootConversationId =
+        explicitRootConversationId ??
+        entry?.rootConversationId?.trim() ??
+        deriveDefaultRootConversationId(canonicalKey);
       const nextEntry: SessionEntry = {
         sessionId,
         updatedAt: now,
@@ -254,6 +291,8 @@ export const agentHandlers: GatewayRequestHandlers = {
         providerOverride: entry?.providerOverride,
         label: labelValue,
         spawnedBy: spawnedByValue,
+        rootConversationId: resolvedRootConversationId,
+        threadId: resolvedThreadId,
         channel: entry?.channel ?? request.channel?.trim(),
         groupId: resolvedGroupId ?? entry?.groupId,
         groupChannel: resolvedGroupChannel ?? entry?.groupChannel,
@@ -293,7 +332,21 @@ export const agentHandlers: GatewayRequestHandlers = {
         });
         bestEffortDeliver = true;
       }
-      registerAgentRunContext(idem, { sessionKey: requestedSessionKey });
+      registerAgentRunContext(idem, {
+        sessionKey: requestedSessionKey,
+        rootConversationId: sessionEntry?.rootConversationId,
+        threadId:
+          typeof sessionEntry?.threadId === "string"
+            ? sessionEntry.threadId
+            : typeof sessionEntry?.threadId === "number"
+              ? String(sessionEntry.threadId)
+              : undefined,
+        parentRunId: explicitParentRunId,
+        subagentGroupId: explicitSubagentGroupId,
+        taskId: explicitTaskId,
+        requesterSessionKey: requestedSessionKey,
+        spawnedBySessionKey: spawnedByValue,
+      });
     }
 
     const runId = idem;
@@ -313,10 +366,6 @@ export const agentHandlers: GatewayRequestHandlers = {
         : typeof request.to === "string" && request.to.trim()
           ? request.to.trim()
           : undefined;
-    const explicitThreadId =
-      typeof request.threadId === "string" && request.threadId.trim()
-        ? request.threadId.trim()
-        : undefined;
     const deliveryPlan = resolveAgentDeliveryPlan({
       sessionEntry,
       requestedChannel: request.replyChannel ?? request.channel,

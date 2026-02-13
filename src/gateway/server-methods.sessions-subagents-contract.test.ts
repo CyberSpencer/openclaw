@@ -23,6 +23,11 @@ describe("gateway sessions.subagents contract", () => {
       modelApplied: true,
       routing: "explicit",
       complexity: "complex",
+      rootConversationId: "conv-a",
+      threadId: "thread-1",
+      parentRunId: "run-parent",
+      subagentGroupId: "sg-1",
+      taskId: "task-1",
       createdAt: 100,
       startedAt: 110,
     });
@@ -64,8 +69,72 @@ describe("gateway sessions.subagents contract", () => {
             modelApplied: true,
             routing: "explicit",
             complexity: "complex",
+            rootConversationId: "conv-a",
+            threadId: "thread-1",
+            parentRunId: "run-parent",
+            subagentGroupId: "sg-1",
+            taskPlanTaskId: "task-1",
           }),
         ],
+      }),
+      undefined,
+    );
+  });
+
+  it("filters subagents by root/thread/group lineage", async () => {
+    addSubagentRunForTests({
+      runId: "run-allow",
+      childSessionKey: "agent:main:subagent:allow",
+      requesterSessionKey: "agent:main:main",
+      requesterDisplayKey: "main",
+      task: "allow",
+      cleanup: "keep",
+      rootConversationId: "conv-x",
+      threadId: "thread-x",
+      subagentGroupId: "sg-x",
+      createdAt: 200,
+      startedAt: 210,
+    });
+    addSubagentRunForTests({
+      runId: "run-deny",
+      childSessionKey: "agent:main:subagent:deny",
+      requesterSessionKey: "agent:main:main",
+      requesterDisplayKey: "main",
+      task: "deny",
+      cleanup: "keep",
+      rootConversationId: "conv-y",
+      threadId: "thread-y",
+      subagentGroupId: "sg-y",
+      createdAt: 300,
+      startedAt: 310,
+    });
+
+    const respond = vi.fn();
+    await handleGatewayRequest({
+      req: {
+        type: "req",
+        id: "2",
+        method: "sessions.subagents",
+        params: {
+          requesterSessionKey: "agent:main:main",
+          rootConversationId: "conv-x",
+          threadId: "thread-x",
+          subagentGroupId: "sg-x",
+        },
+      },
+      respond,
+      client: {
+        connect: { role: "operator", scopes: ["operator.read"] },
+      } as never,
+      isWebchatConnect: false,
+      context: {} as never,
+    });
+
+    expect(respond).toHaveBeenCalledWith(
+      true,
+      expect.objectContaining({
+        count: 1,
+        tasks: [expect.objectContaining({ runId: "run-allow" })],
       }),
       undefined,
     );

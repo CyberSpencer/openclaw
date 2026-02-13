@@ -96,6 +96,11 @@ export type SubagentTaskRow = {
   modelApplied?: boolean;
   routing?: "explicit" | "simple-kimi" | "configured-default";
   complexity?: "simple" | "complex";
+  rootConversationId?: string;
+  threadId?: string;
+  parentRunId?: string;
+  subagentGroupId?: string;
+  taskPlanTaskId?: string;
   outcome?: {
     status: "ok" | "error" | "timeout" | "unknown";
     error?: string;

@@ -17,6 +17,7 @@ import {
   type SessionEntry,
   updateSessionStore,
 } from "../../config/sessions.js";
+import { deriveDefaultRootConversationId } from "../../orchestration/identity.js";
 import { normalizeAgentId, parseAgentSessionKey } from "../../routing/session-key.js";
 import {
   ErrorCodes,
@@ -98,6 +99,11 @@ export const sessionsHandlers: GatewayRequestHandlers = {
 
     const requesterSessionKey = rawRequester === "main" ? resolveMainSessionKey(cfg) : rawRequester;
     const includeCompleted = p.includeCompleted !== false;
+    const rootConversationIdFilter =
+      typeof p.rootConversationId === "string" ? p.rootConversationId.trim() : "";
+    const threadIdFilter = typeof p.threadId === "string" ? p.threadId.trim() : "";
+    const subagentGroupIdFilter =
+      typeof p.subagentGroupId === "string" ? p.subagentGroupId.trim() : "";
     const limit =
       typeof p.limit === "number" && Number.isFinite(p.limit)
         ? Math.max(1, Math.min(200, Math.floor(p.limit)))
@@ -110,6 +116,18 @@ export const sessionsHandlers: GatewayRequestHandlers = {
         return bTime - aTime;
       })
       .filter((entry) => includeCompleted || !entry.endedAt)
+      .filter((entry) => {
+        if (rootConversationIdFilter && entry.rootConversationId !== rootConversationIdFilter) {
+          return false;
+        }
+        if (threadIdFilter && entry.threadId !== threadIdFilter) {
+          return false;
+        }
+        if (subagentGroupIdFilter && entry.subagentGroupId !== subagentGroupIdFilter) {
+          return false;
+        }
+        return true;
+      })
       .slice(0, limit)
       .map((entry): SubagentTaskRow => {
         const terminalOutcome = entry.outcome?.status;
@@ -137,6 +155,11 @@ export const sessionsHandlers: GatewayRequestHandlers = {
           modelApplied: entry.modelApplied,
           routing: entry.routing,
           complexity: entry.complexity,
+          rootConversationId: entry.rootConversationId,
+          threadId: entry.threadId,
+          parentRunId: entry.parentRunId,
+          subagentGroupId: entry.subagentGroupId,
+          taskPlanTaskId: entry.taskId,
           outcome: entry.outcome,
           createdAt: entry.createdAt,
           startedAt: entry.startedAt,
@@ -204,6 +227,9 @@ export const sessionsHandlers: GatewayRequestHandlers = {
         runTimeoutSeconds: p.runTimeoutSeconds,
         timeoutSeconds: p.timeoutSeconds,
         cleanup: p.cleanup,
+        parentRunId: p.parentRunId,
+        subagentGroupId: p.subagentGroupId,
+        taskId: p.taskId,
       });
       const payload =
         spawnResult && typeof spawnResult === "object" && "details" in spawnResult
@@ -405,6 +431,13 @@ export const sessionsHandlers: GatewayRequestHandlers = {
         contextTokens: entry?.contextTokens,
         sendPolicy: entry?.sendPolicy,
         label: entry?.label,
+        rootConversationId: deriveDefaultRootConversationId(primaryKey),
+        threadId:
+          typeof entry?.threadId === "string"
+            ? entry.threadId
+            : typeof entry?.threadId === "number" && Number.isFinite(entry.threadId)
+              ? String(entry.threadId)
+              : undefined,
         origin: snapshotSessionOrigin(entry),
         lastChannel: entry?.lastChannel,
         lastTo: entry?.lastTo,

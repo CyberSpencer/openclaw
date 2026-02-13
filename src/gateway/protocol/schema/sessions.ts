@@ -63,6 +63,9 @@ export const SessionsSubagentsParamsSchema = Type.Object(
     requesterSessionKey: NonEmptyString,
     limit: Type.Optional(Type.Integer({ minimum: 1, maximum: 200 })),
     includeCompleted: Type.Optional(Type.Boolean()),
+    rootConversationId: Type.Optional(Type.String()),
+    threadId: Type.Optional(Type.String()),
+    subagentGroupId: Type.Optional(Type.String()),
   },
   { additionalProperties: false },
 );
@@ -85,6 +88,9 @@ export const SessionsResolveParamsSchema = Type.Object(
     spawnedBy: Type.Optional(NonEmptyString),
     includeGlobal: Type.Optional(Type.Boolean()),
     includeUnknown: Type.Optional(Type.Boolean()),
+    strictIdentity: Type.Optional(Type.Boolean()),
+    rootConversationId: Type.Optional(Type.String()),
+    threadId: Type.Optional(Type.String()),
   },
   { additionalProperties: false },
 );
@@ -187,6 +193,10 @@ export const SessionsSpawnParamsSchema = Type.Object(
     groupId: Type.Optional(Type.String()),
     groupChannel: Type.Optional(Type.String()),
     groupSpace: Type.Optional(Type.String()),
+    /** Optional lineage hints for Phase-1 orchestration identity. */
+    parentRunId: Type.Optional(Type.String()),
+    subagentGroupId: Type.Optional(Type.String()),
+    taskId: Type.Optional(Type.String()),
   },
   { additionalProperties: false },
 );

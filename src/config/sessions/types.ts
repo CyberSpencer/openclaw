@@ -54,6 +54,10 @@ export type SessionEntry = {
   sessionFile?: string;
   /** Parent session key that spawned this session (used for sandbox session-tool scoping). */
   spawnedBy?: string;
+  /** Stable root conversation identity for orchestration lineage. */
+  rootConversationId?: string;
+  /** Stable thread identity under a root conversation. */
+  threadId?: string;
   systemSent?: boolean;
   abortedLastRun?: boolean;
   chatType?: SessionChatType;

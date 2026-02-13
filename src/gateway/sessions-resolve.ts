@@ -15,6 +15,44 @@ import {
 
 export type SessionsResolveResult = { ok: true; key: string } | { ok: false; error: ErrorShape };
 
+function normalizeIdentityValue(value: unknown): string | undefined {
+  if (typeof value !== "string") {
+    return undefined;
+  }
+  const trimmed = value.trim();
+  return trimmed || undefined;
+}
+
+function normalizeThreadId(value: unknown): string | undefined {
+  if (typeof value === "string") {
+    const trimmed = value.trim();
+    return trimmed || undefined;
+  }
+  if (typeof value === "number" && Number.isFinite(value)) {
+    return String(value);
+  }
+  return undefined;
+}
+
+function matchesStrictIdentity(
+  entry: { rootConversationId?: unknown; threadId?: unknown } | undefined,
+  strictRootConversationId: string | undefined,
+  strictThreadId: string | undefined,
+): boolean {
+  if (!strictRootConversationId && !strictThreadId) {
+    return true;
+  }
+  const entryRootConversationId = normalizeIdentityValue(entry?.rootConversationId);
+  const entryThreadId = normalizeThreadId(entry?.threadId);
+  if (strictRootConversationId && entryRootConversationId !== strictRootConversationId) {
+    return false;
+  }
+  if (strictThreadId && entryThreadId !== strictThreadId) {
+    return false;
+  }
+  return true;
+}
+
 export function resolveSessionKeyFromResolveParams(params: {
   cfg: OpenClawConfig;
   p: SessionsResolveParams;
@@ -26,6 +64,9 @@ export function resolveSessionKeyFromResolveParams(params: {
   const sessionId = typeof p.sessionId === "string" ? p.sessionId.trim() : "";
   const hasSessionId = sessionId.length > 0;
   const hasLabel = typeof p.label === "string" && p.label.trim().length > 0;
+  const strictIdentity = p.strictIdentity === true;
+  const strictRootConversationId = normalizeIdentityValue(p.rootConversationId);
+  const strictThreadId = normalizeThreadId(p.threadId);
   const selectionCount = [hasKey, hasSessionId, hasLabel].filter(Boolean).length;
   if (selectionCount > 1) {
     return {
@@ -53,6 +94,18 @@ export function resolveSessionKeyFromResolveParams(params: {
         error: errorShape(ErrorCodes.INVALID_REQUEST, `No session found: ${key}`),
       };
     }
+    if (
+      strictIdentity &&
+      !matchesStrictIdentity(store[existingKey], strictRootConversationId, strictThreadId)
+    ) {
+      return {
+        ok: false,
+        error: errorShape(
+          ErrorCodes.INVALID_REQUEST,
+          `Session identity mismatch for key: ${target.canonicalKey}`,
+        ),
+      };
+    }
     return { ok: true, key: target.canonicalKey };
   }
 
@@ -68,20 +121,25 @@ export function resolveSessionKeyFromResolveParams(params: {
         spawnedBy: p.spawnedBy,
         agentId: p.agentId,
         search: sessionId,
-        limit: 8,
+        limit: 32,
       },
     });
     const matches = list.sessions.filter(
       (session) => session.sessionId === sessionId || session.key === sessionId,
     );
-    if (matches.length === 0) {
+    const strictMatches = strictIdentity
+      ? matches.filter((session) =>
+          matchesStrictIdentity(store[session.key], strictRootConversationId, strictThreadId),
+        )
+      : matches;
+    if (strictMatches.length === 0) {
       return {
         ok: false,
         error: errorShape(ErrorCodes.INVALID_REQUEST, `No session found: ${sessionId}`),
       };
     }
-    if (matches.length > 1) {
-      const keys = matches.map((session) => session.key).join(", ");
+    if (strictMatches.length > 1) {
+      const keys = strictMatches.map((session) => session.key).join(", ");
       return {
         ok: false,
         error: errorShape(
@@ -90,7 +148,7 @@ export function resolveSessionKeyFromResolveParams(params: {
         ),
       };
     }
-    return { ok: true, key: String(matches[0]?.key ?? "") };
+    return { ok: true, key: String(strictMatches[0]?.key ?? "") };
   }
 
   const parsedLabel = parseSessionLabel(p.label);
@@ -112,10 +170,15 @@ export function resolveSessionKeyFromResolveParams(params: {
       label: parsedLabel.label,
       agentId: p.agentId,
       spawnedBy: p.spawnedBy,
-      limit: 2,
+      limit: strictIdentity ? 64 : 2,
     },
   });
-  if (list.sessions.length === 0) {
+  const strictMatches = strictIdentity
+    ? list.sessions.filter((session) =>
+        matchesStrictIdentity(store[session.key], strictRootConversationId, strictThreadId),
+      )
+    : list.sessions;
+  if (strictMatches.length === 0) {
     return {
       ok: false,
       error: errorShape(
@@ -124,8 +187,8 @@ export function resolveSessionKeyFromResolveParams(params: {
       ),
     };
   }
-  if (list.sessions.length > 1) {
-    const keys = list.sessions.map((s) => s.key).join(", ");
+  if (strictMatches.length > 1) {
+    const keys = strictMatches.map((s) => s.key).join(", ");
     return {
       ok: false,
       error: errorShape(
@@ -135,5 +198,5 @@ export function resolveSessionKeyFromResolveParams(params: {
     };
   }
 
-  return { ok: true, key: String(list.sessions[0]?.key ?? "") };
+  return { ok: true, key: String(strictMatches[0]?.key ?? "") };
 }
