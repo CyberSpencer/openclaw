@@ -26,6 +26,7 @@ import {
   type ResponsePrefixContext,
 } from "../../auto-reply/reply/response-prefix-template.js";
 import { loadConfig } from "../../config/config.js";
+import { updateSessionStore } from "../../config/sessions.js";
 import { INTERNAL_MESSAGE_CHANNEL } from "../../utils/message-channel.js";
 import { transcribeWithWhisper, resolveWhisperConfig } from "../../voice/local-stt.js";
 import { synthesizeWithLocalTts, resolveLocalTtsConfig } from "../../voice/local-tts.js";
@@ -197,6 +198,74 @@ function broadcastChatFinal(params: {
   params.context.nodeSendToSession(params.sessionKey, "chat", payload);
 }
 
+async function withTemporaryVoiceModelOverride<T>(params: {
+  sessionKey: string;
+  model?: string;
+  run: () => Promise<T>;
+  onWarn?: (message: string) => void;
+}): Promise<T> {
+  const requestedModel = typeof params.model === "string" ? params.model.trim() : "";
+  if (!requestedModel) {
+    return params.run();
+  }
+
+  const { storePath, canonicalKey, entry } = loadSessionEntry(params.sessionKey);
+  if (!storePath || !canonicalKey) {
+    return params.run();
+  }
+
+  const previousModel = typeof entry?.modelOverride === "string" ? entry.modelOverride.trim() : "";
+  if (previousModel === requestedModel) {
+    return params.run();
+  }
+
+  try {
+    await updateSessionStore(storePath, async (store) => {
+      const rawCurrent = (store[canonicalKey] as Record<string, unknown> | undefined) ?? {};
+      const current = rawCurrent && typeof rawCurrent === "object" ? rawCurrent : {};
+      store[canonicalKey] = {
+        ...current,
+        modelOverride: requestedModel,
+        updatedAt: Date.now(),
+      };
+    });
+  } catch (err) {
+    params.onWarn?.(`voice model override set failed: ${formatForLog(err)}`);
+    return params.run();
+  }
+
+  try {
+    return await params.run();
+  } finally {
+    try {
+      await updateSessionStore(storePath, async (store) => {
+        const rawCurrent = (store[canonicalKey] as Record<string, unknown> | undefined) ?? {};
+        const current = rawCurrent && typeof rawCurrent === "object" ? rawCurrent : {};
+        const currentModel =
+          typeof current.modelOverride === "string" ? current.modelOverride.trim() : "";
+
+        // Avoid clobbering a newer concurrent change by another flow.
+        if (currentModel !== requestedModel) {
+          return;
+        }
+
+        const next: Record<string, unknown> = {
+          ...current,
+          updatedAt: Date.now(),
+        };
+        if (previousModel) {
+          next.modelOverride = previousModel;
+        } else {
+          delete next.modelOverride;
+        }
+        store[canonicalKey] = next;
+      });
+    } catch (err) {
+      params.onWarn?.(`voice model override restore failed: ${formatForLog(err)}`);
+    }
+  }
+}
+
 export const voiceHandlers: GatewayRequestHandlers = {
   /**
    * Get voice mode status and capabilities.
@@ -326,7 +395,7 @@ export const voiceHandlers: GatewayRequestHandlers = {
 
       const llmInvoke = async (
         text: string,
-        _model?: string,
+        modelOverride?: string,
         thinking?: string,
       ): Promise<string> => {
         const { cfg } = loadSessionEntry(sessionKey);
@@ -376,27 +445,36 @@ export const voiceHandlers: GatewayRequestHandlers = {
           },
         });
 
-        await dispatchInboundMessage({
-          ctx,
-          cfg,
-          dispatcher,
-          replyOptions: {
-            runId,
-            disableBlockStreaming: true,
-            onAgentRunStart: () => {
-              agentRunStarted = true;
-            },
-            onModelSelected: (sel) => {
-              selectedModelRef.value = {
-                provider: sel.provider,
-                model: sel.model,
-                thinkLevel: sel.thinkLevel,
-              };
-              prefixContext.provider = sel.provider;
-              prefixContext.model = extractShortModelName(sel.model);
-              prefixContext.modelFull = `${sel.provider}/${sel.model}`;
-              prefixContext.thinkingLevel = sel.thinkLevel ?? "off";
-            },
+        await withTemporaryVoiceModelOverride({
+          sessionKey,
+          model: modelOverride,
+          onWarn: (message) => {
+            context.logGateway.warn(message);
+          },
+          run: async () => {
+            await dispatchInboundMessage({
+              ctx,
+              cfg,
+              dispatcher,
+              replyOptions: {
+                runId,
+                disableBlockStreaming: true,
+                onAgentRunStart: () => {
+                  agentRunStarted = true;
+                },
+                onModelSelected: (sel) => {
+                  selectedModelRef.value = {
+                    provider: sel.provider,
+                    model: sel.model,
+                    thinkLevel: sel.thinkLevel,
+                  };
+                  prefixContext.provider = sel.provider;
+                  prefixContext.model = extractShortModelName(sel.model);
+                  prefixContext.modelFull = `${sel.provider}/${sel.model}`;
+                  prefixContext.thinkingLevel = sel.thinkLevel ?? "off";
+                },
+              },
+            });
           },
         });
 
@@ -507,7 +585,7 @@ export const voiceHandlers: GatewayRequestHandlers = {
 
       const llmInvoke = async (
         inputText: string,
-        _model?: string,
+        modelOverride?: string,
         thinking?: string,
       ): Promise<string> => {
         const { cfg } = loadSessionEntry(sessionKey);
@@ -557,27 +635,36 @@ export const voiceHandlers: GatewayRequestHandlers = {
           },
         });
 
-        await dispatchInboundMessage({
-          ctx,
-          cfg,
-          dispatcher,
-          replyOptions: {
-            runId,
-            disableBlockStreaming: true,
-            onAgentRunStart: () => {
-              agentRunStarted = true;
-            },
-            onModelSelected: (sel) => {
-              selectedModelRef.value = {
-                provider: sel.provider,
-                model: sel.model,
-                thinkLevel: sel.thinkLevel,
-              };
-              prefixContext.provider = sel.provider;
-              prefixContext.model = extractShortModelName(sel.model);
-              prefixContext.modelFull = `${sel.provider}/${sel.model}`;
-              prefixContext.thinkingLevel = sel.thinkLevel ?? "off";
-            },
+        await withTemporaryVoiceModelOverride({
+          sessionKey,
+          model: modelOverride,
+          onWarn: (message) => {
+            context.logGateway.warn(message);
+          },
+          run: async () => {
+            await dispatchInboundMessage({
+              ctx,
+              cfg,
+              dispatcher,
+              replyOptions: {
+                runId,
+                disableBlockStreaming: true,
+                onAgentRunStart: () => {
+                  agentRunStarted = true;
+                },
+                onModelSelected: (sel) => {
+                  selectedModelRef.value = {
+                    provider: sel.provider,
+                    model: sel.model,
+                    thinkLevel: sel.thinkLevel,
+                  };
+                  prefixContext.provider = sel.provider;
+                  prefixContext.model = extractShortModelName(sel.model);
+                  prefixContext.modelFull = `${sel.provider}/${sel.model}`;
+                  prefixContext.thinkingLevel = sel.thinkLevel ?? "off";
+                },
+              },
+            });
           },
         });
 
