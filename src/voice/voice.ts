@@ -287,6 +287,7 @@ async function runFallbackPipeline(params: {
   sessionId: string;
   startTime: number;
   overrides?: FallbackOverride;
+  skipTts?: boolean;
 }): Promise<VoiceProcessResult> {
   const timings: VoiceProcessResult["timings"] = { totalMs: 0 };
   let transcription = pickTextForRouting(params.transcription);
@@ -397,6 +398,18 @@ async function runFallbackPipeline(params: {
     };
   }
   timings.llmMs = Date.now() - llmStart;
+
+  if (params.skipTts) {
+    timings.totalMs = Date.now() - params.startTime;
+    return {
+      success: true,
+      sessionId: params.sessionId,
+      transcription,
+      response,
+      routerDecision,
+      timings,
+    };
+  }
 
   const ttsStart = Date.now();
   let ttsResult: LocalTtsResult;
@@ -570,6 +583,7 @@ export async function processTextToVoice(
   text: string,
   config: ResolvedVoiceConfig,
   llmInvoke: (text: string, model?: string, thinking?: string) => Promise<string>,
+  options?: { skipTts?: boolean },
 ): Promise<VoiceProcessResult> {
   const sessionId = generateSessionId();
   const startTime = Date.now();
@@ -579,5 +593,6 @@ export async function processTextToVoice(
     llmInvoke,
     sessionId,
     startTime,
+    skipTts: options?.skipTts === true,
   });
 }

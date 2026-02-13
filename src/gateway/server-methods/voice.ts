@@ -473,6 +473,8 @@ export const voiceHandlers: GatewayRequestHandlers = {
    * Params:
    * - text: Text to process
    * - sessionKey: Optional session key for chat context
+   * - driveOpenClaw: Optional parity flag with voice.process config shaping
+   * - skipTts: Optional flag to return text-only response (no local TTS synthesis)
    */
   "voice.processText": async ({ params, respond, context }) => {
     const text = typeof params.text === "string" ? params.text.trim() : "";
@@ -486,10 +488,13 @@ export const voiceHandlers: GatewayRequestHandlers = {
     }
 
     const sessionKey = typeof params.sessionKey === "string" ? params.sessionKey : "webchat-voice";
+    const skipTts = params.skipTts === true;
+    const driveOpenClaw = params.driveOpenClaw === true;
 
     try {
       const voiceConfig = getVoiceConfig();
-      const config = resolveVoiceConfig(voiceConfig);
+      const configBase = resolveVoiceConfig(voiceConfig);
+      const config = driveOpenClaw ? { ...configBase, mode: "option2a" as const } : configBase;
       if (!config.enabled) {
         respond(false, undefined, errorShape(ErrorCodes.UNAVAILABLE, "Voice mode is disabled"));
         return;
@@ -609,7 +614,7 @@ export const voiceHandlers: GatewayRequestHandlers = {
         return combinedReply;
       };
 
-      const result = await processTextToVoice(text, config, llmInvoke);
+      const result = await processTextToVoice(text, config, llmInvoke, { skipTts });
 
       if (result.success) {
         respond(true, {
