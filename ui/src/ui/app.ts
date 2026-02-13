@@ -2491,12 +2491,14 @@ export class OpenClawApp extends LitElement {
     this.voiceState.ttsVoice = this.settings.ttsVoice || null;
     this.voiceState.ttsInstruct = this.settings.ttsInstruct || null;
     this.voiceState.ttsLanguage = this.settings.ttsLanguage || null;
-    const processFn = this.voiceState.mode === "spark" ? processVoiceInputSpark : processVoiceInput;
     void startConversation(
       this.voiceState,
       () => this.requestUpdate(),
-      async (audioBase64: string) => {
-        return await processFn(this.voiceState, audioBase64);
+      async ({ audioBase64, format }: { audioBase64: string; format: string }) => {
+        if (this.voiceState.mode === "spark") {
+          return await processVoiceInputSpark(this.voiceState, audioBase64, format);
+        }
+        return await processVoiceInput(this.voiceState, audioBase64);
       },
     ).catch((err) => {
       this.voiceState.error = String(err);

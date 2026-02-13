@@ -51,6 +51,13 @@ export type VoiceState = {
   vadLoop: number | null;
   audioChunks: Blob[];
 
+  // Low-latency worklet capture path (conversation mode)
+  captureWorkletContext: AudioContext | null;
+  captureWorkletNode: AudioWorkletNode | null;
+  capturePcmFrames: Int16Array[];
+  captureUsingWorklet: boolean;
+  captureWorkletDisabledForSession: boolean;
+
   // Playback components (AII-style worklet-ready)
   playbackContext: AudioContext | null;
   playbackWorklet: AudioWorkletNode | null;
@@ -161,6 +168,13 @@ export function createVoiceState(): VoiceState {
     analyserNode: null,
     vadLoop: null,
     audioChunks: [],
+
+    // Low-latency worklet capture path
+    captureWorkletContext: null,
+    captureWorkletNode: null,
+    capturePcmFrames: [],
+    captureUsingWorklet: false,
+    captureWorkletDisabledForSession: false,
 
     // Playback components
     playbackContext: null,
@@ -469,6 +483,153 @@ function stopVAD(state: VoiceState): void {
   state.analyserNode = null;
 }
 
+function encodeWavPcm16(pcm: Int16Array, sampleRate: number): Uint8Array {
+  const numChannels = 1;
+  const bitsPerSample = 16;
+  const blockAlign = (numChannels * bitsPerSample) / 8;
+  const byteRate = sampleRate * blockAlign;
+  const dataSize = pcm.length * 2;
+
+  const buffer = new ArrayBuffer(44 + dataSize);
+  const view = new DataView(buffer);
+
+  const writeStr = (offset: number, str: string) => {
+    for (let i = 0; i < str.length; i++) {
+      view.setUint8(offset + i, str.charCodeAt(i));
+    }
+  };
+
+  writeStr(0, "RIFF");
+  view.setUint32(4, 36 + dataSize, true);
+  writeStr(8, "WAVE");
+  writeStr(12, "fmt ");
+  view.setUint32(16, 16, true);
+  view.setUint16(20, 1, true);
+  view.setUint16(22, numChannels, true);
+  view.setUint32(24, sampleRate, true);
+  view.setUint32(28, byteRate, true);
+  view.setUint16(32, blockAlign, true);
+  view.setUint16(34, bitsPerSample, true);
+  writeStr(36, "data");
+  view.setUint32(40, dataSize, true);
+
+  let offset = 44;
+  for (let i = 0; i < pcm.length; i++) {
+    view.setInt16(offset, pcm[i], true);
+    offset += 2;
+  }
+
+  return new Uint8Array(buffer);
+}
+
+async function startConversationWorkletCapture(
+  state: VoiceState,
+  stream: MediaStream,
+): Promise<boolean> {
+  if (!supportsAudioWorklet() || state.captureWorkletDisabledForSession) {
+    return false;
+  }
+
+  let ctx: AudioContext | null = null;
+  let source: MediaStreamAudioSourceNode | null = null;
+  let node: AudioWorkletNode | null = null;
+
+  try {
+    ctx = new AudioContext({ sampleRate: 16000 });
+    if (ctx.state === "suspended") {
+      await ctx.resume().catch(() => undefined);
+    }
+
+    await ctx.audioWorklet.addModule(
+      buildWorkletModuleUrl("capture-processor.js", WORKLET_VERSION),
+    );
+
+    source = ctx.createMediaStreamSource(stream);
+    node = new AudioWorkletNode(ctx, "capture-processor", {
+      processorOptions: {
+        targetSampleRate: 16000,
+        frameSize: 480,
+      },
+    });
+
+    state.capturePcmFrames = [];
+    node.port.addEventListener("message", (event) => {
+      if (event.data?.type === "audio" && event.data?.pcm16) {
+        state.capturePcmFrames.push(event.data.pcm16 as Int16Array);
+      }
+    });
+    node.port.start();
+    source.connect(node);
+
+    state.captureWorkletContext = ctx;
+    state.captureWorkletNode = node;
+    state.captureUsingWorklet = true;
+    return true;
+  } catch (err) {
+    console.warn("[Voice] Worklet capture unavailable, falling back to MediaRecorder", err);
+    state.captureWorkletDisabledForSession = true;
+    state.captureUsingWorklet = false;
+    state.capturePcmFrames = [];
+    try {
+      source?.disconnect();
+    } catch {
+      // ignore
+    }
+    try {
+      node?.disconnect();
+    } catch {
+      // ignore
+    }
+    try {
+      await ctx?.close();
+    } catch {
+      // ignore
+    }
+    return false;
+  }
+}
+
+async function stopConversationWorkletCapture(state: VoiceState): Promise<Blob | null> {
+  if (!state.captureUsingWorklet) {
+    return null;
+  }
+
+  const frames = state.capturePcmFrames;
+  state.capturePcmFrames = [];
+  state.captureUsingWorklet = false;
+
+  const node = state.captureWorkletNode;
+  const ctx = state.captureWorkletContext;
+  state.captureWorkletNode = null;
+  state.captureWorkletContext = null;
+
+  try {
+    node?.disconnect();
+  } catch {
+    // ignore
+  }
+  try {
+    await ctx?.close();
+  } catch {
+    // ignore
+  }
+
+  if (!frames.length) {
+    return null;
+  }
+
+  const totalSamples = frames.reduce((sum, frame) => sum + frame.length, 0);
+  const pcm = new Int16Array(totalSamples);
+  let offset = 0;
+  for (const frame of frames) {
+    pcm.set(frame, offset);
+    offset += frame.length;
+  }
+
+  const wavBytes = encodeWavPcm16(pcm, 16000);
+  return new Blob([wavBytes], { type: "audio/wav" });
+}
+
 /**
  * Start recording with VAD.
  */
@@ -494,21 +655,29 @@ async function startRecordingWithVAD(
     // Setup VAD monitoring
     setupVAD(state, stream, onSpeechEnd, onUpdate);
 
-    // Create MediaRecorder
-    const mimeType = MediaRecorder.isTypeSupported("audio/webm;codecs=opus")
-      ? "audio/webm;codecs=opus"
-      : "audio/webm";
+    state.captureUsingWorklet = false;
+    state.capturePcmFrames = [];
 
-    state.mediaRecorder = new MediaRecorder(stream, { mimeType });
-    state.audioChunks = [];
+    // Prefer low-latency worklet capture when available.
+    const usingWorklet = await startConversationWorkletCapture(state, stream);
+    if (!usingWorklet) {
+      // Fallback to MediaRecorder capture.
+      const mimeType = MediaRecorder.isTypeSupported("audio/webm;codecs=opus")
+        ? "audio/webm;codecs=opus"
+        : "audio/webm";
 
-    state.mediaRecorder.ondataavailable = (event) => {
-      if (event.data.size > 0) {
-        state.audioChunks.push(event.data);
-      }
-    };
+      state.mediaRecorder = new MediaRecorder(stream, { mimeType });
+      state.audioChunks = [];
 
-    state.mediaRecorder.start(100);
+      state.mediaRecorder.ondataavailable = (event) => {
+        if (event.data.size > 0) {
+          state.audioChunks.push(event.data);
+        }
+      };
+
+      state.mediaRecorder.start(100);
+    }
+
     state.phase = "listening";
     state.speechDetected = false;
     state.silenceStart = null;
@@ -546,6 +715,13 @@ function stopRecordingGetAudio(state: VoiceState): Promise<Blob | null> {
       state.mediaRecorder = null;
       resolve(blob);
     };
+
+    if (state.captureUsingWorklet) {
+      void stopConversationWorkletCapture(state).then((blob) => {
+        finalize(blob);
+      });
+      return;
+    }
 
     if (!state.mediaRecorder || state.mediaRecorder.state === "inactive") {
       finalize(
@@ -587,6 +763,21 @@ function cleanupAudio(state: VoiceState): void {
     void state.audioContext.close().catch(() => undefined);
     state.audioContext = null;
   }
+
+  if (state.captureWorkletNode) {
+    try {
+      state.captureWorkletNode.disconnect();
+    } catch {
+      // ignore
+    }
+    state.captureWorkletNode = null;
+  }
+  if (state.captureWorkletContext) {
+    void state.captureWorkletContext.close().catch(() => undefined);
+    state.captureWorkletContext = null;
+  }
+  state.capturePcmFrames = [];
+  state.captureUsingWorklet = false;
 
   if (state.playbackWorklet) {
     try {
@@ -694,6 +885,7 @@ export async function processVoiceInput(
 export async function processVoiceInputSpark(
   state: VoiceState,
   audioBase64: string,
+  format = "webm",
 ): Promise<VoiceProcessResult | null> {
   if (!state.client || !state.connected) {
     console.error("[Voice/Spark] Not connected to gateway");
@@ -713,7 +905,7 @@ export async function processVoiceInputSpark(
     const sttStart = Date.now();
     const sttResult = await state.client.request("spark.voice.stt", {
       audio_base64: audioBase64,
-      format: "webm",
+      format,
     });
     const sttMs = Date.now() - sttStart;
 
@@ -1091,7 +1283,7 @@ export async function playAudioBase64(
 export async function startConversation(
   state: VoiceState,
   onUpdate: () => void,
-  onProcess: (audioBase64: string) => Promise<VoiceProcessResult | null>,
+  onProcess: (input: { audioBase64: string; format: string }) => Promise<VoiceProcessResult | null>,
 ): Promise<void> {
   if (state.conversationActive) {
     return;
@@ -1168,8 +1360,9 @@ export async function startConversation(
       console.log("[Voice] Processing audio...");
       const base64 = await audioToBase64(audioBlob);
       state.audioChunks = [];
+      const format = audioBlob.type.toLowerCase().includes("wav") ? "wav" : "webm";
 
-      const result = await onProcess(base64);
+      const result = await onProcess({ audioBase64: base64, format });
       console.log("[Voice] Process result:", {
         hasResult: !!result,
         hasAudio: !!result?.audioBase64,

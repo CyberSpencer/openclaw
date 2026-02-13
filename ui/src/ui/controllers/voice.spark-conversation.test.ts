@@ -81,4 +81,28 @@ describe("processVoiceInputSpark", () => {
     ]);
     expect(result?.audioBase64).toBeUndefined();
   });
+
+  it("forwards non-webm capture format to Spark STT", async () => {
+    const request = vi.fn(async (method: string, params: Record<string, unknown>) => {
+      if (method === "spark.voice.stt") {
+        expect(params).toMatchObject({ format: "wav" });
+        return { text: "hello world" };
+      }
+      if (method === "voice.processText") {
+        return { sessionId: "voice-session", response: "ok" };
+      }
+      if (method === "spark.voice.tts") {
+        return { audio_base64: "tts64", format: "webm" };
+      }
+      throw new Error(`unexpected method: ${method}`);
+    });
+
+    const state = createVoiceState();
+    state.connected = true;
+    state.client = { request } as unknown as typeof state.client;
+
+    const result = await processVoiceInputSpark(state, "audio64", "wav");
+
+    expect(result?.audioBase64).toBe("tts64");
+  });
 });
