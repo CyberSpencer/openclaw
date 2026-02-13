@@ -27,6 +27,7 @@ describe("spark voice gateway handlers", () => {
     process.env = { ...BASE_ENV };
     process.env.DGX_ENABLED = "1";
     process.env.DGX_HOST = "192.168.1.93";
+    process.env.DGX_ACCESS_MODE = "lan";
     mockLoadConfig.mockReset();
     mockLoadConfig.mockReturnValue({});
   });
@@ -161,5 +162,36 @@ describe("spark voice gateway handlers", () => {
       true,
       expect.objectContaining({ voices: ["Ryan", "Vivian"] }),
     );
+  });
+
+  it("routes STT to WAN endpoint and sends ngrok bypass header in WAN mode", async () => {
+    process.env.DGX_ACCESS_MODE = "wan";
+    process.env.DGX_WAN_BASE_URL = "https://abc123.ngrok-free.dev";
+
+    const fetchMock = vi.fn(async (url: string, init?: RequestInit) => {
+      expect(url).toBe("https://abc123.ngrok-free.dev/voice-stt/v1/transcribe");
+      expect(init?.method).toBe("POST");
+      const headers = (init?.headers ?? {}) as Record<string, string>;
+      expect(headers["ngrok-skip-browser-warning"]).toBe("true");
+      return {
+        ok: true,
+        status: 200,
+        json: async () => ({ text: "hello from wan" }),
+      };
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    const respond = vi.fn<GatewayResponder>();
+    await sparkVoiceHandlers["spark.voice.stt"]?.(
+      makeInvocation(respond, {
+        audio_base64: "AAAA",
+        format: "wav",
+        sample_rate: 16000,
+        language: "en",
+      }),
+    );
+
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(respond).toHaveBeenCalledWith(true, expect.objectContaining({ text: "hello from wan" }));
   });
 });

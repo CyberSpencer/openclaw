@@ -17,6 +17,10 @@ const TaskPlanTaskSchema = Type.Object(
     status: Type.Optional(TaskPlanStatusSchema),
     assignedSessionKey: Type.Optional(Type.String({ maxLength: 240 })),
     assignedRunId: Type.Optional(Type.String({ maxLength: 240 })),
+    failureReason: Type.Optional(
+      Type.Union([Type.Literal("error"), Type.Literal("timeout"), Type.Literal("unknown")]),
+    ),
+    resultSummary: Type.Optional(Type.String({ maxLength: 2000 })),
   },
   { additionalProperties: false },
 );
@@ -54,6 +58,18 @@ export const SessionsListParamsSchema = Type.Object(
   { additionalProperties: false },
 );
 
+export const SessionsSubagentsParamsSchema = Type.Object(
+  {
+    requesterSessionKey: NonEmptyString,
+    limit: Type.Optional(Type.Integer({ minimum: 1, maximum: 200 })),
+    includeCompleted: Type.Optional(Type.Boolean()),
+    rootConversationId: Type.Optional(Type.String()),
+    threadId: Type.Optional(Type.String()),
+    subagentGroupId: Type.Optional(Type.String()),
+  },
+  { additionalProperties: false },
+);
+
 export const SessionsPreviewParamsSchema = Type.Object(
   {
     keys: Type.Array(NonEmptyString, { minItems: 1 }),
@@ -72,6 +88,9 @@ export const SessionsResolveParamsSchema = Type.Object(
     spawnedBy: Type.Optional(NonEmptyString),
     includeGlobal: Type.Optional(Type.Boolean()),
     includeUnknown: Type.Optional(Type.Boolean()),
+    strictIdentity: Type.Optional(Type.Boolean()),
+    rootConversationId: Type.Optional(Type.String()),
+    threadId: Type.Optional(Type.Union([Type.String(), Type.Number()])),
   },
   { additionalProperties: false },
 );
@@ -174,6 +193,10 @@ export const SessionsSpawnParamsSchema = Type.Object(
     groupId: Type.Optional(Type.String()),
     groupChannel: Type.Optional(Type.String()),
     groupSpace: Type.Optional(Type.String()),
+    /** Optional lineage hints for Phase-1 orchestration identity. */
+    parentRunId: Type.Optional(Type.String()),
+    subagentGroupId: Type.Optional(Type.String()),
+    taskId: Type.Optional(Type.String()),
   },
   { additionalProperties: false },
 );

@@ -15,6 +15,7 @@ import { dispatchInboundMessage } from "../../auto-reply/dispatch.js";
 import { stopSubagentsForRequester } from "../../auto-reply/reply/abort.js";
 import { createReplyDispatcher } from "../../auto-reply/reply/reply-dispatcher.js";
 import { createReplyPrefixOptions } from "../../channels/reply-prefix.js";
+import { getAgentRunContext } from "../../infra/agent-events.js";
 import { resolveSendPolicy } from "../../sessions/send-policy.js";
 import { INTERNAL_MESSAGE_CHANNEL } from "../../utils/message-channel.js";
 import {
@@ -177,9 +178,15 @@ function broadcastChatFinal(params: {
   message?: Record<string, unknown>;
 }) {
   const seq = nextChatSeq({ agentRunSeq: params.context.agentRunSeq }, params.runId);
+  const runContext = getAgentRunContext(params.runId);
   const payload = {
     runId: params.runId,
     sessionKey: params.sessionKey,
+    rootConversationId: runContext?.rootConversationId,
+    threadId: runContext?.threadId,
+    parentRunId: runContext?.parentRunId,
+    subagentGroupId: runContext?.subagentGroupId,
+    taskId: runContext?.taskId,
     seq,
     state: "final" as const,
     message: params.message,
@@ -195,9 +202,15 @@ function broadcastChatError(params: {
   errorMessage?: string;
 }) {
   const seq = nextChatSeq({ agentRunSeq: params.context.agentRunSeq }, params.runId);
+  const runContext = getAgentRunContext(params.runId);
   const payload = {
     runId: params.runId,
     sessionKey: params.sessionKey,
+    rootConversationId: runContext?.rootConversationId,
+    threadId: runContext?.threadId,
+    parentRunId: runContext?.parentRunId,
+    subagentGroupId: runContext?.subagentGroupId,
+    taskId: runContext?.taskId,
     seq,
     state: "error" as const,
     errorMessage: params.errorMessage,

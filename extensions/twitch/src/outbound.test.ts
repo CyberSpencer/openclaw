@@ -197,6 +197,14 @@ describe("outbound", () => {
       expect(result.channel).toBe("twitch");
       expect(result.messageId).toBe("twitch-msg-123");
       expect(result.timestamp).toBeGreaterThan(0);
+      expect(sendMessageTwitchInternal).toHaveBeenCalledWith(
+        "testchannel",
+        "Hello Twitch!",
+        mockConfig,
+        "default",
+        true,
+        console,
+      );
     });
 
     it("should throw when account not found", async () => {

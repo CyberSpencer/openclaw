@@ -256,7 +256,7 @@ describe("memory search config", () => {
     expect(resolved?.sources).toContain("sessions");
   });
 
-  it("preserves qdrant endpoint failover settings with auto driver", () => {
+  it("preserves explicit store driver and qdrant config", () => {
     const cfg = {
       agents: {
         defaults: {
@@ -287,12 +287,24 @@ describe("memory search config", () => {
     };
     const resolved = resolveMemorySearchConfig(cfg, "main");
     expect(resolved?.store.driver).toBe("auto");
+    expect(resolved?.store.path).toMatch(/[\\/]memory[\\/]main\.sqlite$/);
     expect(resolved?.store.qdrant.url).toBe("http://127.0.0.1:6333");
-    expect(resolved?.store.qdrant.endpoints).toHaveLength(2);
-    expect(resolved?.store.qdrant.endpoints?.[0]?.url).toBe("http://spark.lan:6333");
+    expect(resolved?.store.qdrant.collection).toBe("jarvis_memory_chunks");
+    expect(resolved?.store.qdrant.endpoints).toEqual([
+      {
+        url: "http://spark.lan:6333",
+        priority: 0,
+        healthUrl: "http://spark.lan:6333/collections",
+      },
+      {
+        url: "http://127.0.0.1:6333",
+        priority: 10,
+        healthUrl: "http://127.0.0.1:6333/collections",
+      },
+    ]);
   });
 
-  it("defaults to qdrant store and default collection", () => {
+  it("defaults to qdrant store and default chunking", () => {
     const cfg = {
       agents: {
         defaults: {
@@ -305,6 +317,8 @@ describe("memory search config", () => {
     };
     const resolved = resolveMemorySearchConfig(cfg, "main");
     expect(resolved?.store.driver).toBe("qdrant");
+    expect(resolved?.store.path).toMatch(/[\\/]memory[\\/]main\.sqlite$/);
+    expect(resolved?.store.qdrant.url).toBe("http://127.0.0.1:6333");
     expect(resolved?.store.qdrant.collection).toBe("jarvis_memory_chunks");
     expect(resolved?.chunking.tokens).toBe(800);
     expect(resolved?.chunking.overlap).toBe(100);

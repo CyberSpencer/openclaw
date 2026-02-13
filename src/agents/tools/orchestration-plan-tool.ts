@@ -20,6 +20,10 @@ const TaskPlanTaskSchema = Type.Object(
     status: Type.Optional(TaskPlanStatusSchema),
     assignedSessionKey: Type.Optional(Type.String({ maxLength: 240 })),
     assignedRunId: Type.Optional(Type.String({ maxLength: 240 })),
+    failureReason: Type.Optional(
+      Type.Union([Type.Literal("error"), Type.Literal("timeout"), Type.Literal("unknown")]),
+    ),
+    resultSummary: Type.Optional(Type.String({ maxLength: 2000 })),
   },
   { additionalProperties: false },
 );
@@ -86,6 +90,15 @@ function normalizePlan(value: unknown) {
         typeof t.assignedSessionKey === "string" ? t.assignedSessionKey.trim() : undefined;
       const assignedRunId =
         typeof t.assignedRunId === "string" ? t.assignedRunId.trim() : undefined;
+      const failureReasonRaw = typeof t.failureReason === "string" ? t.failureReason.trim() : "";
+      const failureReason =
+        failureReasonRaw === "error" ||
+        failureReasonRaw === "timeout" ||
+        failureReasonRaw === "unknown"
+          ? failureReasonRaw
+          : undefined;
+      const resultSummary =
+        typeof t.resultSummary === "string" ? t.resultSummary.trim() : undefined;
       return {
         id: taskId,
         title,
@@ -93,6 +106,8 @@ function normalizePlan(value: unknown) {
         status,
         ...(assignedSessionKey ? { assignedSessionKey } : {}),
         ...(assignedRunId ? { assignedRunId } : {}),
+        ...(failureReason ? { failureReason } : {}),
+        ...(resultSummary ? { resultSummary } : {}),
       };
     })
     .filter((task): task is NonNullable<typeof task> => Boolean(task))

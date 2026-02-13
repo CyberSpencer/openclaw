@@ -46,7 +46,7 @@ export {
   type ResolvedRouterConfig,
 } from "./router.js";
 
-// PersonaPlex S2S (experimental)
+// PersonaPlex S2S (experimental, legacy on macOS, retained for future reuse)
 export {
   resolvePersonaPlexConfig,
   isPersonaPlexInstalled,

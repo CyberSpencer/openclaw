@@ -4,6 +4,10 @@
  * NVIDIA PersonaPlex-7B-v1 provides end-to-end speech processing
  * without intermediate text conversion.
  *
+ * Workspace note (2026-02-11): macOS local PersonaPlex is currently treated as
+ * a legacy path, since active STT/TTS runs on a separate Spark device.
+ * Keep this code intact for compatibility and future reactivation.
+ *
  * This module is EXPERIMENTAL and requires:
  * - GPU with MPS support (Apple Silicon) or CUDA
  * - ~16GB memory
@@ -28,9 +32,7 @@ import { tmpdir } from "node:os";
 import os from "node:os";
 import path from "node:path";
 import { promisify } from "node:util";
-
 import WebSocket from "ws";
-
 import type { PersonaPlexConfig } from "../config/types.voice.js";
 import { prepareAudioForWhisper } from "./local-stt.js";
 
@@ -286,7 +288,7 @@ async function processWithPersonaPlexWebSocket(
             return;
           }
 
-          const responseText = textParts.join("").replace(/\\s+/g, " ").trim();
+          const responseText = textParts.join("").replace(/\s+/g, " ").trim();
           await finish({
             success: true,
             audioBuffer: wavOut.wav,

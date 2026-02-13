@@ -15,12 +15,12 @@ import type { VoiceWhisperConfig } from "../config/types.voice.js";
 const execFileAsync = promisify(execFile);
 
 const DEFAULT_WHISPER_BINARY = "whisper-cpp";
-const DEFAULT_WHISPER_BINARY_ALIASES = ["whisper-cli", "whisper"];
-const DEFAULT_MODEL_CANDIDATE_PATHS = [
-  path.join(process.env.HOME ?? "/tmp", ".openclaw", "whisper", "models", "ggml-base.en.bin"),
-  path.join(process.env.HOME ?? "/tmp", ".openclaw", "models", "ggml-base.en.bin"),
-];
-const DEFAULT_MODEL_PATH = DEFAULT_MODEL_CANDIDATE_PATHS[0];
+const DEFAULT_MODEL_PATH = path.join(
+  process.env.HOME ?? "/tmp",
+  ".openclaw",
+  "models",
+  "ggml-base.en.bin",
+);
 const DEFAULT_LANGUAGE = "en";
 const DEFAULT_THREADS = 4;
 const DEFAULT_TIMEOUT_MS = 30_000;
@@ -35,48 +35,10 @@ export type LocalSttResult = {
 
 export type LocalSttConfig = Required<VoiceWhisperConfig>;
 
-function resolveModelPath(requestedPath?: string): string {
-  const requested = requestedPath?.trim();
-  if (requested && existsSync(requested)) {
-    return requested;
-  }
-  for (const candidate of DEFAULT_MODEL_CANDIDATE_PATHS) {
-    if (existsSync(candidate)) {
-      return candidate;
-    }
-  }
-  return requested || DEFAULT_MODEL_PATH;
-}
-
-function resolveWhisperBinaryCandidates(primary: string): string[] {
-  const unique = new Set<string>();
-  const normalizedPrimary = primary.trim();
-  if (normalizedPrimary) {
-    unique.add(normalizedPrimary);
-  }
-  unique.add(DEFAULT_WHISPER_BINARY);
-  for (const alias of DEFAULT_WHISPER_BINARY_ALIASES) {
-    unique.add(alias);
-  }
-  return Array.from(unique);
-}
-
-async function isWhisperBinaryCallable(binaryPath: string): Promise<boolean> {
-  return new Promise((resolve) => {
-    const proc = spawn(binaryPath, ["--help"], {
-      stdio: ["ignore", "pipe", "pipe"],
-      timeout: 5000,
-    });
-
-    proc.on("error", () => resolve(false));
-    proc.on("close", (code) => resolve(code === 0 || code === 1)); // --help may exit 1
-  });
-}
-
 export function resolveWhisperConfig(config?: VoiceWhisperConfig): LocalSttConfig {
   return {
     binaryPath: config?.binaryPath?.trim() || DEFAULT_WHISPER_BINARY,
-    modelPath: resolveModelPath(config?.modelPath),
+    modelPath: config?.modelPath?.trim() || DEFAULT_MODEL_PATH,
     language: config?.language?.trim() || DEFAULT_LANGUAGE,
     threads: config?.threads ?? DEFAULT_THREADS,
     timeoutMs: config?.timeoutMs ?? DEFAULT_TIMEOUT_MS,
@@ -92,13 +54,16 @@ export async function isWhisperAvailable(config: LocalSttConfig): Promise<boolea
     return false;
   }
 
-  const candidates = resolveWhisperBinaryCandidates(config.binaryPath);
-  for (const binaryPath of candidates) {
-    if (await isWhisperBinaryCallable(binaryPath)) {
-      return true;
-    }
-  }
-  return false;
+  // Check if binary is callable
+  return new Promise((resolve) => {
+    const proc = spawn(config.binaryPath, ["--help"], {
+      stdio: ["ignore", "pipe", "pipe"],
+      timeout: 5000,
+    });
+
+    proc.on("error", () => resolve(false));
+    proc.on("close", (code) => resolve(code === 0 || code === 1)); // --help may exit 1
+  });
 }
 
 /**
@@ -177,37 +142,6 @@ export async function transcribeFileWithWhisper(
 }
 
 function runWhisper(audioPath: string, config: LocalSttConfig): Promise<LocalSttResult> {
-  const candidates = resolveWhisperBinaryCandidates(config.binaryPath);
-  return runWhisperWithFallback(audioPath, config, candidates);
-}
-
-async function runWhisperWithFallback(
-  audioPath: string,
-  config: LocalSttConfig,
-  candidates: string[],
-): Promise<LocalSttResult> {
-  let lastMissingBinaryError: string | null = null;
-  for (const binaryPath of candidates) {
-    const result = await runWhisperOnce(audioPath, { ...config, binaryPath });
-    if (result.success) {
-      return result;
-    }
-    const errorText = (result.error ?? "").toLowerCase();
-    const missingBinary = errorText.includes("enoent") || errorText.includes("spawn ");
-    if (!missingBinary) {
-      return result;
-    }
-    lastMissingBinaryError = result.error ?? null;
-  }
-
-  return {
-    success: false,
-    error:
-      lastMissingBinaryError ?? `Whisper failed: no executable found (${candidates.join(", ")})`,
-  };
-}
-
-function runWhisperOnce(audioPath: string, config: LocalSttConfig): Promise<LocalSttResult> {
   return new Promise((resolve) => {
     const args = [
       "-m",
@@ -266,22 +200,7 @@ function runWhisperOnce(audioPath: string, config: LocalSttConfig): Promise<Loca
       }
 
       // Parse whisper output - it outputs transcription to stdout
-      let text = parseWhisperOutput(stdout);
-      if (!text) {
-        const txtPath = `${audioPath}.txt`;
-        if (existsSync(txtPath)) {
-          try {
-            const txtOutput = readFileSync(txtPath, "utf-8");
-            text = parseWhisperOutput(txtOutput);
-          } finally {
-            try {
-              unlinkSync(txtPath);
-            } catch {
-              // Ignore cleanup errors
-            }
-          }
-        }
-      }
+      const text = parseWhisperOutput(stdout);
       if (!text) {
         resolve({
           success: false,
