@@ -83,6 +83,7 @@ import {
   type CommandPaletteAction,
 } from "./command-palette.ts";
 import { loadAssistantIdentity as loadAssistantIdentityInternal } from "./controllers/assistant-identity.ts";
+import { pcmFramesToWavBlob } from "./controllers/audio-capture.ts";
 import { loadChatThreads } from "./controllers/chat-threads.ts";
 import { loadSubagentMonitor } from "./controllers/subagent-monitor.ts";
 import {
@@ -2838,47 +2839,6 @@ export class OpenClawApp extends LitElement {
     });
   }
 
-  private encodeWavPcm16(pcm: Int16Array, sampleRate: number): Uint8Array {
-    const numChannels = 1;
-    const bitsPerSample = 16;
-    const blockAlign = (numChannels * bitsPerSample) / 8;
-    const byteRate = sampleRate * blockAlign;
-    const dataSize = pcm.length * 2;
-
-    const buffer = new ArrayBuffer(44 + dataSize);
-    const view = new DataView(buffer);
-
-    const writeStr = (offset: number, str: string) => {
-      for (let i = 0; i < str.length; i++) {
-        view.setUint8(offset + i, str.charCodeAt(i));
-      }
-    };
-
-    writeStr(0, "RIFF");
-    view.setUint32(4, 36 + dataSize, true);
-    writeStr(8, "WAVE");
-
-    writeStr(12, "fmt ");
-    view.setUint32(16, 16, true); // PCM chunk size
-    view.setUint16(20, 1, true); // audio format = PCM
-    view.setUint16(22, numChannels, true);
-    view.setUint32(24, sampleRate, true);
-    view.setUint32(28, byteRate, true);
-    view.setUint16(32, blockAlign, true);
-    view.setUint16(34, bitsPerSample, true);
-
-    writeStr(36, "data");
-    view.setUint32(40, dataSize, true);
-
-    let offset = 44;
-    for (let i = 0; i < pcm.length; i++) {
-      view.setInt16(offset, pcm[i], true);
-      offset += 2;
-    }
-
-    return new Uint8Array(buffer);
-  }
-
   private async handleSparkMicAudio(params: {
     audioBase64: string;
     format: string;
@@ -3157,18 +3117,13 @@ export class OpenClawApp extends LitElement {
       return;
     }
 
-    // Combine PCM16 frames
-    const totalSamples = frames.reduce((sum, f) => sum + f.length, 0);
-    const pcm = new Int16Array(totalSamples);
-    let offset = 0;
-    for (const frame of frames) {
-      pcm.set(frame, offset);
-      offset += frame.length;
+    const { blob } = pcmFramesToWavBlob(frames, this.sparkMicSampleRate);
+    if (!blob) {
+      this.sparkMicRecording = false;
+      this.requestUpdate();
+      return;
     }
 
-    // Encode to WAV for Spark STT
-    const wavBytes = this.encodeWavPcm16(pcm, this.sparkMicSampleRate);
-    const blob = new Blob([wavBytes], { type: "audio/wav" });
     const audioBase64 = await this.blobToBase64(blob);
     await this.handleSparkMicAudio({
       audioBase64,
