@@ -107,8 +107,26 @@ export async function loadSubagentMonitor(
       },
       sessions,
     };
-  } catch (err) {
-    state.subagentMonitorError = String(err);
+    state.subagentMonitorError = null;
+  } catch (primaryErr) {
+    try {
+      const legacyParams: Record<string, unknown> = {
+        includeGlobal: false,
+        includeUnknown: false,
+        includeDerivedTitles: false,
+        includeLastMessage: true,
+        spawnedBy,
+      };
+      const limit = typeof opts?.limit === "number" ? opts.limit : 20;
+      if (limit > 0) {
+        legacyParams.limit = limit;
+      }
+      const legacy = await state.client.request<SessionsListResult>("sessions.list", legacyParams);
+      state.subagentMonitorResult = legacy ?? null;
+      state.subagentMonitorError = null;
+    } catch (fallbackErr) {
+      state.subagentMonitorError = `${String(primaryErr)}; fallback failed: ${String(fallbackErr)}`;
+    }
   } finally {
     state.subagentMonitorLoading = false;
   }

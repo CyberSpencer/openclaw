@@ -17,6 +17,10 @@ const TaskPlanTaskSchema = Type.Object(
     status: Type.Optional(TaskPlanStatusSchema),
     assignedSessionKey: Type.Optional(Type.String({ maxLength: 240 })),
     assignedRunId: Type.Optional(Type.String({ maxLength: 240 })),
+    failureReason: Type.Optional(
+      Type.Union([Type.Literal("error"), Type.Literal("timeout"), Type.Literal("unknown")]),
+    ),
+    resultSummary: Type.Optional(Type.String({ maxLength: 2000 })),
   },
   { additionalProperties: false },
 );

@@ -205,6 +205,11 @@ export function createSessionsSpawnTool(opts?: {
         inheritedModel ??
         normalizeModelSelection(targetAgentConfig?.subagents?.model) ??
         normalizeModelSelection(cfg.agents?.defaults?.subagents?.model);
+      const routing: "explicit" | "configured-default" | undefined = modelOverride
+        ? "explicit"
+        : resolvedModel
+          ? "configured-default"
+          : undefined;
 
       const resolvedThinkingDefaultRaw =
         readStringParam(targetAgentConfig?.subagents ?? {}, "thinking") ??
@@ -325,6 +330,9 @@ export function createSessionsSpawnTool(opts?: {
         task,
         cleanup,
         label: label || undefined,
+        model: resolvedModel,
+        modelApplied: resolvedModel ? modelApplied : undefined,
+        routing,
         runTimeoutSeconds,
       });
 

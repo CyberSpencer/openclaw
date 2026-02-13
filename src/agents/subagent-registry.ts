@@ -23,6 +23,10 @@ export type SubagentRunRecord = {
   task: string;
   cleanup: "delete" | "keep";
   label?: string;
+  model?: string;
+  modelApplied?: boolean;
+  routing?: "explicit" | "simple-kimi" | "configured-default";
+  complexity?: "simple" | "complex";
   createdAt: number;
   startedAt?: number;
   endedAt?: number;
@@ -144,6 +148,35 @@ function resolveSubagentWaitTimeoutMs(
   return resolveAgentTimeoutMs({ cfg, overrideSeconds: runTimeoutSeconds });
 }
 
+export function deriveTaskPlanTerminalStateForOutcome(outcome: SubagentRunOutcome): {
+  status: "done" | "blocked";
+  failureReason?: "error" | "timeout" | "unknown";
+  resultSummary?: string;
+} {
+  if (outcome.status === "ok") {
+    return { status: "done" };
+  }
+  if (outcome.status === "error") {
+    return {
+      status: "blocked",
+      failureReason: "error",
+      resultSummary: outcome.error?.trim() || "Subagent run failed with an error.",
+    };
+  }
+  if (outcome.status === "timeout") {
+    return {
+      status: "blocked",
+      failureReason: "timeout",
+      resultSummary: "Subagent run timed out before completion.",
+    };
+  }
+  return {
+    status: "blocked",
+    failureReason: "unknown",
+    resultSummary: "Subagent run ended with unknown outcome.",
+  };
+}
+
 async function patchRequesterTaskPlanFromSubagent(params: {
   requesterSessionKey: string;
   childSessionKey: string;
@@ -160,7 +193,7 @@ async function patchRequesterTaskPlanFromSubagent(params: {
   const cfg = loadConfig();
   const agentId = resolveAgentIdFromSessionKey(requesterKey);
   const storePath = resolveStorePath(cfg.session?.store, { agentId });
-  const nextStatus = params.outcome.status === "ok" ? "done" : "blocked";
+  const terminal = deriveTaskPlanTerminalStateForOutcome(params.outcome);
 
   try {
     await updateSessionStore(storePath, (store) => {
@@ -192,11 +225,32 @@ async function patchRequesterTaskPlanFromSubagent(params: {
         }
 
         const currentStatus = typeof t.status === "string" ? t.status.trim().toLowerCase() : "";
-        if (currentStatus === nextStatus) {
+        const currentFailureReason =
+          typeof t.failureReason === "string" ? t.failureReason.trim().toLowerCase() : "";
+        const currentResultSummary =
+          typeof t.resultSummary === "string" ? t.resultSummary.trim() : "";
+        const nextFailureReason = terminal.failureReason ?? "";
+        const nextResultSummary = terminal.resultSummary ?? "";
+        if (
+          currentStatus === terminal.status &&
+          currentFailureReason === nextFailureReason &&
+          currentResultSummary === nextResultSummary
+        ) {
           return task;
         }
         mutated = true;
-        return { ...t, status: nextStatus };
+        const nextTask: Record<string, unknown> = { ...t, status: terminal.status };
+        if (terminal.failureReason) {
+          nextTask.failureReason = terminal.failureReason;
+        } else {
+          delete nextTask.failureReason;
+        }
+        if (terminal.resultSummary) {
+          nextTask.resultSummary = terminal.resultSummary;
+        } else {
+          delete nextTask.resultSummary;
+        }
+        return nextTask;
       });
 
       if (!mutated) {
@@ -371,6 +425,10 @@ export function registerSubagentRun(params: {
   task: string;
   cleanup: "delete" | "keep";
   label?: string;
+  model?: string;
+  modelApplied?: boolean;
+  routing?: "explicit" | "simple-kimi" | "configured-default";
+  complexity?: "simple" | "complex";
   runTimeoutSeconds?: number;
 }) {
   const now = Date.now();
@@ -388,6 +446,10 @@ export function registerSubagentRun(params: {
     task: params.task,
     cleanup: params.cleanup,
     label: params.label,
+    model: params.model,
+    modelApplied: params.modelApplied,
+    routing: params.routing,
+    complexity: params.complexity,
     createdAt: now,
     startedAt: now,
     archiveAtMs,

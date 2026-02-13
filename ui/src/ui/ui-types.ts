@@ -21,6 +21,8 @@ export type TaskPlanTask = {
   status?: TaskPlanStatus;
   assignedSessionKey?: string;
   assignedRunId?: string;
+  failureReason?: "error" | "timeout" | "unknown";
+  resultSummary?: string;
 };
 
 export type TaskPlan = {
