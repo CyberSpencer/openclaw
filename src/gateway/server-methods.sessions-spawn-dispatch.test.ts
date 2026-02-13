@@ -1,19 +1,22 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 
+const executeMock = vi.fn(async () => ({
+  details: {
+    status: "accepted",
+    childSessionKey: "agent:main:subagent:test-child",
+    runId: "run-test-child",
+  },
+}));
+
 vi.mock("../agents/tools/sessions-spawn-tool.js", () => ({
   createSessionsSpawnTool: () => ({
-    execute: vi.fn(async () => ({
-      details: {
-        status: "accepted",
-        childSessionKey: "agent:main:subagent:test-child",
-        runId: "run-test-child",
-      },
-    })),
+    execute: executeMock,
   }),
 }));
 
 describe("gateway sessions.spawn dispatch", () => {
   afterEach(() => {
+    executeMock.mockClear();
     vi.restoreAllMocks();
   });
 
@@ -29,6 +32,10 @@ describe("gateway sessions.spawn dispatch", () => {
         params: {
           requesterSessionKey: "main",
           task: "do a thing",
+          idempotencyKey: "spawn-fixed-1",
+          parentRunId: "run-parent-1",
+          subagentGroupId: "sg-1",
+          taskId: "task-1",
         },
       },
       respond,
@@ -47,6 +54,16 @@ describe("gateway sessions.spawn dispatch", () => {
         runId: "run-test-child",
       }),
       undefined,
+    );
+    expect(executeMock).toHaveBeenCalledWith(
+      "gateway.sessions.spawn",
+      expect.objectContaining({
+        task: "do a thing",
+        idempotencyKey: "spawn-fixed-1",
+        parentRunId: "run-parent-1",
+        subagentGroupId: "sg-1",
+        taskId: "task-1",
+      }),
     );
   });
 });

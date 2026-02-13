@@ -227,6 +227,7 @@ export const sessionsHandlers: GatewayRequestHandlers = {
         runTimeoutSeconds: p.runTimeoutSeconds,
         timeoutSeconds: p.timeoutSeconds,
         cleanup: p.cleanup,
+        idempotencyKey: p.idempotencyKey,
         parentRunId: p.parentRunId,
         subagentGroupId: p.subagentGroupId,
         taskId: p.taskId,

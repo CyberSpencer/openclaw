@@ -90,7 +90,7 @@ export const SessionsResolveParamsSchema = Type.Object(
     includeUnknown: Type.Optional(Type.Boolean()),
     strictIdentity: Type.Optional(Type.Boolean()),
     rootConversationId: Type.Optional(Type.String()),
-    threadId: Type.Optional(Type.String()),
+    threadId: Type.Optional(Type.Union([Type.String(), Type.Number()])),
   },
   { additionalProperties: false },
 );

@@ -35,6 +35,7 @@ const SessionsSpawnToolSchema = Type.Object({
   // Back-compat alias. Prefer runTimeoutSeconds.
   timeoutSeconds: Type.Optional(Type.Number({ minimum: 0 })),
   cleanup: optionalStringEnum(["delete", "keep"] as const),
+  idempotencyKey: Type.Optional(Type.String()),
   parentRunId: Type.Optional(Type.String()),
   subagentGroupId: Type.Optional(Type.String()),
   taskId: Type.Optional(Type.String()),
@@ -124,6 +125,7 @@ export function createSessionsSpawnTool(opts?: {
       const requestedAgentId = readStringParam(params, "agentId");
       const modelOverride = readStringParam(params, "model");
       const thinkingOverrideRaw = readStringParam(params, "thinking");
+      const idempotencyKey = readStringParam(params, "idempotencyKey");
       const parentRunId = readStringParam(params, "parentRunId");
       const subagentGroupId = readStringParam(params, "subagentGroupId");
       const taskId = readStringParam(params, "taskId");
@@ -314,7 +316,7 @@ export function createSessionsSpawnTool(opts?: {
         task,
       });
 
-      const childIdem = crypto.randomUUID();
+      const childIdem = idempotencyKey ?? crypto.randomUUID();
       let childRunId: string = childIdem;
       try {
         const response = await callGateway<{ runId: string }>({
@@ -325,8 +327,11 @@ export function createSessionsSpawnTool(opts?: {
             channel: requesterOrigin?.channel,
             to: requesterOrigin?.to ?? undefined,
             accountId: requesterOrigin?.accountId ?? undefined,
-            threadId:
-              requesterOrigin?.threadId != null ? String(requesterOrigin.threadId) : undefined,
+            threadId: requesterThreadId,
+            rootConversationId: requesterRootConversationId,
+            parentRunId,
+            subagentGroupId,
+            taskId,
             idempotencyKey: childIdem,
             deliver: false,
             lane: AGENT_LANE_SUBAGENT,
