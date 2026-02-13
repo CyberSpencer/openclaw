@@ -730,11 +730,13 @@ export class OpenClawApp extends LitElement {
     handleUpdated(this as unknown as Parameters<typeof handleUpdated>[0], changed);
     if (changed.has("connected")) {
       if (this.connected) {
+        this.sparkStatusConsecutivePollFailures = 0;
         this.startSparkStatusPolling();
         void this.refreshSparkStatus();
       } else {
         this.stopSparkStatusPolling();
         this.sparkStatusConsecutivePollFailures = 0;
+        this.sparkStatus = null;
         this.voiceState.sparkVoiceAvailable = false;
       }
     }

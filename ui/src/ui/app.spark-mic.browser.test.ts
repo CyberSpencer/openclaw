@@ -302,6 +302,34 @@ describe("spark status polling resilience", () => {
     expect(app.voiceState.error ?? "").not.toContain("Conversation stopped");
   });
 
+  it("keeps spark unavailable after reconnect until a successful status poll", async () => {
+    const app = mountApp("/chat");
+    await app.updateComplete;
+
+    setSparkAvailable(app);
+    await app.updateComplete;
+    expect(app.sparkStatus?.voiceAvailable).toBe(true);
+
+    app.connected = false;
+    await app.updateComplete;
+
+    expect(app.sparkStatus).toBeNull();
+    expect(app.voiceState.sparkVoiceAvailable).toBe(false);
+
+    app.client = {
+      request: vi.fn(async () => {
+        throw new Error("spark.status timeout");
+      }),
+    } as unknown as typeof app.client;
+
+    app.connected = true;
+    await app.updateComplete;
+    await app.refreshSparkStatus();
+
+    expect(app.sparkStatus).toBeNull();
+    expect(app.voiceState.sparkVoiceAvailable).toBe(false);
+  });
+
   it("stops active conversation after repeated spark.status poll failures", async () => {
     const app = mountApp("/chat");
     await app.updateComplete;
