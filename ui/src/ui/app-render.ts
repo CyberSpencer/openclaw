@@ -1256,11 +1256,6 @@ export function renderApp(state: AppViewState) {
           state.tab === "chat"
             ? html`
                 ${
-                  state.ttsSpeaking && state.ttsProgress
-                    ? html`<div class="pill content-area-tts-status" role="status">${state.ttsProgress}</div>`
-                    : nothing
-                }
-                ${
                   state.lastError
                     ? html`<div class="callout danger content-area-run-error" role="alert">Run failed: ${state.lastError}</div>`
                     : nothing
@@ -1354,9 +1349,11 @@ export function renderApp(state: AppViewState) {
                   ),
                   sparkMicRecording: state.sparkMicRecording ?? false,
                   onMicClick: () => state.handleSparkMicClick?.(),
-                  onSpeakClick: (text) => void state.handleSpeakText?.(text),
+                  onSpeakClick: (text, messageKey) =>
+                    void state.handleSpeakText?.(text, messageKey),
                   ttsSpeaking: state.ttsSpeaking ?? false,
                   ttsProgress: state.ttsProgress ?? null,
+                  ttsSpeakingMessageKey: state.ttsSpeakingMessageKey ?? null,
                   onStopSpeaking: () => state.handleStopSpeaking?.(),
                 })}
               `
@@ -1460,6 +1457,13 @@ export function renderApp(state: AppViewState) {
         onStopConversation: () => state.handleVoiceStopConversation(),
         onClose: () => state.handleVoiceClose(),
         onRetry: () => state.handleVoiceRetry(),
+        sparkVoices: state.sparkVoices ?? [],
+        ttsVoice: state.settings.ttsVoice || null,
+        ttsInstruct: state.settings.ttsInstruct || null,
+        ttsLanguage: state.settings.ttsLanguage || null,
+        onTtsVoiceChange: (v) => state.handleTtsVoiceChange(v),
+        onTtsInstructChange: (v) => state.handleTtsInstructChange(v),
+        onTtsLanguageChange: (v) => state.handleTtsLanguageChange(v),
       })}
     </div>
   `;

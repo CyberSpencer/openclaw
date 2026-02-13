@@ -99,6 +99,31 @@ describe("personaplex endpoint failover", () => {
   });
 
   it("falls back to local offline PersonaPlex when DGX server endpoints are unavailable", async () => {
+    vi.spyOn(http, "request").mockImplementation(((options: http.RequestOptions, callback) => {
+      const req = new EventEmitter() as unknown as http.ClientRequest;
+      const res = new EventEmitter() as unknown as http.IncomingMessage;
+      (res as unknown as { statusCode?: number }).statusCode = 503;
+      (res as unknown as { setEncoding?: (encoding: BufferEncoding) => void }).setEncoding = () =>
+        undefined;
+      (req as unknown as { write: (chunk: string) => void }).write = () => undefined;
+      (req as unknown as { setTimeout: (timeout: number) => void }).setTimeout = () => undefined;
+      (req as unknown as { destroy: (error?: Error) => void }).destroy = (error?: Error) => {
+        if (error) {
+          queueMicrotask(() => {
+            (req as unknown as EventEmitter).emit("error", error);
+          });
+        }
+      };
+      (req as unknown as { end: () => void }).end = () => {
+        queueMicrotask(() => {
+          callback?.(res);
+          (res as unknown as EventEmitter).emit("data", "fail");
+          (res as unknown as EventEmitter).emit("end");
+        });
+      };
+      return req;
+    }) as typeof http.request);
+
     const installPath = await createPersonaPlexInstallRoot();
     dirs.push(installPath);
 

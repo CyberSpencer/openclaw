@@ -1009,6 +1009,7 @@ public struct SessionsPatchParams: Codable, Sendable {
     public let thinkinglevel: AnyCodable?
     public let verboselevel: AnyCodable?
     public let reasoninglevel: AnyCodable?
+    public let taskplan: AnyCodable?
     public let responseusage: AnyCodable?
     public let elevatedlevel: AnyCodable?
     public let exechost: AnyCodable?
@@ -1026,6 +1027,7 @@ public struct SessionsPatchParams: Codable, Sendable {
         thinkinglevel: AnyCodable?,
         verboselevel: AnyCodable?,
         reasoninglevel: AnyCodable?,
+        taskplan: AnyCodable?,
         responseusage: AnyCodable?,
         elevatedlevel: AnyCodable?,
         exechost: AnyCodable?,
@@ -1042,6 +1044,7 @@ public struct SessionsPatchParams: Codable, Sendable {
         self.thinkinglevel = thinkinglevel
         self.verboselevel = verboselevel
         self.reasoninglevel = reasoninglevel
+        self.taskplan = taskplan
         self.responseusage = responseusage
         self.elevatedlevel = elevatedlevel
         self.exechost = exechost
@@ -1059,6 +1062,7 @@ public struct SessionsPatchParams: Codable, Sendable {
         case thinkinglevel = "thinkingLevel"
         case verboselevel = "verboseLevel"
         case reasoninglevel = "reasoningLevel"
+        case taskplan = "taskPlan"
         case responseusage = "responseUsage"
         case elevatedlevel = "elevatedLevel"
         case exechost = "execHost"
@@ -2659,6 +2663,27 @@ public struct ChatSendParams: Codable, Sendable {
         case deliver
         case attachments
         case timeoutms = "timeoutMs"
+        case idempotencykey = "idempotencyKey"
+    }
+}
+
+public struct ChatSteerParams: Codable, Sendable {
+    public let sessionkey: String
+    public let message: String
+    public let idempotencykey: String
+
+    public init(
+        sessionkey: String,
+        message: String,
+        idempotencykey: String
+    ) {
+        self.sessionkey = sessionkey
+        self.message = message
+        self.idempotencykey = idempotencykey
+    }
+    private enum CodingKeys: String, CodingKey {
+        case sessionkey = "sessionKey"
+        case message
         case idempotencykey = "idempotencyKey"
     }
 }

@@ -284,6 +284,7 @@ class EmbeddingWorkerClient {
         new Promise<number[][]>((resolve, reject) => {
           const timer = setTimeout(() => {
             this.pending.delete(id);
+            this.scheduleIdle();
             reject(new Error(`Embedding worker timeout after ${Math.round(timeoutMs / 1000)}s`));
           }, timeoutMs);
           const wrappedResolve = (value: number[][]) => {

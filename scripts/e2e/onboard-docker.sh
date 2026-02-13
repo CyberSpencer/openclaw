@@ -94,7 +94,7 @@ TRASH
   }
 
   start_gateway() {
-    node dist/index.js gateway --port 32555 --bind loopback --allow-unconfigured > /tmp/gateway-e2e.log 2>&1 &
+    node "$OPENCLAW_ENTRY" gateway --port 32555 --bind loopback --allow-unconfigured > /tmp/gateway-e2e.log 2>&1 &
     GATEWAY_PID="$!"
   }
 
@@ -356,7 +356,7 @@ NODE
     export HOME="$home_dir"
     mkdir -p "$HOME"
     # Smoke test non-interactive remote config write.
-    node dist/index.js onboard --non-interactive --accept-risk \
+    node "$OPENCLAW_ENTRY" onboard --non-interactive --accept-risk \
       --mode remote \
       --remote-url ws://gateway.local:32555 \
       --remote-token remote-token \

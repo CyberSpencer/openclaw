@@ -2,6 +2,7 @@ import { html, nothing } from "lit";
 import type { AppViewState } from "../app-view-state.ts";
 import { renderThemeToggle } from "../app-render.helpers.ts";
 import { icons } from "../icons.ts";
+import { TTS_MOOD_PRESETS } from "./voice-bar.ts";
 
 function platformCommandKey(): string {
   if (typeof navigator === "undefined") {
@@ -53,6 +54,9 @@ export function renderSettings(state: AppViewState) {
       splitRatio: 0.6,
       navCollapsed: false,
       navGroupsCollapsed: {},
+      ttsVoice: "",
+      ttsInstruct: "Speak warmly and calmly",
+      ttsLanguage: "",
     };
     state.applySettings(next);
     // Keep the live split ratio state in sync with the saved setting.
@@ -316,6 +320,8 @@ export function renderSettings(state: AppViewState) {
       </section>
     </section>
 
+    ${renderSparkTtsSettings(state)}
+
     <section class="grid grid-cols-2" style="margin-top: 18px;">
       <section class="card">
         <div class="card-title">Workflows</div>
@@ -352,6 +358,68 @@ export function renderSettings(state: AppViewState) {
               Docs: Control UI
             </a>
           </div>
+        </div>
+      </section>
+    </section>
+  `;
+}
+
+/**
+ * Spark TTS settings card: voice, mood, language.
+ * Triggers a one-time voice list fetch when connected and the list is empty.
+ */
+function renderSparkTtsSettings(state: AppViewState) {
+  // Trigger voice list fetch on first render when connected
+  if (state.connected && (state.sparkVoices?.length ?? 0) === 0) {
+    void (state as unknown as { loadSparkVoices?: () => Promise<void> }).loadSparkVoices?.();
+  }
+
+  const voices: { id: string; name: string; description?: string }[] = state.sparkVoices ?? [];
+  const currentVoice = state.settings.ttsVoice ?? "";
+  const currentInstruct = state.settings.ttsInstruct ?? "";
+
+  return html`
+    <section class="grid grid-cols-2" style="margin-top: 18px;">
+      <section class="card">
+        <div class="card-title">Spark TTS</div>
+        <div class="card-sub">Default voice and mood for Spark TTS (per-message Speak and voice bar).</div>
+
+        <div class="stack" style="margin-top: 16px;">
+          <label class="field">
+            <span>Voice</span>
+            <select
+              ?disabled=${!state.connected}
+              .value=${currentVoice}
+              @change=${(e: Event) => {
+                const v = (e.target as HTMLSelectElement).value;
+                state.applySettings({ ...state.settings, ttsVoice: v });
+              }}
+              title="Speaker identity (who speaks). Default is Ryan."
+            >
+              <option value="">Default (Ryan)</option>
+              ${voices.map(
+                (v) =>
+                  html`<option value=${v.name} title=${v.description ?? ""}>${v.name}${v.description ? ` \u2014 ${v.description}` : ""}</option>`,
+              )}
+            </select>
+          </label>
+
+          <label class="field">
+            <span>Mood</span>
+            <select
+              .value=${currentInstruct}
+              @change=${(e: Event) => {
+                const v = (e.target as HTMLSelectElement).value;
+                state.applySettings({ ...state.settings, ttsInstruct: v });
+              }}
+              title="How it's said (tone, style). Passed as instruct to the TTS model."
+            >
+              ${TTS_MOOD_PRESETS.map((p) => html`<option value=${p.value}>${p.label}</option>`)}
+            </select>
+            <div class="muted" style="margin-top: 4px;">
+              Current: <span class="mono">${currentInstruct || "(none)"}</span>
+            </div>
+          </label>
         </div>
       </section>
     </section>

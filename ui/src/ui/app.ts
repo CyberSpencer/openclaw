@@ -643,10 +643,14 @@ export class OpenClawApp extends LitElement {
   private sparkMicAudioContext: AudioContext | null = null;
   private sparkMicCaptureWorklet: AudioWorkletNode | null = null;
   private sparkMicPcmFrames: Int16Array[] = [];
-  private sparkMicSampleRate = 24000;
+  private sparkMicSampleRate = 16000;
   private sparkMicUsingWorklet = false;
   @state() ttsSpeaking = false;
   @state() ttsProgress: string | null = null;
+  /** Message key being spoken (for inline TTS status on that message). */
+  @state() ttsSpeakingMessageKey: string | null = null;
+  /** Available Spark TTS voices from GET /v1/voices (for voice bar UI). */
+  @state() sparkVoices: { id: string; name: string; description?: string }[] = [];
   private ttsAbortController: AbortController | null = null;
   private ttsCurrentAudio: HTMLAudioElement | null = null;
   private ttsPlaybackContext: AudioContext | null = null;
@@ -2184,22 +2188,66 @@ export class OpenClawApp extends LitElement {
     this.requestUpdate();
   }
 
+  /** Load Spark TTS voices from gateway (GET .../v1/voices) for voice bar UI. */
+  async loadSparkVoices() {
+    if (!this.client || !this.connected) {
+      return;
+    }
+    try {
+      const result = await this.client.request("spark.voice.voices", {});
+      const raw = (result as { voices?: unknown[] })?.voices;
+      const list: { id: string; name: string; description?: string }[] = Array.isArray(raw)
+        ? raw
+            .map((v) => {
+              const o = v as Record<string, unknown>;
+              const id =
+                typeof o?.id === "string"
+                  ? o.id
+                  : typeof o?.name === "string"
+                    ? (o.name as string).toLowerCase()
+                    : "";
+              const name = typeof o?.name === "string" ? o.name : id;
+              return id
+                ? {
+                    id,
+                    name,
+                    description: typeof o?.description === "string" ? o.description : undefined,
+                  }
+                : null;
+            })
+            .filter((x): x is NonNullable<typeof x> => x != null)
+        : [];
+      this.sparkVoices = list;
+      this.requestUpdate();
+    } catch {
+      this.sparkVoices = [];
+      this.requestUpdate();
+    }
+  }
+
   toggleVoiceBar() {
     this.voiceBarVisible = !this.voiceBarVisible;
     if (this.voiceBarVisible) {
       this.voiceState.client = this.client;
       this.voiceState.connected = this.connected;
       this.voiceState.sparkVoiceAvailable = this.isSparkVoiceAvailable();
+      this.voiceState.ttsVoice = this.settings.ttsVoice || null;
+      this.voiceState.ttsInstruct = this.settings.ttsInstruct || null;
+      this.voiceState.ttsLanguage = this.settings.ttsLanguage || null;
       if (this.voiceState.mode === "spark") {
         this.voiceState.enabled = true;
       } else if (!this.voiceState.capabilities) {
         void this.loadVoiceStatus();
       }
+      void this.loadSparkVoices();
     }
   }
 
   toggleVoiceBarExpanded() {
     this.voiceBarExpanded = !this.voiceBarExpanded;
+    if (this.voiceBarExpanded && this.voiceBarVisible && this.sparkVoices.length === 0) {
+      void this.loadSparkVoices();
+    }
   }
 
   /**
@@ -2214,6 +2262,9 @@ export class OpenClawApp extends LitElement {
     }
     this.voiceState.sessionKey = this.sessionKey;
     this.voiceState.sparkVoiceAvailable = this.isSparkVoiceAvailable();
+    this.voiceState.ttsVoice = this.settings.ttsVoice || null;
+    this.voiceState.ttsInstruct = this.settings.ttsInstruct || null;
+    this.voiceState.ttsLanguage = this.settings.ttsLanguage || null;
     const processFn = this.voiceState.mode === "spark" ? processVoiceInputSpark : processVoiceInput;
     void startConversation(
       this.voiceState,
@@ -2252,6 +2303,21 @@ export class OpenClawApp extends LitElement {
   handleVoiceDriveOpenClawChange(enabled: boolean) {
     this.voiceState.driveOpenClaw = enabled;
     this.requestUpdate();
+  }
+
+  handleTtsVoiceChange(voice: string | null) {
+    this.applySettings({ ...this.settings, ttsVoice: voice ?? "" });
+    this.voiceState.ttsVoice = this.settings.ttsVoice || null;
+  }
+
+  handleTtsInstructChange(instruct: string | null) {
+    this.applySettings({ ...this.settings, ttsInstruct: instruct ?? "" });
+    this.voiceState.ttsInstruct = this.settings.ttsInstruct || null;
+  }
+
+  handleTtsLanguageChange(language: string | null) {
+    this.applySettings({ ...this.settings, ttsLanguage: language ?? "" });
+    this.voiceState.ttsLanguage = this.settings.ttsLanguage || null;
   }
 
   private async readConfigSnapshot(): Promise<ConfigSnapshot | null> {
@@ -2604,6 +2670,16 @@ export class OpenClawApp extends LitElement {
       if (typeof text === "string" && text.trim()) {
         const existing = this.chatMessage?.trim() ?? "";
         this.chatMessage = existing ? `${existing} ${text.trim()}` : text.trim();
+      } else {
+        const msg = "No speech detected. Try again.";
+        this.lastError = msg;
+        this.requestUpdate();
+        setTimeout(() => {
+          if (this.lastError === msg) {
+            this.lastError = null;
+            this.requestUpdate();
+          }
+        }, 3000);
       }
     } catch (err) {
       console.error("[spark-mic] STT request failed:", err);
@@ -2876,6 +2952,25 @@ export class OpenClawApp extends LitElement {
     this.requestUpdate();
   }
 
+  /** Returns optional TTS params (voice, instruct, language) for spark.voice.tts. Only includes defined values. */
+  /** Returns optional TTS params (voice, instruct, language) from persisted settings. Only includes non-empty values. */
+  private getTtsRequestParams(): { voice?: string; instruct?: string; language?: string } {
+    const out: { voice?: string; instruct?: string; language?: string } = {};
+    const v = this.settings.ttsVoice?.trim();
+    const i = this.settings.ttsInstruct?.trim();
+    const l = this.settings.ttsLanguage?.trim();
+    if (v) {
+      out.voice = v;
+    }
+    if (i) {
+      out.instruct = i;
+    }
+    if (l) {
+      out.language = l;
+    }
+    return out;
+  }
+
   handleStopSpeaking() {
     if (this.ttsAbortController) {
       this.ttsAbortController.abort();
@@ -2890,11 +2985,12 @@ export class OpenClawApp extends LitElement {
     }
     this.ttsSpeaking = false;
     this.ttsProgress = null;
+    this.ttsSpeakingMessageKey = null;
     this.ttsAbortController = null;
     this.requestUpdate();
   }
 
-  async handleSpeakText(text: string) {
+  async handleSpeakText(text: string, messageKey?: string) {
     if (!text.trim() || !this.client || !this.connected) {
       return;
     }
@@ -2908,6 +3004,7 @@ export class OpenClawApp extends LitElement {
     this.ttsAbortController = new AbortController();
     this.ttsSpeaking = true;
     this.ttsProgress = `Speaking 1/${chunks.length}...`;
+    this.ttsSpeakingMessageKey = messageKey ?? null;
     this.requestUpdate();
 
     console.log("[spark-tts] request", {
@@ -2946,6 +3043,7 @@ export class OpenClawApp extends LitElement {
       const fetchChunkForWorklet = async (idx: number): Promise<Float32Array> => {
         const result = await this.client!.request("spark.voice.tts", {
           text: chunks[idx],
+          ...this.getTtsRequestParams(),
         });
         const b64 = result?.audio_base64;
         if (typeof b64 !== "string" || !b64) {
@@ -3000,6 +3098,7 @@ export class OpenClawApp extends LitElement {
       } finally {
         this.ttsSpeaking = false;
         this.ttsProgress = null;
+        this.ttsSpeakingMessageKey = null;
         this.ttsAbortController = null;
         this.ttsCurrentAudio = null;
         this.requestUpdate();
@@ -3019,6 +3118,7 @@ export class OpenClawApp extends LitElement {
     } finally {
       this.ttsSpeaking = false;
       this.ttsProgress = null;
+      this.ttsSpeakingMessageKey = null;
       this.ttsAbortController = null;
       this.ttsCurrentAudio = null;
       this.requestUpdate();
@@ -3033,6 +3133,7 @@ export class OpenClawApp extends LitElement {
     const fetchChunkAudio = async (idx: number): Promise<HTMLAudioElement> => {
       const result = await this.client!.request("spark.voice.tts", {
         text: chunks[idx],
+        ...this.getTtsRequestParams(),
       });
       const b64 = result?.audio_base64;
       if (typeof b64 !== "string" || !b64) {

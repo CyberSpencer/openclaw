@@ -489,27 +489,37 @@ describe("getApiKeyForModel", () => {
   });
 
   it("allows local ollama provider without API key", async () => {
-    vi.resetModules();
-    const { resolveApiKeyForProvider } = await import("./model-auth.js");
+    const previous = process.env.OLLAMA_API_KEY;
+    delete process.env.OLLAMA_API_KEY;
+    try {
+      vi.resetModules();
+      const { resolveApiKeyForProvider } = await import("./model-auth.js");
 
-    const resolved = await resolveApiKeyForProvider({
-      provider: "ollama",
-      store: { version: 1, profiles: {} },
-      cfg: {
-        models: {
-          providers: {
-            ollama: {
-              baseUrl: "http://127.0.0.1:11434/v1",
-              api: "openai-completions",
-              models: [],
+      const resolved = await resolveApiKeyForProvider({
+        provider: "ollama",
+        store: { version: 1, profiles: {} },
+        cfg: {
+          models: {
+            providers: {
+              ollama: {
+                baseUrl: "http://127.0.0.1:11434/v1",
+                api: "openai-completions",
+                models: [],
+              },
             },
           },
-        },
-      } as never,
-    });
+        } as never,
+      });
 
-    expect(resolved.apiKey).toBe("openclaw-local-provider");
-    expect(resolved.source).toBe("local provider (no auth)");
+      expect(resolved.apiKey).toBe("openclaw-local-provider");
+      expect(resolved.source).toBe("local provider (no auth)");
+    } finally {
+      if (previous === undefined) {
+        delete process.env.OLLAMA_API_KEY;
+      } else {
+        process.env.OLLAMA_API_KEY = previous;
+      }
+    }
   });
 
   it("allows loopback custom provider without API key", async () => {

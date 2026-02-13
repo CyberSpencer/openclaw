@@ -1,6 +1,7 @@
 import createDOMPurify from "dompurify";
 import { marked } from "marked";
 import { truncateText } from "./format.ts";
+import { normalizeTextForDisplay } from "./text-normalization.ts";
 
 marked.setOptions({
   gfm: true,
@@ -286,7 +287,8 @@ function sanitizeHtml(html: string): string {
 }
 
 export function toSanitizedMarkdownHtml(markdown: string): string {
-  const input = markdown.trim();
+  const normalized = normalizeTextForDisplay(markdown);
+  const input = normalized.trim();
   if (!input) {
     return "";
   }

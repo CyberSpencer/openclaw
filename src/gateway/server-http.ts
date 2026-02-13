@@ -315,6 +315,15 @@ export function createGatewayHttpServer(opts: {
     }
 
     try {
+      const url = new URL(req.url ?? "/", "http://localhost");
+      if (req.method === "GET" && url.pathname === "/_control_ui_status") {
+        sendJson(res, 200, {
+          controlUiEnabled,
+          controlUiBasePath: controlUiBasePath || "",
+        });
+        return;
+      }
+
       const configSnapshot = loadConfig();
       const trustedProxies = configSnapshot.gateway?.trustedProxies ?? [];
       if (await handleHooksRequest(req, res)) {
