@@ -3,8 +3,12 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import type { GatewayRequestHandlers } from "./types.js";
+import { loadConfig } from "../../config/config.js";
 import { resolveStateDir } from "../../config/paths.js";
+import { loadSessionStore, type SessionEntry } from "../../config/sessions.js";
+import { deriveDefaultRootConversationId } from "../../orchestration/identity.js";
 import { ErrorCodes, errorShape } from "../protocol/index.js";
+import { resolveGatewaySessionStoreTarget } from "../session-utils.js";
 
 type OrchestrationLaneId = "backlog" | "running" | "review" | "done" | "failed" | (string & {});
 
@@ -48,12 +52,21 @@ type OrchestratorState = {
   boards: OrchestrationBoard[];
 };
 
+type OrchestratorScope = {
+  scopeKey: string;
+  rootConversationId?: string;
+};
+
 type OrchestratorStoreResponse = {
   ok: true;
   exists: boolean;
   hash: string;
+  scopeKey: string;
+  rootConversationId?: string;
   state: OrchestratorState;
 };
+
+const MAIN_SCOPE_KEY = "main";
 
 const DEFAULT_LANES: OrchestrationLane[] = [
   { id: "backlog", title: "Backlog", description: "Queued work and ideas." },
@@ -84,9 +97,77 @@ function computeHash(raw: string): string {
   return crypto.createHash("sha256").update(raw).digest("hex");
 }
 
-function resolveStorePath(): string {
+function resolveLegacyStorePath(): string {
   const stateDir = resolveStateDir(process.env, os.homedir);
   return path.join(stateDir, "control-ui", "orchestrator.json");
+}
+
+function normalizeScopeKey(raw: string): string {
+  const cleaned = raw
+    .trim()
+    .replace(/[^a-zA-Z0-9_-]/g, "_")
+    .slice(0, 80);
+  return cleaned || MAIN_SCOPE_KEY;
+}
+
+function buildScopeKeyFromRootConversationId(rootConversationId: string): string {
+  const digest = crypto.createHash("sha1").update(rootConversationId).digest("hex").slice(0, 16);
+  return normalizeScopeKey(`root-${digest}`);
+}
+
+function resolveScopedStorePath(scopeKey: string): string {
+  const stateDir = resolveStateDir(process.env, os.homedir);
+  return path.join(stateDir, "control-ui", "orchestrator", `${normalizeScopeKey(scopeKey)}.json`);
+}
+
+function readParamsRecord(params: unknown): Record<string, unknown> {
+  if (!params || typeof params !== "object" || Array.isArray(params)) {
+    return {};
+  }
+  return params as Record<string, unknown>;
+}
+
+function readTrimmedString(record: Record<string, unknown>, key: string): string {
+  const value = record[key];
+  return typeof value === "string" ? value.trim() : "";
+}
+
+function resolveRootConversationIdFromParams(record: Record<string, unknown>): string | undefined {
+  const explicitRootConversationId = readTrimmedString(record, "rootConversationId");
+  if (explicitRootConversationId) {
+    return explicitRootConversationId;
+  }
+
+  const sessionKey = readTrimmedString(record, "sessionKey");
+  if (!sessionKey) {
+    return undefined;
+  }
+
+  try {
+    const cfg = loadConfig();
+    const target = resolveGatewaySessionStoreTarget({ cfg, key: sessionKey });
+    const store = loadSessionStore(target.storePath);
+    const lookupKey =
+      target.storeKeys.find((candidate) => Boolean(store[candidate])) ?? target.canonicalKey;
+    const entry = store[lookupKey] as SessionEntry | undefined;
+    const entryRootConversationId =
+      typeof entry?.rootConversationId === "string" ? entry.rootConversationId.trim() : "";
+    return entryRootConversationId || deriveDefaultRootConversationId(target.canonicalKey);
+  } catch {
+    return deriveDefaultRootConversationId(sessionKey);
+  }
+}
+
+function resolveOrchestratorScope(params: unknown): OrchestratorScope {
+  const record = readParamsRecord(params);
+  const rootConversationId = resolveRootConversationIdFromParams(record);
+  if (rootConversationId) {
+    return {
+      scopeKey: buildScopeKeyFromRootConversationId(rootConversationId),
+      rootConversationId,
+    };
+  }
+  return { scopeKey: MAIN_SCOPE_KEY };
 }
 
 async function quarantineInvalidStore(storePath: string, raw: string): Promise<void> {
@@ -104,12 +185,13 @@ async function quarantineInvalidStore(storePath: string, raw: string): Promise<v
   }
 }
 
-async function readStoreFile(): Promise<
+async function readStoreFromPath(
+  storePath: string,
+): Promise<
   | { ok: true; exists: true; raw: string; hash: string; state: OrchestratorState }
   | { ok: true; exists: false; raw: ""; hash: ""; state: OrchestratorState }
   | { ok: false; error: string }
 > {
-  const storePath = resolveStorePath();
   let raw: string;
   try {
     raw = await fs.promises.readFile(storePath, "utf8");
@@ -129,7 +211,6 @@ async function readStoreFile(): Promise<
     if (
       errCode === "ENOENT" ||
       message.includes("ENOENT") ||
-      // node sometimes stringifies as: "Error: ENOENT: no such file or directory"
       message.includes("no such file or directory")
     ) {
       return { ok: true, exists: false, raw: "", hash: "", state: createDefaultState() };
@@ -167,8 +248,30 @@ async function readStoreFile(): Promise<
   };
 }
 
-async function writeStoreFile(state: OrchestratorState): Promise<{ hash: string; raw: string }> {
-  const storePath = resolveStorePath();
+async function readStoreFile(
+  scope: OrchestratorScope,
+): Promise<
+  | { ok: true; exists: true; raw: string; hash: string; state: OrchestratorState }
+  | { ok: true; exists: false; raw: ""; hash: ""; state: OrchestratorState }
+  | { ok: false; error: string }
+> {
+  const scopedPath = resolveScopedStorePath(scope.scopeKey);
+  const scoped = await readStoreFromPath(scopedPath);
+  if (!scoped.ok || scoped.exists || scope.scopeKey !== MAIN_SCOPE_KEY) {
+    return scoped;
+  }
+
+  // Migration path: keep legacy board data for main scope when scoped file has
+  // not been created yet.
+  const legacyPath = resolveLegacyStorePath();
+  return readStoreFromPath(legacyPath);
+}
+
+async function writeStoreFile(
+  state: OrchestratorState,
+  scope: OrchestratorScope,
+): Promise<{ hash: string; raw: string }> {
+  const storePath = resolveScopedStorePath(scope.scopeKey);
   await fs.promises.mkdir(path.dirname(storePath), { recursive: true });
   const raw = `${JSON.stringify(state, null, 2)}\n`;
   const tmp = `${storePath}.${process.pid}.${Math.random().toString(16).slice(2)}.tmp`;
@@ -183,8 +286,9 @@ async function writeStoreFile(state: OrchestratorState): Promise<{ hash: string;
 }
 
 export const orchestratorHandlers: GatewayRequestHandlers = {
-  "orchestrator.get": async ({ respond }) => {
-    const res = await readStoreFile();
+  "orchestrator.get": async ({ params, respond }) => {
+    const scope = resolveOrchestratorScope(params);
+    const res = await readStoreFile(scope);
     if (!res.ok) {
       respond(false, undefined, errorShape(ErrorCodes.UNAVAILABLE, res.error));
       return;
@@ -193,15 +297,18 @@ export const orchestratorHandlers: GatewayRequestHandlers = {
       ok: true,
       exists: res.exists,
       hash: res.hash,
+      scopeKey: scope.scopeKey,
+      ...(scope.rootConversationId ? { rootConversationId: scope.rootConversationId } : {}),
       state: res.state,
     };
     respond(true, payload, undefined);
   },
 
   "orchestrator.set": async ({ params, respond, context }) => {
-    const stateValue = (params as { state?: unknown }).state;
-    const baseHashValue = (params as { baseHash?: unknown }).baseHash;
-    const baseHash = typeof baseHashValue === "string" ? baseHashValue.trim() : "";
+    const record = readParamsRecord(params);
+    const scope = resolveOrchestratorScope(record);
+    const stateValue = record.state;
+    const baseHash = readTrimmedString(record, "baseHash");
     if (!stateValue || typeof stateValue !== "object" || Array.isArray(stateValue)) {
       respond(
         false,
@@ -220,7 +327,7 @@ export const orchestratorHandlers: GatewayRequestHandlers = {
       return;
     }
 
-    const current = await readStoreFile();
+    const current = await readStoreFile(scope);
     if (!current.ok) {
       respond(false, undefined, errorShape(ErrorCodes.UNAVAILABLE, current.error));
       return;
@@ -237,27 +344,50 @@ export const orchestratorHandlers: GatewayRequestHandlers = {
       return;
     }
 
-    const written = await writeStoreFile(state);
+    const written = await writeStoreFile(state, scope);
     const payload: OrchestratorStoreResponse = {
       ok: true,
       exists: true,
       hash: written.hash,
+      scopeKey: scope.scopeKey,
+      ...(scope.rootConversationId ? { rootConversationId: scope.rootConversationId } : {}),
       state,
     };
-    context.broadcast("orchestrator", { state, hash: written.hash }, { dropIfSlow: true });
+    context.broadcast(
+      "orchestrator",
+      {
+        state,
+        hash: written.hash,
+        scopeKey: scope.scopeKey,
+        ...(scope.rootConversationId ? { rootConversationId: scope.rootConversationId } : {}),
+      },
+      { dropIfSlow: true },
+    );
     respond(true, payload, undefined);
   },
 
-  "orchestrator.reset": async ({ respond, context }) => {
+  "orchestrator.reset": async ({ params, respond, context }) => {
+    const scope = resolveOrchestratorScope(params);
     const state = createDefaultState();
-    const written = await writeStoreFile(state);
+    const written = await writeStoreFile(state, scope);
     const payload: OrchestratorStoreResponse = {
       ok: true,
       exists: true,
       hash: written.hash,
+      scopeKey: scope.scopeKey,
+      ...(scope.rootConversationId ? { rootConversationId: scope.rootConversationId } : {}),
       state,
     };
-    context.broadcast("orchestrator", { state, hash: written.hash }, { dropIfSlow: true });
+    context.broadcast(
+      "orchestrator",
+      {
+        state,
+        hash: written.hash,
+        scopeKey: scope.scopeKey,
+        ...(scope.rootConversationId ? { rootConversationId: scope.rootConversationId } : {}),
+      },
+      { dropIfSlow: true },
+    );
     respond(true, payload, undefined);
   },
 };

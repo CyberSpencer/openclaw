@@ -445,6 +445,7 @@ export class OpenClawApp extends LitElement {
   private orchServerLoaded = false;
   private orchServerSyncing = false;
   private orchServerSaveRequested = false;
+  private orchScopeKey = "main";
   private orchRunIndex = new Map<string, { boardId: string; cardId: string }>();
 
   @state() nodesLoading = false;
@@ -730,6 +731,9 @@ export class OpenClawApp extends LitElement {
         this.voiceState.sparkVoiceAvailable = false;
       }
     }
+    if (this.connected && changed.has("sessionKey")) {
+      void this.loadOrchestratorFromGateway({ seedIfMissing: true });
+    }
     this.handleSubagentMonitorUpdated(changed);
   }
 
@@ -927,10 +931,13 @@ export class OpenClawApp extends LitElement {
     this.orchSaveTimer = window.setTimeout(() => {
       this.orchSaveTimer = null;
       try {
-        saveOrchestratorState({
-          selectedBoardId: this.orchSelectedBoardId,
-          boards: this.orchBoards,
-        });
+        saveOrchestratorState(
+          {
+            selectedBoardId: this.orchSelectedBoardId,
+            boards: this.orchBoards,
+          },
+          this.orchScopeKey,
+        );
       } catch {
         // ignore persistence failures (e.g. private mode)
       }
@@ -942,14 +949,18 @@ export class OpenClawApp extends LitElement {
     if (!this.client || !this.connected) {
       return;
     }
+    const sessionKey = (this.sessionKey ?? "").trim();
     try {
-      const res = await this.client.request("orchestrator.get", {});
+      const res = await this.client.request("orchestrator.get", sessionKey ? { sessionKey } : {});
       const exists = Boolean(res?.exists);
       const hash = typeof res?.hash === "string" ? res.hash : "";
+      const scopeKeyRaw = typeof res?.scopeKey === "string" ? res.scopeKey.trim() : "";
+      const scopeKey = scopeKeyRaw || "main";
       const stateRaw = res?.state as
         | { version?: unknown; selectedBoardId?: unknown; boards?: unknown }
         | undefined;
 
+      this.orchScopeKey = scopeKey;
       if (hash) {
         this.orchServerHash = hash;
       }
@@ -971,10 +982,13 @@ export class OpenClawApp extends LitElement {
         }
         this.rebuildOrchRunIndex();
         try {
-          saveOrchestratorState({
-            selectedBoardId: this.orchSelectedBoardId,
-            boards: this.orchBoards,
-          });
+          saveOrchestratorState(
+            {
+              selectedBoardId: this.orchSelectedBoardId,
+              boards: this.orchBoards,
+            },
+            this.orchScopeKey,
+          );
         } catch {
           // ignore
         }
@@ -982,6 +996,13 @@ export class OpenClawApp extends LitElement {
       }
 
       // No gateway store yet: seed it from local state so multiple clients stay in sync.
+      // Prefer a scoped local cache first (if any) before pushing to gateway.
+      const scopedLocal = loadOrchestratorState(this.orchScopeKey);
+      if (Array.isArray(scopedLocal.boards) && scopedLocal.boards.length > 0) {
+        this.orchBoards = scopedLocal.boards;
+        this.orchSelectedBoardId = scopedLocal.selectedBoardId;
+        this.rebuildOrchRunIndex();
+      }
       if (opts?.seedIfMissing !== false) {
         void this.persistOrchestratorToGateway({ force: true });
       }
@@ -993,12 +1014,18 @@ export class OpenClawApp extends LitElement {
   handleOrchestratorStoreEvent(payload: unknown) {
     const obj =
       payload && typeof payload === "object" && !Array.isArray(payload)
-        ? (payload as { state?: unknown; hash?: unknown })
+        ? (payload as { state?: unknown; hash?: unknown; scopeKey?: unknown })
         : null;
     if (!obj) {
       return;
     }
     const hash = typeof obj.hash === "string" ? obj.hash : "";
+    const scopeKeyRaw = typeof obj.scopeKey === "string" ? obj.scopeKey.trim() : "";
+    const scopeKey = scopeKeyRaw || "main";
+    if (this.orchScopeKey && scopeKey !== this.orchScopeKey) {
+      return;
+    }
+
     const stateRaw = obj.state as
       | { version?: unknown; selectedBoardId?: unknown; boards?: unknown }
       | undefined;
@@ -1017,6 +1044,7 @@ export class OpenClawApp extends LitElement {
         ? stateRaw.selectedBoardId.trim()
         : this.orchSelectedBoardId;
 
+    this.orchScopeKey = scopeKey;
     this.orchBoards = boards;
     this.orchSelectedBoardId = selectedBoardId;
     this.rebuildOrchRunIndex();
@@ -1026,10 +1054,13 @@ export class OpenClawApp extends LitElement {
     this.orchServerLoaded = true;
 
     try {
-      saveOrchestratorState({
-        selectedBoardId: this.orchSelectedBoardId,
-        boards: this.orchBoards,
-      });
+      saveOrchestratorState(
+        {
+          selectedBoardId: this.orchSelectedBoardId,
+          boards: this.orchBoards,
+        },
+        this.orchScopeKey,
+      );
     } catch {
       // ignore
     }
@@ -1049,6 +1080,7 @@ export class OpenClawApp extends LitElement {
       selectedBoardId: this.orchSelectedBoardId,
       boards: this.orchBoards,
     };
+    const sessionKey = (this.sessionKey ?? "").trim();
 
     if (this.orchServerSyncing) {
       this.orchServerSaveRequested = true;
@@ -1057,27 +1089,46 @@ export class OpenClawApp extends LitElement {
     this.orchServerSyncing = true;
     try {
       const res = await this.client.request("orchestrator.set", {
+        ...(sessionKey ? { sessionKey } : {}),
         state,
         baseHash: this.orchServerHash ?? undefined,
       });
       const nextHash = typeof res?.hash === "string" ? res.hash : "";
+      const nextScopeKey = typeof res?.scopeKey === "string" ? res.scopeKey.trim() : "";
       if (nextHash) {
         this.orchServerHash = nextHash;
+      }
+      if (nextScopeKey) {
+        this.orchScopeKey = nextScopeKey;
       }
     } catch (err) {
       const message =
         err instanceof Error ? err.message : typeof err === "string" ? err : "unknown error";
       if (message.includes("baseHash") && message.includes("mismatch")) {
         try {
-          const latest = await this.client.request("orchestrator.get", {});
+          const latest = await this.client.request(
+            "orchestrator.get",
+            sessionKey ? { sessionKey } : {},
+          );
           const nextHash = typeof latest?.hash === "string" ? latest.hash : "";
+          const nextScopeKey = typeof latest?.scopeKey === "string" ? latest.scopeKey.trim() : "";
           if (nextHash) {
             this.orchServerHash = nextHash;
           }
-          const retry = await this.client.request("orchestrator.set", { state });
+          if (nextScopeKey) {
+            this.orchScopeKey = nextScopeKey;
+          }
+          const retry = await this.client.request("orchestrator.set", {
+            ...(sessionKey ? { sessionKey } : {}),
+            state,
+          });
           const retryHash = typeof retry?.hash === "string" ? retry.hash : "";
+          const retryScopeKey = typeof retry?.scopeKey === "string" ? retry.scopeKey.trim() : "";
           if (retryHash) {
             this.orchServerHash = retryHash;
+          }
+          if (retryScopeKey) {
+            this.orchScopeKey = retryScopeKey;
           }
         } catch {
           // ignore

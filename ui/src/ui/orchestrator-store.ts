@@ -1,6 +1,12 @@
 import { generateUUID } from "./uuid.ts";
 
-const STORAGE_KEY = "openclaw.control.orchestrator.v1";
+const STORAGE_KEY_PREFIX = "openclaw.control.orchestrator.v1";
+
+function resolveStorageKey(scopeKey?: string): string {
+  const raw = typeof scopeKey === "string" ? scopeKey.trim() : "";
+  const normalized = raw || "main";
+  return `${STORAGE_KEY_PREFIX}:${normalized}`;
+}
 
 export type OrchestrationLaneId =
   | "backlog"
@@ -275,10 +281,23 @@ function normalizeBoard(value: unknown): OrchestrationBoard | null {
   return { id, title, lanes: uniqueLanes, cards, createdAt, updatedAt };
 }
 
-export function loadOrchestratorState(): OrchestratorState {
+export function loadOrchestratorState(scopeKey?: string): OrchestratorState {
   const defaults = createDefaultOrchestratorState();
+  const storageKey = resolveStorageKey(scopeKey);
   try {
-    const raw = localStorage.getItem(STORAGE_KEY);
+    const scopeRaw = typeof scopeKey === "string" ? scopeKey.trim() : "";
+    if (!scopeRaw || scopeRaw === "main") {
+      const hasScoped = localStorage.getItem(storageKey);
+      if (!hasScoped) {
+        const legacyRaw = localStorage.getItem(STORAGE_KEY_PREFIX);
+        if (legacyRaw) {
+          localStorage.setItem(storageKey, legacyRaw);
+          localStorage.removeItem(STORAGE_KEY_PREFIX);
+        }
+      }
+    }
+
+    const raw = localStorage.getItem(storageKey);
     if (!raw) {
       return defaults;
     }
@@ -305,11 +324,13 @@ export function loadOrchestratorState(): OrchestratorState {
 
 export function saveOrchestratorState(
   state: Pick<OrchestratorState, "selectedBoardId" | "boards">,
+  scopeKey?: string,
 ) {
   const next: OrchestratorState = {
     version: 1,
     selectedBoardId: state.selectedBoardId,
     boards: state.boards,
   };
-  localStorage.setItem(STORAGE_KEY, JSON.stringify(next));
+  const storageKey = resolveStorageKey(scopeKey);
+  localStorage.setItem(storageKey, JSON.stringify(next));
 }
