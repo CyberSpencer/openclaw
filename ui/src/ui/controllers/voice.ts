@@ -107,6 +107,8 @@ export type VoiceCapabilities = {
 };
 
 export type VoiceTimings = {
+  micStartMs?: number;
+  firstSpeechMs?: number;
   sttMs?: number;
   routingMs?: number;
   llmMs?: number;
@@ -163,6 +165,18 @@ export function deriveVadProfile(ambientLevel: number): {
     speechThreshold,
     silenceThreshold,
     silenceDurationMs,
+  };
+}
+
+export function withTurnTelemetry(
+  base: VoiceTimings | null | undefined,
+  telemetry: { micStartMs: number; firstSpeechMs?: number; totalMs: number },
+): VoiceTimings {
+  return {
+    ...(base ?? { totalMs: telemetry.totalMs }),
+    micStartMs: telemetry.micStartMs,
+    firstSpeechMs: telemetry.firstSpeechMs,
+    totalMs: base?.totalMs ?? telemetry.totalMs,
   };
 }
 
@@ -1322,6 +1336,10 @@ export async function startConversation(
     try {
       console.log("[Voice] Starting new turn, phase: listening");
 
+      const turnStartedAt = Date.now();
+      const micStartPerf = performance.now();
+      const micStartEpochMs = Date.now();
+
       // Promise that resolves when VAD detects end of speech
       let speechEndResolve: () => void;
       const speechEndPromise = new Promise<void>((resolve) => {
@@ -1337,6 +1355,7 @@ export async function startConversation(
         },
         onUpdate,
       );
+      const micStartMs = Math.max(0, Math.round(performance.now() - micStartPerf));
 
       if (!recordSuccess) {
         console.error("[Voice] Failed to start recording");
@@ -1363,20 +1382,37 @@ export async function startConversation(
       const audioBlob = await stopRecordingGetAudio(state);
       console.log("[Voice] Audio blob size:", audioBlob?.size ?? 0);
 
+      const firstSpeechMs =
+        state.speechStart != null ? Math.max(0, state.speechStart - micStartEpochMs) : undefined;
+
       if (!audioBlob || audioBlob.size === 0) {
         console.log("[Voice] No audio recorded, restarting listening");
+        state.timings = withTurnTelemetry(null, {
+          micStartMs,
+          firstSpeechMs,
+          totalMs: Math.max(0, Date.now() - turnStartedAt),
+        });
         state.phase = "listening";
         state.speechDetected = false;
         continue;
       }
 
-      // Process the audio through PersonaPlex S2S
       console.log("[Voice] Processing audio...");
       const base64 = await audioToBase64(audioBlob);
       state.audioChunks = [];
       const format = audioBlob.type.toLowerCase().includes("wav") ? "wav" : "webm";
 
       const result = await onProcess({ audioBase64: base64, format });
+      const totalMs = Math.max(0, Date.now() - turnStartedAt);
+      state.timings = withTurnTelemetry(result?.timings, {
+        micStartMs,
+        firstSpeechMs,
+        totalMs,
+      });
+      console.info("[Voice/Telemetry] turn", state.timings);
+      if (result) {
+        result.timings = state.timings;
+      }
       console.log("[Voice] Process result:", {
         hasResult: !!result,
         hasAudio: !!result?.audioBase64,

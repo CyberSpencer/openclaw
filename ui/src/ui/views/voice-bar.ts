@@ -90,6 +90,8 @@ function renderTimings(timings: VoiceTimings | null) {
   }
 
   const items = [
+    { label: "Mic Start", value: timings.micStartMs },
+    { label: "First Speech", value: timings.firstSpeechMs },
     { label: "STT", value: timings.sttMs },
     { label: "Route", value: timings.routingMs },
     { label: "LLM", value: timings.llmMs },
@@ -193,10 +195,8 @@ export function renderVoiceBar(props: VoiceBarProps) {
     sparkVoices,
     ttsVoice,
     ttsInstruct,
-    ttsLanguage,
     onTtsVoiceChange,
     onTtsInstructChange,
-    onTtsLanguageChange,
   } = props;
 
   const sparkGate = state.mode !== "spark" || state.sparkVoiceAvailable;
