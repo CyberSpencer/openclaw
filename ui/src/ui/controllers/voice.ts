@@ -15,6 +15,7 @@ const VAD_SILENCE_THRESHOLD = 15; // Audio level below this = silence (0-255)
 const VAD_SPEECH_THRESHOLD = 25; // Audio level above this = speech detected
 const VAD_SILENCE_DURATION_MS = 750; // How long silence before triggering processing (0.75s)
 const VAD_MIN_SPEECH_MS = 300; // Minimum speech duration to be valid
+const VAD_CALIBRATION_MS = 350; // Ambient sampling window before full VAD decisions
 
 // Barge-in tuning while assistant is speaking
 const BARGE_IN_SPEECH_THRESHOLD = 30;
@@ -42,6 +43,10 @@ export type VoiceState = {
   silenceStart: number | null;
   speechStart: number | null;
   currentAudioLevel: number;
+  ambientAudioLevel: number | null;
+  vadSpeechThreshold: number;
+  vadSilenceThreshold: number;
+  vadSilenceDurationMs: number;
 
   // Recording/VAD components
   audioContext: AudioContext | null;
@@ -138,6 +143,28 @@ export type VoiceSynthesizeResult = {
   warning?: string;
 };
 
+export function deriveVadProfile(ambientLevel: number): {
+  speechThreshold: number;
+  silenceThreshold: number;
+  silenceDurationMs: number;
+} {
+  const normalizedAmbient = Math.max(0, Math.min(60, ambientLevel));
+  const speechThreshold = Math.max(VAD_SPEECH_THRESHOLD, Math.round(normalizedAmbient + 10));
+  const silenceThreshold = Math.max(
+    VAD_SILENCE_THRESHOLD,
+    Math.min(speechThreshold - 3, Math.round(normalizedAmbient + 2)),
+  );
+  const silenceDurationMs = Math.max(
+    550,
+    Math.min(1400, Math.round(VAD_SILENCE_DURATION_MS + normalizedAmbient * 8)),
+  );
+  return {
+    speechThreshold,
+    silenceThreshold,
+    silenceDurationMs,
+  };
+}
+
 /**
  * Create initial voice state.
  */
@@ -160,6 +187,10 @@ export function createVoiceState(): VoiceState {
     silenceStart: null,
     speechStart: null,
     currentAudioLevel: 0,
+    ambientAudioLevel: null,
+    vadSpeechThreshold: VAD_SPEECH_THRESHOLD,
+    vadSilenceThreshold: VAD_SILENCE_THRESHOLD,
+    vadSilenceDurationMs: VAD_SILENCE_DURATION_MS,
 
     // Recording/VAD components
     audioContext: null,
@@ -422,6 +453,9 @@ function setupVAD(
   state.analyserNode = analyser;
 
   const dataArray = new Uint8Array(analyser.frequencyBinCount);
+  const calibrationSamples: number[] = [];
+  const calibrationStartedAt = Date.now();
+  let profileApplied = false;
 
   function checkAudioLevel() {
     if (!state.conversationActive || state.phase !== "listening") {
@@ -433,9 +467,27 @@ function setupVAD(
     state.currentAudioLevel = average;
 
     const now = Date.now();
+    if (!profileApplied) {
+      if (now - calibrationStartedAt < VAD_CALIBRATION_MS) {
+        calibrationSamples.push(average);
+        state.vadLoop = requestAnimationFrame(checkAudioLevel);
+        return;
+      }
+      const ambient =
+        calibrationSamples.length > 0
+          ? calibrationSamples.reduce((sum, value) => sum + value, 0) / calibrationSamples.length
+          : average;
+      const profile = deriveVadProfile(ambient);
+      state.ambientAudioLevel = ambient;
+      state.vadSpeechThreshold = profile.speechThreshold;
+      state.vadSilenceThreshold = profile.silenceThreshold;
+      state.vadSilenceDurationMs = profile.silenceDurationMs;
+      profileApplied = true;
+      onUpdate();
+    }
 
     // Detect speech start
-    if (average > VAD_SPEECH_THRESHOLD) {
+    if (average > state.vadSpeechThreshold) {
       if (!state.speechDetected) {
         state.speechDetected = true;
         state.speechStart = now;
@@ -447,10 +499,10 @@ function setupVAD(
       }
     }
     // Detect silence after speech
-    else if (state.speechDetected && average < VAD_SILENCE_THRESHOLD) {
+    else if (state.speechDetected && average < state.vadSilenceThreshold) {
       if (!state.silenceStart) {
         state.silenceStart = now;
-      } else if (now - state.silenceStart > VAD_SILENCE_DURATION_MS) {
+      } else if (now - state.silenceStart > state.vadSilenceDurationMs) {
         // Check minimum speech duration
         const speechDuration = state.speechStart ? state.silenceStart - state.speechStart : 0;
         if (speechDuration >= VAD_MIN_SPEECH_MS) {
@@ -682,6 +734,10 @@ async function startRecordingWithVAD(
     state.speechDetected = false;
     state.silenceStart = null;
     state.speechStart = null;
+    state.ambientAudioLevel = null;
+    state.vadSpeechThreshold = VAD_SPEECH_THRESHOLD;
+    state.vadSilenceThreshold = VAD_SILENCE_THRESHOLD;
+    state.vadSilenceDurationMs = VAD_SILENCE_DURATION_MS;
     state.error = null;
 
     return true;
@@ -801,6 +857,10 @@ function cleanupAudio(state: VoiceState): void {
   state.speechDetected = false;
   state.silenceStart = null;
   state.speechStart = null;
+  state.ambientAudioLevel = null;
+  state.vadSpeechThreshold = VAD_SPEECH_THRESHOLD;
+  state.vadSilenceThreshold = VAD_SILENCE_THRESHOLD;
+  state.vadSilenceDurationMs = VAD_SILENCE_DURATION_MS;
 }
 
 /**
