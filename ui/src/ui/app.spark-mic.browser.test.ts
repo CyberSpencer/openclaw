@@ -276,3 +276,76 @@ describe("spark mic worklet fallback", () => {
     expect(app.lastError).toContain("Recording failed:");
   });
 });
+
+describe("spark status polling resilience", () => {
+  it("does not stop an active spark conversation on a single status poll failure", async () => {
+    const app = mountApp("/chat");
+    await app.updateComplete;
+
+    setSparkAvailable(app);
+    await app.updateComplete;
+    app.voiceState.mode = "spark";
+    app.voiceState.conversationActive = true;
+    app.voiceState.sparkVoiceAvailable = true;
+
+    app.client = {
+      request: vi.fn(async () => {
+        throw new Error("spark.status timeout");
+      }),
+    } as unknown as typeof app.client;
+
+    await app.refreshSparkStatus();
+
+    expect(app.voiceState.conversationActive).toBe(true);
+    expect(app.voiceState.sparkVoiceAvailable).toBe(true);
+    expect(app.sparkStatus?.voiceAvailable).toBe(true);
+    expect(app.voiceState.error ?? "").not.toContain("Conversation stopped");
+  });
+
+  it("stops active conversation after repeated spark.status poll failures", async () => {
+    const app = mountApp("/chat");
+    await app.updateComplete;
+
+    setSparkAvailable(app);
+    await app.updateComplete;
+    app.voiceState.mode = "spark";
+    app.voiceState.conversationActive = true;
+    app.voiceState.sparkVoiceAvailable = true;
+
+    app.client = {
+      request: vi.fn(async () => {
+        throw new Error("spark.status timeout");
+      }),
+    } as unknown as typeof app.client;
+
+    await app.refreshSparkStatus();
+    await app.refreshSparkStatus();
+    await app.refreshSparkStatus();
+
+    expect(app.voiceState.conversationActive).toBe(false);
+    expect(app.sparkStatus).toBeNull();
+    expect(app.voiceState.error).toBe(
+      "Spark status polling failed repeatedly. Conversation stopped.",
+    );
+  });
+
+  it("stops active conversation immediately when a successful poll reports voice unavailable", async () => {
+    const app = mountApp("/chat");
+    await app.updateComplete;
+
+    setSparkAvailable(app);
+    await app.updateComplete;
+    app.voiceState.mode = "spark";
+    app.voiceState.conversationActive = true;
+    app.voiceState.sparkVoiceAvailable = true;
+
+    app.client = {
+      request: vi.fn(async () => ({ enabled: true, voiceAvailable: false })),
+    } as unknown as typeof app.client;
+
+    await app.refreshSparkStatus();
+
+    expect(app.voiceState.conversationActive).toBe(false);
+    expect(app.voiceState.error).toBe("Spark voice became unavailable. Conversation stopped.");
+  });
+});

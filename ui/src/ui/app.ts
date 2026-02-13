@@ -123,6 +123,7 @@ declare global {
 /** Max chars per TTS chunk to stay under DGX timeout (~60s). ~250 chars ~= 12-15s under load. */
 const MAX_TTS_CHARS = 250;
 const WORKLET_VERSION = "20260210-v1";
+const SPARK_STATUS_FAILURE_STOP_THRESHOLD = 3;
 
 /**
  * Chunk text for TTS to avoid DGX timeouts. Long text (~1270 chars) takes 60–78s;
@@ -664,6 +665,7 @@ export class OpenClawApp extends LitElement {
   private sparkMicRecordingTimer: ReturnType<typeof setTimeout> | null = null;
   private sparkMicWorkletDisabledForSession = false;
   private sparkStatusPollInterval: number | null = null;
+  private sparkStatusConsecutivePollFailures = 0;
 
   @state() logsLoading = false;
   @state() logsError: string | null = null;
@@ -732,6 +734,7 @@ export class OpenClawApp extends LitElement {
         void this.refreshSparkStatus();
       } else {
         this.stopSparkStatusPolling();
+        this.sparkStatusConsecutivePollFailures = 0;
         this.voiceState.sparkVoiceAvailable = false;
       }
     }
@@ -2741,11 +2744,17 @@ export class OpenClawApp extends LitElement {
       return;
     }
     this.sparkBusy = true;
+    let pollSucceeded = false;
     try {
       const status = await this.client.request("spark.status", {});
       this.sparkStatus = status;
+      this.sparkStatusConsecutivePollFailures = 0;
+      pollSucceeded = true;
     } catch {
-      this.sparkStatus = null;
+      this.sparkStatusConsecutivePollFailures += 1;
+      if (this.sparkStatusConsecutivePollFailures >= SPARK_STATUS_FAILURE_STOP_THRESHOLD) {
+        this.sparkStatus = null;
+      }
     } finally {
       this.sparkBusy = false;
     }
@@ -2760,7 +2769,9 @@ export class OpenClawApp extends LitElement {
       this.voiceState.conversationActive
     ) {
       stopConversation(this.voiceState);
-      this.voiceState.error = "Spark voice became unavailable. Conversation stopped.";
+      this.voiceState.error = pollSucceeded
+        ? "Spark voice became unavailable. Conversation stopped."
+        : "Spark status polling failed repeatedly. Conversation stopped.";
       this.requestUpdate();
     }
   }
