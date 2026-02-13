@@ -72,6 +72,7 @@ type GatewayHost = {
   handleOrchestratorStoreEvent?: (payload: unknown) => void;
   handleChatThreadFinalEvent?: (sessionKey: string) => void;
   loadOrchestratorFromGateway?: (opts?: { seedIfMissing?: boolean }) => Promise<void> | void;
+  reconcileInFlightOrchestratorRuns?: () => Promise<void> | void;
 };
 
 type SessionDefaultsSnapshot = {
@@ -162,6 +163,7 @@ export function connectGateway(host: GatewayHost) {
       resetToolStream(host as unknown as Parameters<typeof resetToolStream>[0]);
       void loadAssistantIdentity(host as unknown as OpenClawApp);
       void host.loadOrchestratorFromGateway?.({ seedIfMissing: true });
+      void host.reconcileInFlightOrchestratorRuns?.();
       void loadAgents(host as unknown as OpenClawApp);
       void loadNodes(host as unknown as OpenClawApp, { quiet: true });
       void loadDevices(host as unknown as OpenClawApp, { quiet: true });

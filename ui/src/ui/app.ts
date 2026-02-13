@@ -1832,6 +1832,147 @@ export class OpenClawApp extends LitElement {
     this.setTab("chat");
   }
 
+  async reconcileInFlightOrchestratorRuns() {
+    if (!this.client || !this.connected) {
+      return;
+    }
+
+    const requesterSessionKey = (this.sessionKey ?? "").trim();
+    if (!requesterSessionKey) {
+      return;
+    }
+
+    const applyRunState = (
+      cardId: string,
+      nextStatus: "running" | "done" | "error",
+      opts?: { startedAt?: number; endedAt?: number; error?: string },
+    ) => {
+      this.updateOrchCard(
+        cardId,
+        (card) => {
+          const run = card.run;
+          if (!run) {
+            return card;
+          }
+          const laneId =
+            nextStatus === "running"
+              ? "running"
+              : nextStatus === "done"
+                ? card.laneId === "running"
+                  ? "review"
+                  : card.laneId
+                : "failed";
+          return {
+            ...card,
+            laneId,
+            run: {
+              ...run,
+              status: nextStatus,
+              startedAt: opts?.startedAt ?? run.startedAt,
+              endedAt: opts?.endedAt ?? (nextStatus === "running" ? run.endedAt : Date.now()),
+              error: nextStatus === "error" ? (opts?.error ?? run.error) : run.error,
+            },
+            updatedAt: Date.now(),
+          };
+        },
+        { persist: true },
+      );
+    };
+
+    let tasks: Array<{
+      runId?: string;
+      childSessionKey?: string;
+      status?: "running" | "done" | "error";
+      startedAt?: number;
+      endedAt?: number;
+    }> = [];
+
+    try {
+      const res = await this.client.request("sessions.subagents", {
+        requesterSessionKey,
+        includeCompleted: true,
+        limit: 200,
+      });
+      tasks = Array.isArray(res?.tasks) ? res.tasks : [];
+    } catch {
+      tasks = [];
+    }
+
+    const byRunId = new Map<string, (typeof tasks)[number]>();
+    const byChildSessionKey = new Map<string, (typeof tasks)[number]>();
+    for (const task of tasks) {
+      const runId = typeof task.runId === "string" ? task.runId.trim() : "";
+      if (runId) {
+        byRunId.set(runId, task);
+      }
+      const childSessionKey =
+        typeof task.childSessionKey === "string" ? task.childSessionKey.trim() : "";
+      if (childSessionKey) {
+        byChildSessionKey.set(childSessionKey, task);
+      }
+    }
+
+    const cards = (this.orchBoards ?? []).flatMap((board) => board.cards ?? []);
+    for (const card of cards) {
+      const run = card.run;
+      if (!run) {
+        continue;
+      }
+      if (run.status !== "accepted" && run.status !== "running") {
+        continue;
+      }
+
+      const runId = (run.runId ?? "").trim();
+      const childSessionKey = (run.sessionKey ?? "").trim();
+      const task =
+        (runId ? byRunId.get(runId) : undefined) ?? byChildSessionKey.get(childSessionKey);
+
+      if (task) {
+        if (task.status === "running") {
+          applyRunState(card.id, "running", { startedAt: task.startedAt });
+          continue;
+        }
+        if (task.status === "done") {
+          applyRunState(card.id, "done", { startedAt: task.startedAt, endedAt: task.endedAt });
+          continue;
+        }
+        if (task.status === "error") {
+          applyRunState(card.id, "error", {
+            startedAt: task.startedAt,
+            endedAt: task.endedAt,
+            error: run.error ?? "Subagent run failed",
+          });
+          continue;
+        }
+      }
+
+      if (runId) {
+        try {
+          const snapshot = await this.client.request("agent.wait", { runId, timeoutMs: 1 });
+          const status = typeof snapshot?.status === "string" ? snapshot.status : "";
+          const startedAt =
+            typeof snapshot?.startedAt === "number" ? snapshot.startedAt : undefined;
+          const endedAt = typeof snapshot?.endedAt === "number" ? snapshot.endedAt : undefined;
+          const error = typeof snapshot?.error === "string" ? snapshot.error : undefined;
+          if (status === "ok") {
+            applyRunState(card.id, "done", { startedAt, endedAt });
+            continue;
+          }
+          if (status === "error") {
+            applyRunState(card.id, "error", { startedAt, endedAt, error });
+            continue;
+          }
+        } catch {
+          // best-effort reconciliation
+        }
+      }
+
+      if (run.status === "accepted") {
+        applyRunState(card.id, "running", { startedAt: run.createdAt });
+      }
+    }
+  }
+
   handleOrchestratorAgentEvent(payload: AgentEventPayload) {
     const runId = typeof payload.runId === "string" ? payload.runId.trim() : "";
     if (!runId) {
