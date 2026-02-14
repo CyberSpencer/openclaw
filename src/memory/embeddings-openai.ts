@@ -119,13 +119,15 @@ export async function resolveOpenAiEmbeddingClient(
   const remoteApiKey = remote?.apiKey?.trim();
   const remoteBaseUrl = remote?.baseUrl?.trim();
   const endpointInputs = remote?.endpoints ?? [];
-  const hasEndpointApiKey = endpointInputs.some(
-    (entry) => typeof entry.apiKey === "string" && entry.apiKey.trim().length > 0,
-  );
+  const anyEndpointMissingKey =
+    endpointInputs.length === 0 ||
+    endpointInputs.some(
+      (entry) => typeof entry.apiKey !== "string" || entry.apiKey.trim().length === 0,
+    );
 
   const resolvedApiKey = remoteApiKey
     ? remoteApiKey
-    : !hasEndpointApiKey
+    : anyEndpointMissingKey
       ? requireApiKey(
           await resolveApiKeyForProvider({
             provider: "openai",

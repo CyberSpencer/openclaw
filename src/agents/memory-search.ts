@@ -411,7 +411,7 @@ function mergeConfig(
     enabled: overrides?.cache?.enabled ?? defaults?.cache?.enabled ?? DEFAULT_CACHE_ENABLED,
     maxEntries: overrides?.cache?.maxEntries ?? defaults?.cache?.maxEntries,
   };
-  const degraded = {
+  const degraded: ResolvedMemorySearchConfig["degraded"] = {
     mode:
       (overrides?.degraded?.mode ?? defaults?.degraded?.mode ?? "keyword-only") === "off"
         ? "off"

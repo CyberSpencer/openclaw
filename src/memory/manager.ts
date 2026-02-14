@@ -1093,7 +1093,10 @@ export class MemoryIndexManager {
           "noQdrantFailover" in err &&
           (err as { noQdrantFailover?: boolean }).noQdrantFailover
         ) {
-          throw err instanceof Error ? err : new Error(String(err));
+          if (err instanceof Error) {
+            throw err;
+          }
+          throw new Error("Qdrant request failed (noQdrantFailover)", { cause: err });
         }
         const message = err instanceof Error ? err.message : String(err);
         errors.push(`${endpoint.url}: ${message}`);
@@ -2221,9 +2224,8 @@ export class MemoryIndexManager {
     }
     this.lastRecoveryProbeAt = now;
 
-    const primaryProvider =
-      this.settings.provider === "auto" ? this.fallbackFrom : this.settings.provider;
-    if (primaryProvider === "local" || primaryProvider === "auto") {
+    const primaryProvider = this.resolvePrimaryProviderForRecovery();
+    if (!primaryProvider) {
       return;
     }
 

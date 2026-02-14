@@ -492,24 +492,6 @@ export const MemorySearchSchema = z
       })
       .strict()
       .optional(),
-    degraded: z
-      .object({
-        mode: z.union([z.literal("keyword-only"), z.literal("off")]).optional(),
-        maxResults: z.number().int().positive().optional(),
-        reasonCodes: z.boolean().optional(),
-        emergency: z
-          .object({
-            autoLocal: z.boolean().optional(),
-            failoverThreshold: z.number().int().positive().optional(),
-            recoverThreshold: z.number().int().positive().optional(),
-            recoverCooldownMs: z.number().int().nonnegative().optional(),
-            probeIntervalMs: z.number().int().nonnegative().optional(),
-          })
-          .strict()
-          .optional(),
-      })
-      .strict()
-      .optional(),
     cache: z
       .object({
         enabled: z.boolean().optional(),
