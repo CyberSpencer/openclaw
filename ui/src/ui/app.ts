@@ -2436,7 +2436,7 @@ export class OpenClawApp extends LitElement {
                 typeof o?.id === "string"
                   ? o.id
                   : typeof o?.name === "string"
-                    ? (o.name as string).toLowerCase()
+                    ? o.name.toLowerCase()
                     : "";
               const name = typeof o?.name === "string" ? o.name : id;
               return id
