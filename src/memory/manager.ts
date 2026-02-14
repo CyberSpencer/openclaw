@@ -1024,14 +1024,35 @@ export class MemoryIndexManager {
       ? sortQdrantEndpoints((cfg.endpoints ?? []).filter((entry) => entry.url?.trim()))
       : [{ url: cfg.url, apiKey: cfg.apiKey, timeoutMs: cfg.timeoutMs }];
 
+    // Priority-first ordering: endpoints are already sorted by priority from
+    // sortQdrantEndpoints(). Use lastSuccessfulQdrantEndpoint only as a
+    // tiebreaker within the same priority tier, so Spark is always tried first
+    // when healthy, even if Mac-local succeeded during a recent Spark outage.
     const preferredUrl = this.lastSuccessfulQdrantEndpoint?.url;
-    const orderedEndpoints =
-      preferredUrl && endpoints.some((entry) => entry.url === preferredUrl)
-        ? [
-            endpoints.find((entry) => entry.url === preferredUrl)!,
-            ...endpoints.filter((entry) => entry.url !== preferredUrl),
-          ]
-        : endpoints;
+    const orderedEndpoints = (() => {
+      if (!preferredUrl || !endpoints.some((entry) => entry.url === preferredUrl)) {
+        return endpoints;
+      }
+      // Stable sort: within each priority group, move lastSuccessful to front.
+      const grouped = new Map<number, QdrantEndpointConfig[]>();
+      for (const ep of endpoints) {
+        const prio = ep.priority ?? 0;
+        if (!grouped.has(prio)) {
+          grouped.set(prio, []);
+        }
+        grouped.get(prio)!.push(ep);
+      }
+      const result: QdrantEndpointConfig[] = [];
+      for (const [, group] of [...grouped.entries()].toSorted((a, b) => a[0] - b[0])) {
+        const preferred = group.find((ep) => ep.url === preferredUrl);
+        if (preferred) {
+          result.push(preferred, ...group.filter((ep) => ep.url !== preferredUrl));
+        } else {
+          result.push(...group);
+        }
+      }
+      return result;
+    })();
 
     const errors: string[] = [];
     for (const endpoint of orderedEndpoints) {

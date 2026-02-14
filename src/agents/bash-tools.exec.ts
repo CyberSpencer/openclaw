@@ -940,6 +940,28 @@ export function createExecTool(
         host = "gateway";
       }
 
+      // Block commands that would kill the running gateway/supervisor process.
+      // This check is intentionally outside the bypassApprovals gate — even elevated
+      // mode must not run structurally self-destructive commands from within the
+      // process that would be destroyed.
+      if (host === "gateway" || host === "node") {
+        const SELF_DESTRUCTIVE_PATTERNS: Array<{ pattern: RegExp; reason: string }> = [
+          {
+            pattern: /\bstack\.sh\s+(install|restart|stop|uninstall)\b/,
+            reason: "stack.sh lifecycle commands kill the running gateway",
+          },
+          {
+            pattern: /\blaunchctl\s+(bootout|remove|kill)\b.*\bai\.openclaw\b/,
+            reason: "launchctl operations on openclaw services kill the running gateway",
+          },
+        ];
+        for (const { pattern, reason } of SELF_DESTRUCTIVE_PATTERNS) {
+          if (pattern.test(params.command)) {
+            throw new Error(`exec denied: self-destructive command blocked (${reason})`);
+          }
+        }
+      }
+
       const configuredSecurity = defaults?.security ?? (host === "sandbox" ? "deny" : "allowlist");
       const requestedSecurity = normalizeExecSecurity(params.security);
       let security = minSecurity(configuredSecurity, requestedSecurity ?? configuredSecurity);
