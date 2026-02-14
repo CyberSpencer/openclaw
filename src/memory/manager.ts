@@ -967,7 +967,10 @@ export class MemoryIndexManager {
             errors.push(`${endpoint.url}: ${detail}`);
             continue;
           }
-          throw new Error(detail);
+          const nonFailoverError = Object.assign(new Error(detail), {
+            noQdrantFailover: true,
+          });
+          throw nonFailoverError;
         }
 
         this.lastSuccessfulQdrantEndpoint = {
@@ -979,6 +982,14 @@ export class MemoryIndexManager {
         const data = (await res.json()) as T;
         return data;
       } catch (err) {
+        if (
+          typeof err === "object" &&
+          err !== null &&
+          "noQdrantFailover" in err &&
+          (err as { noQdrantFailover?: boolean }).noQdrantFailover
+        ) {
+          throw err instanceof Error ? err : new Error(String(err));
+        }
         const message = err instanceof Error ? err.message : String(err);
         errors.push(`${endpoint.url}: ${message}`);
       } finally {

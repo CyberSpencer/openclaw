@@ -1,9 +1,7 @@
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
-
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-
 import { getMemorySearchManager, type MemoryIndexManager } from "./index.js";
 
 const embedBatch = vi.fn(async (texts: string[]) => texts.map(() => [0.1, 0.2, 0.3]));
@@ -152,6 +150,73 @@ describe("memory manager qdrant failover", () => {
     expect(fetchSpy).toHaveBeenCalledTimes(2);
     const status = manager.status();
     expect(status.dbPath).toBe(indexPath);
+  });
+
+  it("does not fail over on non-retryable qdrant errors", async () => {
+    const fetchSpy = vi.fn(async (input: unknown) => {
+      const url = String(input);
+      if (url.includes("19001") && url.includes("/points/search")) {
+        return new Response("invalid query", { status: 400 });
+      }
+      if (url.includes("19002") && url.includes("/points/search")) {
+        return new Response(
+          JSON.stringify({
+            result: [
+              {
+                id: "point-2",
+                score: 0.77,
+                payload: {
+                  text: "unexpected",
+                  path: "memory/unexpected.md",
+                  source: "memory",
+                  start_line: 1,
+                  end_line: 1,
+                },
+              },
+            ],
+          }),
+          { status: 200, headers: { "Content-Type": "application/json" } },
+        );
+      }
+      if (url.includes("19001/collections") || url.includes("19002/collections")) {
+        return new Response("", { status: 200 });
+      }
+      return new Response("", { status: 500 });
+    });
+    vi.stubGlobal("fetch", fetchSpy as unknown as typeof fetch);
+
+    const cfg = makeConfig(workspaceDir, indexPath, [
+      {
+        url: "http://127.0.0.1:19001",
+        priority: 0,
+        healthUrl: "http://127.0.0.1:19001/collections",
+        healthTimeoutMs: 200,
+        healthCacheTtlMs: 0,
+      },
+      {
+        url: "http://127.0.0.1:19002",
+        priority: 10,
+        healthUrl: "http://127.0.0.1:19002/collections",
+        healthTimeoutMs: 200,
+        healthCacheTtlMs: 0,
+      },
+    ]);
+
+    const result = await getMemorySearchManager({ cfg, agentId: "main" });
+    expect(result.manager).not.toBeNull();
+    if (!result.manager) {
+      throw new Error("manager missing");
+    }
+    manager = result.manager;
+
+    const searchResults = await manager.search("hello", { maxResults: 1, minScore: 0 });
+    expect(searchResults).toEqual([]);
+
+    const secondarySearchCalls = fetchSpy.mock.calls.filter(([input]) => {
+      const url = String(input);
+      return url.includes("19002") && url.includes("/points/search");
+    });
+    expect(secondarySearchCalls).toHaveLength(0);
   });
 
   it("fails over from primary to secondary qdrant endpoint when requests fail after startup", async () => {
