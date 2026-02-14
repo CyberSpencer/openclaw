@@ -262,7 +262,7 @@ export async function loadVoiceStatus(state: VoiceState): Promise<void> {
   }
 
   try {
-    const result = await state.client.request("voice.status", {});
+    const result = await state.client.request<VoiceStatusResult>("voice.status", {});
 
     state.enabled = result.enabled;
     const mode = result.mode;
@@ -932,7 +932,7 @@ export async function processVoiceInput(
     if (state.sessionKey) {
       request.sessionKey = state.sessionKey;
     }
-    const result = await state.client.request("voice.process", {
+    const result = await state.client.request<VoiceProcessResult>("voice.process", {
       ...request,
     });
 
@@ -1135,7 +1135,7 @@ export async function processTextToVoice(
   state.timings = null;
 
   try {
-    const result = await state.client.request("voice.processText", {
+    const result = await state.client.request<VoiceProcessResult>("voice.processText", {
       text,
       sessionKey: state.sessionKey ?? undefined,
       driveOpenClaw: state.driveOpenClaw,
@@ -1164,7 +1164,7 @@ export async function transcribeAudio(
   }
 
   try {
-    const result = await state.client.request("voice.transcribe", {
+    const result = await state.client.request<{ text?: string }>("voice.transcribe", {
       audio: audioBase64,
     });
 
@@ -1187,7 +1187,7 @@ export async function synthesizeSpeech(
   }
 
   try {
-    const result = await state.client.request("voice.synthesize", {
+    const result = await state.client.request<VoiceSynthesizeResult>("voice.synthesize", {
       text,
     });
 

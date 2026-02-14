@@ -25,5 +25,16 @@ export type AuthConfig = {
      * this window, counters reset. Default: 24.
      */
     failureWindowHours?: number;
+    /**
+     * Base cooldown for timeout failures (seconds). Timeouts are often transient
+     * (network blip, temporary overload) and warrant a shorter cooldown than
+     * auth or rate-limit errors. Uses 2x exponential backoff capped at
+     * timeoutMaxSeconds. Default: 15.
+     */
+    timeoutCooldownSeconds?: number;
+    /**
+     * Maximum cooldown for timeout failures (seconds). Default: 120.
+     */
+    timeoutMaxSeconds?: number;
   };
 };

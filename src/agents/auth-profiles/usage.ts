@@ -75,6 +75,11 @@ export async function markAuthProfileUsed(params: {
   saveAuthProfileStore(store, agentDir);
 }
 
+/**
+ * Calculate cooldown for auth, rate_limit, and other non-billing, non-timeout
+ * failures.  Exponential backoff: 1min -> 5min -> 25min -> 1h (cap).
+ * Timeout failures use the shorter {@link calculateAuthProfileTimeoutCooldownMs}.
+ */
 export function calculateAuthProfileCooldownMs(errorCount: number): number {
   const normalized = Math.max(1, errorCount);
   return Math.min(
@@ -87,6 +92,8 @@ type ResolvedAuthCooldownConfig = {
   billingBackoffMs: number;
   billingMaxMs: number;
   failureWindowMs: number;
+  timeoutCooldownMs: number;
+  timeoutMaxMs: number;
 };
 
 function resolveAuthCooldownConfig(params: {
@@ -97,9 +104,13 @@ function resolveAuthCooldownConfig(params: {
     billingBackoffHours: 5,
     billingMaxHours: 24,
     failureWindowHours: 24,
+    timeoutCooldownSeconds: 15,
+    timeoutMaxSeconds: 120,
   } as const;
 
   const resolveHours = (value: unknown, fallback: number) =>
+    typeof value === "number" && Number.isFinite(value) && value > 0 ? value : fallback;
+  const resolveSeconds = (value: unknown, fallback: number) =>
     typeof value === "number" && Number.isFinite(value) && value > 0 ? value : fallback;
 
   const cooldowns = params.cfg?.auth?.cooldowns;
@@ -125,12 +136,35 @@ function resolveAuthCooldownConfig(params: {
     cooldowns?.failureWindowHours,
     defaults.failureWindowHours,
   );
+  const timeoutCooldownSeconds = resolveSeconds(
+    cooldowns?.timeoutCooldownSeconds,
+    defaults.timeoutCooldownSeconds,
+  );
+  const timeoutMaxSeconds = resolveSeconds(
+    cooldowns?.timeoutMaxSeconds,
+    defaults.timeoutMaxSeconds,
+  );
 
   return {
     billingBackoffMs: billingBackoffHours * 60 * 60 * 1000,
     billingMaxMs: billingMaxHours * 60 * 60 * 1000,
     failureWindowMs: failureWindowHours * 60 * 60 * 1000,
+    timeoutCooldownMs: timeoutCooldownSeconds * 1000,
+    timeoutMaxMs: timeoutMaxSeconds * 1000,
   };
+}
+
+function calculateAuthProfileTimeoutCooldownMs(params: {
+  errorCount: number;
+  baseMs: number;
+  maxMs: number;
+}): number {
+  const normalized = Math.max(1, params.errorCount);
+  const baseMs = Math.max(1_000, params.baseMs);
+  const maxMs = Math.max(baseMs, params.maxMs);
+  const exponent = Math.min(normalized - 1, 10);
+  const raw = baseMs * 2 ** exponent;
+  return Math.min(maxMs, raw);
 }
 
 function calculateAuthProfileBillingDisableMsWithConfig(params: {
@@ -190,6 +224,17 @@ function computeNextProfileUsageStats(params: {
     });
     updatedStats.disabledUntil = params.now + backoffMs;
     updatedStats.disabledReason = "billing";
+  } else if (params.reason === "timeout") {
+    // Timeouts are often transient (network blip, temporary overload) and
+    // warrant a shorter cooldown than auth or rate-limit errors to avoid
+    // prolonged fallback to local models when cloud is intermittently slow.
+    const timeoutCount = failureCounts.timeout ?? 1;
+    const backoffMs = calculateAuthProfileTimeoutCooldownMs({
+      errorCount: timeoutCount,
+      baseMs: params.cfgResolved.timeoutCooldownMs,
+      maxMs: params.cfgResolved.timeoutMaxMs,
+    });
+    updatedStats.cooldownUntil = params.now + backoffMs;
   } else {
     const backoffMs = calculateAuthProfileCooldownMs(nextErrorCount);
     updatedStats.cooldownUntil = params.now + backoffMs;

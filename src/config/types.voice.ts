@@ -146,6 +146,14 @@ export type PersonaPlexConfig = {
   seed?: number;
 };
 
+export type VoiceSparkTtsConfig = {
+  voice?: string;
+  speaker?: string;
+  language?: string;
+  instruct?: string;
+  format?: string;
+};
+
 export type VoiceConfig = {
   /** Voice mode: spark (DGX STT/TTS), option2a (local STT+TTS), personaplex (S2S), hybrid (auto-select). */
   mode?: VoiceMode;
@@ -163,6 +171,8 @@ export type VoiceConfig = {
   router?: VoiceRouterConfig;
   /** PersonaPlex S2S configuration (experimental). */
   personaplex?: PersonaPlexConfig;
+  /** Spark TTS defaults (DGX-hosted TTS when mode is spark). */
+  sparkTts?: VoiceSparkTtsConfig;
   /** Enable streaming audio responses. */
   streaming?: boolean;
   /** Audio buffer size in milliseconds (default: 100). */
@@ -175,7 +185,7 @@ export type VoiceConfig = {
 
 /** Resolved voice configuration with defaults applied. */
 export type ResolvedVoiceConfig = Required<
-  Omit<VoiceConfig, "whisper" | "localTts" | "router" | "personaplex">
+  Omit<VoiceConfig, "whisper" | "localTts" | "router" | "personaplex" | "sparkTts">
 > & {
   whisper: Required<VoiceWhisperConfig>;
   localTts: Required<VoiceLocalTtsConfig>;

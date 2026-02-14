@@ -19,6 +19,7 @@ import {
   isCliProvider,
   isLocalProvider,
   modelKey,
+  parseModelRef,
   resolveConfiguredModelRef,
   resolveSecretsLocalModel,
   resolveThinkingDefault,
@@ -405,7 +406,39 @@ export async function agentCommand(
       // (promptHasSecrets was computed earlier in the pre-flight check.)
       let fallbacksOverride = resolveAgentModelFallbacksOverride(cfg, sessionAgentId);
       if (promptHasSecrets) {
-        fallbacksOverride = [];
+        const configuredFallbacks = (() => {
+          if (fallbacksOverride !== undefined) {
+            return fallbacksOverride;
+          }
+          const defaults = cfg.agents?.defaults?.model;
+          if (defaults && typeof defaults === "object") {
+            return defaults.fallbacks ?? [];
+          }
+          return [];
+        })();
+
+        const localOnly: string[] = [];
+        const seen = new Set<string>();
+        for (const raw of configuredFallbacks) {
+          const parsed = parseModelRef(String(raw ?? ""), provider);
+          if (!parsed) {
+            continue;
+          }
+          if (!isLocalProvider(parsed.provider, cfg)) {
+            continue;
+          }
+          const key = modelKey(parsed.provider, parsed.model);
+          if (seen.has(key)) {
+            continue;
+          }
+          seen.add(key);
+          localOnly.push(key);
+        }
+
+        // Important: provide an explicit override so we never consult global fallbacks (which may
+        // include cloud providers). If no local fallbacks are configured, this becomes [] which
+        // disables fallback entirely (still safe).
+        fallbacksOverride = localOnly;
       }
       const fallbackResult = await runWithModelFallback({
         cfg,

@@ -212,6 +212,13 @@ const FIELD_LABELS: Record<string, string> = {
   "gateway.nodes.browser.node": "Gateway Node Browser Pin",
   "gateway.nodes.allowCommands": "Gateway Node Allowlist (Extra Commands)",
   "gateway.nodes.denyCommands": "Gateway Node Denylist",
+  "dgx.accessMode": "DGX Access Mode",
+  "dgx.wanBaseUrl": "DGX WAN Base URL",
+  "dgx.wanHeaders": "DGX WAN Headers",
+  "routing.localFallbackModel": "Local Fallback Model",
+  "auth.cooldowns.timeoutCooldownSeconds": "Timeout Cooldown (seconds)",
+  "auth.cooldowns.timeoutMaxSeconds": "Timeout Max (seconds)",
+  "agents.defaults.secretsLocalModel": "Secrets-Local Model",
   "nodeHost.browserProxy.enabled": "Node Browser Proxy Enabled",
   "nodeHost.browserProxy.allowProfiles": "Node Browser Proxy Allowed Profiles",
   "skills.load.watch": "Watch Skills",
@@ -449,6 +456,17 @@ const FIELD_HELP: Record<string, string> = {
     "Extra node.invoke commands to allow beyond the gateway defaults (array of command strings).",
   "gateway.nodes.denyCommands":
     "Commands to block even if present in node claims or default allowlist.",
+  "dgx.accessMode": 'DGX access mode for WAN/LAN routing ("auto", "lan", or "wan").',
+  "dgx.wanBaseUrl": "WAN base URL for DGX access (e.g. ngrok HTTPS endpoint).",
+  "dgx.wanHeaders": "Extra headers to attach to DGX WAN requests (e.g. auth tokens).",
+  "routing.localFallbackModel":
+    "Local fallback model to use when the router fails (e.g. spark-ollama/gpt-oss:120b or ollama/gpt-oss:20b).",
+  "auth.cooldowns.timeoutCooldownSeconds":
+    "Base cooldown for timeout failures (seconds). Uses 2x exponential backoff capped at timeoutMaxSeconds. Default: 15.",
+  "auth.cooldowns.timeoutMaxSeconds":
+    "Maximum cooldown for timeout failures (seconds). Default: 120.",
+  "agents.defaults.secretsLocalModel":
+    "Local model for secrets-local routing; never sent to cloud providers (e.g. spark-ollama/gpt-oss:120b).",
   "nodeHost.browserProxy.enabled": "Expose the local browser control server via node proxy.",
   "nodeHost.browserProxy.allowProfiles":
     "Optional allowlist of browser profile names exposed via the node proxy.",
@@ -802,6 +820,8 @@ const FIELD_PLACEHOLDERS: Record<string, string> = {
   "gateway.controlUi.allowedOrigins": "https://control.example.com",
   "channels.mattermost.baseUrl": "https://chat.example.com",
   "agents.list[].identity.avatar": "avatars/openclaw.png",
+  "dgx.accessMode": "auto",
+  "dgx.wanBaseUrl": "https://xxxx.ngrok-free.app",
 };
 
 const SENSITIVE_PATTERNS = [/token/i, /password/i, /secret/i, /api.?key/i];

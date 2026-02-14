@@ -1,5 +1,6 @@
 import { html, nothing } from "lit";
 import type { AppViewState } from "../app-view-state.ts";
+import type { UiSettings } from "../storage.ts";
 import { renderThemeToggle } from "../app-render.helpers.ts";
 import { icons } from "../icons.ts";
 import { TTS_MOOD_PRESETS } from "./voice-bar.ts";
@@ -46,7 +47,7 @@ export function renderSettings(state: AppViewState) {
   const splitPercent = Math.round(splitRatio * 100);
 
   const resetLayout = () => {
-    const next = {
+    const next: UiSettings = {
       ...state.settings,
       theme: "system",
       chatFocusMode: false,

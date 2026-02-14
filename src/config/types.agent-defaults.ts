@@ -241,6 +241,8 @@ export type AgentDefaultsConfig = {
     /** Auto-prune sandbox containers. */
     prune?: SandboxPruneSettings;
   };
+  /** Local model for secrets-local routing (never sent to cloud providers). */
+  secretsLocalModel?: string;
 };
 
 export type AgentCompactionMode = "default" | "safeguard";
