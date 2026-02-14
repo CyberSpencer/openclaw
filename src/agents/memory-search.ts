@@ -79,6 +79,18 @@ export type ResolvedMemorySearchConfig = {
       candidateMultiplier: number;
     };
   };
+  degraded: {
+    mode: "keyword-only" | "off";
+    maxResults: number;
+    reasonCodes: boolean;
+    emergency: {
+      autoLocal: boolean;
+      failoverThreshold: number;
+      recoverThreshold: number;
+      recoverCooldownMs: number;
+      probeIntervalMs: number;
+    };
+  };
   cache: {
     enabled: boolean;
     maxEntries?: number;
@@ -101,6 +113,13 @@ const DEFAULT_HYBRID_TEXT_WEIGHT = 0.3;
 const DEFAULT_HYBRID_CANDIDATE_MULTIPLIER = 4;
 const DEFAULT_CACHE_ENABLED = true;
 const DEFAULT_SOURCES: Array<"memory" | "sessions"> = ["memory"];
+const DEFAULT_DEGRADED_MAX_RESULTS = 6;
+const DEFAULT_DEGRADED_REASON_CODES = true;
+const DEFAULT_EMERGENCY_LOCAL_AUTO = true;
+const DEFAULT_EMERGENCY_FAILOVER_THRESHOLD = 2;
+const DEFAULT_EMERGENCY_RECOVER_THRESHOLD = 2;
+const DEFAULT_EMERGENCY_RECOVER_COOLDOWN_MS = 30_000;
+const DEFAULT_EMERGENCY_PROBE_INTERVAL_MS = 10_000;
 
 function normalizeSources(
   sources: Array<"memory" | "sessions"> | undefined,
@@ -269,6 +288,42 @@ function mergeConfig(
     enabled: overrides?.cache?.enabled ?? defaults?.cache?.enabled ?? DEFAULT_CACHE_ENABLED,
     maxEntries: overrides?.cache?.maxEntries ?? defaults?.cache?.maxEntries,
   };
+  const degraded = {
+    mode:
+      (overrides?.degraded?.mode ?? defaults?.degraded?.mode ?? "keyword-only") === "off"
+        ? "off"
+        : "keyword-only",
+    maxResults:
+      overrides?.degraded?.maxResults ??
+      defaults?.degraded?.maxResults ??
+      DEFAULT_DEGRADED_MAX_RESULTS,
+    reasonCodes:
+      overrides?.degraded?.reasonCodes ??
+      defaults?.degraded?.reasonCodes ??
+      DEFAULT_DEGRADED_REASON_CODES,
+    emergency: {
+      autoLocal:
+        overrides?.degraded?.emergency?.autoLocal ??
+        defaults?.degraded?.emergency?.autoLocal ??
+        DEFAULT_EMERGENCY_LOCAL_AUTO,
+      failoverThreshold:
+        overrides?.degraded?.emergency?.failoverThreshold ??
+        defaults?.degraded?.emergency?.failoverThreshold ??
+        DEFAULT_EMERGENCY_FAILOVER_THRESHOLD,
+      recoverThreshold:
+        overrides?.degraded?.emergency?.recoverThreshold ??
+        defaults?.degraded?.emergency?.recoverThreshold ??
+        DEFAULT_EMERGENCY_RECOVER_THRESHOLD,
+      recoverCooldownMs:
+        overrides?.degraded?.emergency?.recoverCooldownMs ??
+        defaults?.degraded?.emergency?.recoverCooldownMs ??
+        DEFAULT_EMERGENCY_RECOVER_COOLDOWN_MS,
+      probeIntervalMs:
+        overrides?.degraded?.emergency?.probeIntervalMs ??
+        defaults?.degraded?.emergency?.probeIntervalMs ??
+        DEFAULT_EMERGENCY_PROBE_INTERVAL_MS,
+    },
+  };
 
   const overlap = clampNumber(chunking.overlap, 0, Math.max(0, chunking.tokens - 1));
   const minScore = clampNumber(query.minScore, 0, 1);
@@ -280,6 +335,7 @@ function mergeConfig(
   const candidateMultiplier = clampInt(hybrid.candidateMultiplier, 1, 20);
   const deltaBytes = clampInt(sync.sessions.deltaBytes, 0, Number.MAX_SAFE_INTEGER);
   const deltaMessages = clampInt(sync.sessions.deltaMessages, 0, Number.MAX_SAFE_INTEGER);
+  const degradedMaxResults = clampInt(degraded.maxResults, 1, 200);
   return {
     enabled,
     sources,
@@ -309,6 +365,18 @@ function mergeConfig(
         vectorWeight: normalizedVectorWeight,
         textWeight: normalizedTextWeight,
         candidateMultiplier,
+      },
+    },
+    degraded: {
+      mode: degraded.mode,
+      maxResults: degradedMaxResults,
+      reasonCodes: Boolean(degraded.reasonCodes),
+      emergency: {
+        autoLocal: Boolean(degraded.emergency.autoLocal),
+        failoverThreshold: clampInt(degraded.emergency.failoverThreshold, 1, 10),
+        recoverThreshold: clampInt(degraded.emergency.recoverThreshold, 1, 10),
+        recoverCooldownMs: clampInt(degraded.emergency.recoverCooldownMs, 0, 600_000),
+        probeIntervalMs: clampInt(degraded.emergency.probeIntervalMs, 0, 120_000),
       },
     },
     cache: {

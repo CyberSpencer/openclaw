@@ -304,6 +304,35 @@ describe("memory search config", () => {
     ]);
   });
 
+  it("applies degraded emergency override values", () => {
+    const cfg = {
+      agents: {
+        defaults: {
+          memorySearch: {
+            provider: "openai",
+            degraded: {
+              emergency: {
+                autoLocal: false,
+                failoverThreshold: 4,
+                recoverThreshold: 3,
+                recoverCooldownMs: 120000,
+                probeIntervalMs: 25000,
+              },
+            },
+          },
+        },
+      },
+    };
+    const resolved = resolveMemorySearchConfig(cfg, "main");
+    expect(resolved?.degraded.emergency).toEqual({
+      autoLocal: false,
+      failoverThreshold: 4,
+      recoverThreshold: 3,
+      recoverCooldownMs: 120000,
+      probeIntervalMs: 25000,
+    });
+  });
+
   it("defaults to qdrant store and default chunking", () => {
     const cfg = {
       agents: {

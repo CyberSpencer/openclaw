@@ -343,6 +343,28 @@ export type MemorySearchConfig = {
       candidateMultiplier?: number;
     };
   };
+  /** Degraded behavior when semantic embeddings are unavailable. */
+  degraded?: {
+    /** "keyword-only" returns lexical matches without vectors; "off" disables degraded fallback. */
+    mode?: "keyword-only" | "off";
+    /** Max results to return in degraded mode (default: 6). */
+    maxResults?: number;
+    /** Include machine-readable reason codes in status output (default: true). */
+    reasonCodes?: boolean;
+    /** Automatic emergency local fallback + recovery hysteresis tuning. */
+    emergency?: {
+      /** Automatically switch to local embeddings during sustained remote failures (default: true). */
+      autoLocal?: boolean;
+      /** Consecutive embedding failures before emergency local activation (default: 2). */
+      failoverThreshold?: number;
+      /** Consecutive successful probes before switching back to remote (default: 2). */
+      recoverThreshold?: number;
+      /** Minimum cooldown before recovery probes begin (default: 30000). */
+      recoverCooldownMs?: number;
+      /** Minimum interval between recovery probes (default: 10000). */
+      probeIntervalMs?: number;
+    };
+  };
   /** Index cache behavior. */
   cache?: {
     /** Cache chunk embeddings in SQLite (default: true). */
