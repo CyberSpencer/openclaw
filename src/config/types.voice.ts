@@ -147,10 +147,15 @@ export type PersonaPlexConfig = {
 };
 
 export type VoiceSparkTtsConfig = {
+  /** Voice name or ID for Spark TTS. */
   voice?: string;
+  /** Speaker embedding or identifier (model-specific). */
   speaker?: string;
+  /** Language code (e.g., "en"). */
   language?: string;
+  /** Optional instruction prompt for TTS synthesis. */
   instruct?: string;
+  /** Audio output format (e.g., "webm", "wav", "mp3"). */
   format?: string;
 };
 
@@ -191,6 +196,7 @@ export type ResolvedVoiceConfig = Required<
   localTts: Required<VoiceLocalTtsConfig>;
   router: Required<VoiceRouterConfig>;
   personaplex: Required<PersonaPlexConfig>;
+  sparkTts: Required<VoiceSparkTtsConfig>;
 };
 
 /** Voice session state for WebSocket connections. */
