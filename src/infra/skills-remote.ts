@@ -21,6 +21,15 @@ const log = createSubsystemLogger("gateway/skills-remote");
 const remoteNodes = new Map<string, RemoteNodeRecord>();
 let remoteRegistry: NodeRegistry | null = null;
 
+type BinProbeFailureState = {
+  consecutiveTimeouts: number;
+  lastWarnAtMs: number;
+};
+
+const binProbeFailures = new Map<string, BinProbeFailureState>();
+const BIN_PROBE_WARN_AFTER = 3;
+const BIN_PROBE_WARN_COOLDOWN_MS = 10 * 60 * 1000;
+
 function describeNode(nodeId: string): string {
   const record = remoteNodes.get(nodeId);
   const name = record?.displayName?.trim();
@@ -61,16 +70,39 @@ function extractErrorMessage(err: unknown): string | undefined {
 function logRemoteBinProbeFailure(nodeId: string, err: unknown) {
   const message = extractErrorMessage(err);
   const label = describeNode(nodeId);
+
   // Node unavailable errors (not connected or disconnected mid-operation) are expected
-  // when nodes have transient connections - log at info level instead of warn
+  // when nodes have transient connections, log at info level instead of warn.
   if (message?.includes("node not connected") || message?.includes("node disconnected")) {
     log.info(`remote bin probe skipped: node unavailable (${label})`);
     return;
   }
+
+  const now = Date.now();
+  const state = binProbeFailures.get(nodeId) ?? { consecutiveTimeouts: 0, lastWarnAtMs: 0 };
+
   if (message?.includes("invoke timed out") || message?.includes("timeout")) {
-    log.warn(`remote bin probe timed out (${label}); check node connectivity for ${label}`);
+    state.consecutiveTimeouts += 1;
+
+    const shouldWarn =
+      state.consecutiveTimeouts >= BIN_PROBE_WARN_AFTER &&
+      now - state.lastWarnAtMs >= BIN_PROBE_WARN_COOLDOWN_MS;
+
+    if (shouldWarn) {
+      state.lastWarnAtMs = now;
+      log.warn(
+        `remote bin probe timed out (${label}); check node connectivity for ${label} (timeouts=${state.consecutiveTimeouts})`,
+      );
+    } else {
+      log.info(`remote bin probe timed out (${label}) (timeouts=${state.consecutiveTimeouts})`);
+    }
+
+    binProbeFailures.set(nodeId, state);
     return;
   }
+
+  state.consecutiveTimeouts = 0;
+  binProbeFailures.set(nodeId, state);
   log.warn(`remote bin probe error (${label}): ${message ?? "unknown"}`);
 }
 
@@ -303,6 +335,9 @@ export async function refreshRemoteNodeBins(params: {
       logRemoteBinProbeFailure(params.nodeId, res.error?.message ?? "unknown");
       return;
     }
+
+    binProbeFailures.delete(params.nodeId);
+
     const bins = parseBinProbePayload(res.payloadJSON, res.payload);
     const existingBins = remoteNodes.get(params.nodeId)?.bins;
     const nextBins = new Set(bins);
