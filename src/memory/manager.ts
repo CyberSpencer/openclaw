@@ -676,6 +676,13 @@ export class MemoryIndexManager {
       }
       return sources.map((source) => ({ source, ...bySource.get(source)! }));
     })();
+    const custom =
+      this.provider.id === "local" && this.fallbackFrom
+        ? {
+            mode: "emergency_local",
+            degradedActiveReason: this.fallbackReason,
+          }
+        : undefined;
     return {
       backend: "builtin",
       files: files?.c ?? 0,
@@ -730,6 +737,7 @@ export class MemoryIndexManager {
         lastError: this.batchFailureLastError,
         lastProvider: this.batchFailureLastProvider,
       },
+      custom,
     };
   }
 
