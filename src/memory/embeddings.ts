@@ -48,6 +48,17 @@ export type EmbeddingProviderOptions = {
   provider: "openai" | "local" | "gemini" | "voyage" | "auto";
   remote?: {
     baseUrl?: string;
+    endpoints?: Array<{
+      baseUrl?: string;
+      url?: string;
+      apiKey?: string;
+      headers?: Record<string, string>;
+      priority?: number;
+      timeoutMs?: number;
+      healthUrl?: string;
+      healthTimeoutMs?: number;
+      healthCacheTtlMs?: number;
+    }>;
     apiKey?: string;
     headers?: Record<string, string>;
   };

@@ -12,6 +12,16 @@ export type ResolvedMemorySearchConfig = {
   provider: "openai" | "local" | "gemini" | "voyage" | "auto";
   remote?: {
     baseUrl?: string;
+    endpoints?: Array<{
+      baseUrl: string;
+      apiKey?: string;
+      headers?: Record<string, string>;
+      priority?: number;
+      timeoutMs?: number;
+      healthUrl?: string;
+      healthTimeoutMs?: number;
+      healthCacheTtlMs?: number;
+    }>;
     apiKey?: string;
     headers?: Record<string, string>;
     batch?: {
@@ -43,6 +53,7 @@ export type ResolvedMemorySearchConfig = {
       endpoints?: Array<{
         url: string;
         apiKey?: string;
+        headers?: Record<string, string>;
         timeoutMs?: number;
         priority?: number;
         healthUrl?: string;
@@ -151,6 +162,107 @@ function resolveStorePath(agentId: string, raw?: string): string {
   return resolveUserPath(withToken);
 }
 
+function normalizeBaseUrl(raw: string | undefined): string | null {
+  const value = raw?.trim();
+  if (!value) {
+    return null;
+  }
+  return value.replace(/\/+$/, "");
+}
+
+function normalizeRemoteEndpoints(
+  defaults: NonNullable<MemorySearchConfig["remote"]>["endpoints"] | undefined,
+  overrides: NonNullable<MemorySearchConfig["remote"]>["endpoints"] | undefined,
+): Array<NonNullable<NonNullable<ResolvedMemorySearchConfig["remote"]>["endpoints"]>[number]> {
+  const merged = new Map<
+    string,
+    NonNullable<NonNullable<ResolvedMemorySearchConfig["remote"]>["endpoints"]>[number]
+  >();
+  const ingest = (entries: NonNullable<MemorySearchConfig["remote"]>["endpoints"] | undefined) => {
+    for (const entry of entries ?? []) {
+      const baseUrl = normalizeBaseUrl(entry.baseUrl ?? entry.url);
+      if (!baseUrl) {
+        continue;
+      }
+      const prev = merged.get(baseUrl) ?? {
+        baseUrl,
+      };
+      const next = {
+        ...prev,
+        ...(entry.apiKey !== undefined ? { apiKey: entry.apiKey } : {}),
+        ...(entry.headers !== undefined ? { headers: entry.headers } : {}),
+        ...(entry.priority !== undefined ? { priority: entry.priority } : {}),
+        ...(entry.timeoutMs !== undefined ? { timeoutMs: entry.timeoutMs } : {}),
+        ...(entry.healthUrl !== undefined ? { healthUrl: entry.healthUrl } : {}),
+        ...(entry.healthTimeoutMs !== undefined ? { healthTimeoutMs: entry.healthTimeoutMs } : {}),
+        ...(entry.healthCacheTtlMs !== undefined
+          ? { healthCacheTtlMs: entry.healthCacheTtlMs }
+          : {}),
+      };
+      merged.set(baseUrl, next);
+    }
+  };
+  ingest(defaults);
+  ingest(overrides);
+  return Array.from(merged.values()).toSorted((a, b) => {
+    const aPriority = a.priority ?? 0;
+    const bPriority = b.priority ?? 0;
+    if (aPriority !== bPriority) {
+      return aPriority - bPriority;
+    }
+    return a.baseUrl.localeCompare(b.baseUrl);
+  });
+}
+
+function normalizeQdrantEndpoints(
+  defaults:
+    | NonNullable<NonNullable<MemorySearchConfig["store"]>["qdrant"]>["endpoints"]
+    | undefined,
+  overrides:
+    | NonNullable<NonNullable<MemorySearchConfig["store"]>["qdrant"]>["endpoints"]
+    | undefined,
+): Array<NonNullable<ResolvedMemorySearchConfig["store"]["qdrant"]["endpoints"]>[number]> {
+  const merged = new Map<
+    string,
+    NonNullable<ResolvedMemorySearchConfig["store"]["qdrant"]["endpoints"]>[number]
+  >();
+  const ingest = (
+    entries:
+      | NonNullable<NonNullable<MemorySearchConfig["store"]>["qdrant"]>["endpoints"]
+      | undefined,
+  ) => {
+    for (const entry of entries ?? []) {
+      const url = normalizeBaseUrl(entry.url);
+      if (!url) {
+        continue;
+      }
+      const prev = merged.get(url) ?? { url };
+      merged.set(url, {
+        ...prev,
+        ...(entry.apiKey !== undefined ? { apiKey: entry.apiKey } : {}),
+        ...(entry.headers !== undefined ? { headers: entry.headers } : {}),
+        ...(entry.timeoutMs !== undefined ? { timeoutMs: entry.timeoutMs } : {}),
+        ...(entry.priority !== undefined ? { priority: entry.priority } : {}),
+        ...(entry.healthUrl !== undefined ? { healthUrl: entry.healthUrl } : {}),
+        ...(entry.healthTimeoutMs !== undefined ? { healthTimeoutMs: entry.healthTimeoutMs } : {}),
+        ...(entry.healthCacheTtlMs !== undefined
+          ? { healthCacheTtlMs: entry.healthCacheTtlMs }
+          : {}),
+      });
+    }
+  };
+  ingest(defaults);
+  ingest(overrides);
+  return Array.from(merged.values()).toSorted((a, b) => {
+    const aPriority = a.priority ?? 0;
+    const bPriority = b.priority ?? 0;
+    if (aPriority !== bPriority) {
+      return aPriority - bPriority;
+    }
+    return a.url.localeCompare(b.url);
+  });
+}
+
 function mergeConfig(
   defaults: MemorySearchConfig | undefined,
   overrides: MemorySearchConfig | undefined,
@@ -164,9 +276,11 @@ function mergeConfig(
   const overrideRemote = overrides?.remote;
   const hasRemoteConfig = Boolean(
     overrideRemote?.baseUrl ||
+    (overrideRemote?.endpoints?.length ?? 0) > 0 ||
     overrideRemote?.apiKey ||
     overrideRemote?.headers ||
     defaultRemote?.baseUrl ||
+    (defaultRemote?.endpoints?.length ?? 0) > 0 ||
     defaultRemote?.apiKey ||
     defaultRemote?.headers,
   );
@@ -191,6 +305,13 @@ function mergeConfig(
   const remote = includeRemote
     ? {
         baseUrl: overrideRemote?.baseUrl ?? defaultRemote?.baseUrl,
+        endpoints: (() => {
+          const endpoints = normalizeRemoteEndpoints(
+            defaultRemote?.endpoints,
+            overrideRemote?.endpoints,
+          );
+          return endpoints.length > 0 ? endpoints : undefined;
+        })(),
         apiKey: overrideRemote?.apiKey ?? defaultRemote?.apiKey,
         headers: overrideRemote?.headers ?? defaultRemote?.headers,
         batch,
@@ -223,8 +344,10 @@ function mergeConfig(
   const storeDriver = overrides?.store?.driver ?? defaults?.store?.driver ?? "qdrant";
   const qdrant = {
     url: overrides?.store?.qdrant?.url ?? defaults?.store?.qdrant?.url ?? "http://127.0.0.1:6333",
-    endpoints:
-      overrides?.store?.qdrant?.endpoints ?? defaults?.store?.qdrant?.endpoints ?? undefined,
+    endpoints: normalizeQdrantEndpoints(
+      defaults?.store?.qdrant?.endpoints,
+      overrides?.store?.qdrant?.endpoints,
+    ),
     collection:
       overrides?.store?.qdrant?.collection ??
       defaults?.store?.qdrant?.collection ??
