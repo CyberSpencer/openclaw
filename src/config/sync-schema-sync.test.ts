@@ -40,13 +40,14 @@ function setByPath(obj: Record<string, unknown>, pathStr: string, value: unknown
   const parts = pathStr.split(".");
   let cur: Record<string, unknown> = obj;
   for (let i = 0; i < parts.length - 1; i++) {
-    const key = parts[i]!;
+    const key = parts[i];
     if (!(key in cur) || typeof cur[key] !== "object" || cur[key] === null) {
       cur[key] = {};
     }
     cur = cur[key] as Record<string, unknown>;
   }
-  (cur as Record<string, unknown>)[parts[parts.length - 1]!] = value;
+  const leaf = parts[parts.length - 1];
+  cur[leaf] = value;
 }
 
 function placeholderForPath(pathStr: string): unknown {
@@ -72,7 +73,7 @@ describe("sync_openclaw_config schema sync", () => {
     const paths = new Set<string>();
     let m: RegExpExecArray | null;
     while ((m = maybeSetRe.exec(script)) !== null) {
-      paths.add(m[1]!);
+      paths.add(m[1]);
     }
 
     expect(paths.size).toBeGreaterThan(0);
@@ -100,7 +101,7 @@ describe("sync_openclaw_config schema sync", () => {
       );
       if (unrecognized.length > 0) {
         const details = unrecognized
-          .map((iss) => `  - ${(iss.path as string[]).join(".")}: ${iss.message}`)
+          .map((iss) => `  - ${iss.path.map(String).join(".")}: ${iss.message}`)
           .join("\n");
         throw new Error(
           `sync_openclaw_config.sh writes keys not in the Zod schema. Add them to core/src/config/zod-schema.ts and types:\n${details}`,
