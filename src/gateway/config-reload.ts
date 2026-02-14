@@ -68,6 +68,8 @@ const BASE_RELOAD_RULES: ReloadRule[] = [
 ];
 
 const BASE_RELOAD_RULES_TAIL: ReloadRule[] = [
+  // meta.lastTouchedAt/lastTouchedVersion are auto-stamped on config writes.
+  // Keep meta updates as no-op so they do not trigger gateway restarts.
   { prefix: "meta", kind: "none" },
   { prefix: "identity", kind: "none" },
   { prefix: "wizard", kind: "none" },
