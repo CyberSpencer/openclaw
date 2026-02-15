@@ -1096,9 +1096,19 @@ export class MemoryIndexManager {
           if (err instanceof Error) {
             throw err;
           }
-          throw new Error("Qdrant request failed (noQdrantFailover)", { cause: err });
+          if (typeof err === "string") {
+            throw new Error(err, { cause: err });
+          }
+          let detail = "Qdrant request failed (noQdrantFailover)";
+          try {
+            detail = JSON.stringify(err);
+          } catch {
+            // ignore
+          }
+          throw new Error(detail, { cause: err });
         }
-        const message = err instanceof Error ? err.message : String(err);
+        const message =
+          err instanceof Error ? err.message : typeof err === "string" ? err : "unknown";
         errors.push(`${endpoint.url}: ${message}`);
       } finally {
         clearTimeout(timeout);
