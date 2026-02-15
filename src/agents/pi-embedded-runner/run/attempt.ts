@@ -190,7 +190,9 @@ export async function runEmbeddedAttempt(
     const sessionLabel = params.sessionKey ?? params.sessionId;
     const { bootstrapFiles: hookAdjustedBootstrapFiles, contextFiles } =
       await resolveBootstrapContextForRun({
-        workspaceDir: effectiveWorkspace,
+        // Use the real workspace for bootstrap/context reads, even when sandboxing is enabled.
+        // The sandbox workspace may not contain ./projects/<id>/ context files.
+        workspaceDir: resolvedWorkspace,
         config: params.config,
         sessionKey: params.sessionKey,
         sessionId: params.sessionId,
