@@ -1,7 +1,7 @@
 import type { AgentEvent } from "@mariozechner/pi-agent-core";
 import type { EmbeddedPiSubscribeContext } from "./pi-embedded-subscribe.handlers.types.js";
 import { emitAgentEvent } from "../infra/agent-events.js";
-import { redactSensitiveText } from "../logging/redact.js";
+import { redactSensitiveText, resolveRedactSensitiveOptionsFromConfig } from "../logging/redact.js";
 import { normalizeTextForComparison } from "./pi-embedded-helpers.js";
 import { isMessagingTool, isMessagingToolSendAction } from "./pi-embedded-messaging.js";
 import {
@@ -14,15 +14,19 @@ import {
 import { inferToolMetaFromArgs } from "./pi-embedded-utils.js";
 import { normalizeToolName } from "./tool-policy.js";
 
-function redactToolValue(value: unknown, depth = 0): unknown {
+function redactToolValue(
+  value: unknown,
+  options: ReturnType<typeof resolveRedactSensitiveOptionsFromConfig>,
+  depth = 0,
+): unknown {
+  if (typeof value === "string") {
+    return redactSensitiveText(value, options);
+  }
   if (depth > 8) {
     return value;
   }
-  if (typeof value === "string") {
-    return redactSensitiveText(value);
-  }
   if (Array.isArray(value)) {
-    return value.map((entry) => redactToolValue(entry, depth + 1));
+    return value.map((entry) => redactToolValue(entry, options, depth + 1));
   }
   if (!value || typeof value !== "object") {
     return value;
@@ -31,7 +35,7 @@ function redactToolValue(value: unknown, depth = 0): unknown {
   const rec = value as Record<string, unknown>;
   const out: Record<string, unknown> = {};
   for (const [k, v] of Object.entries(rec)) {
-    out[k] = redactToolValue(v, depth + 1);
+    out[k] = redactToolValue(v, options, depth + 1);
   }
   return out;
 }
@@ -92,7 +96,8 @@ export async function handleToolExecutionStart(
   );
 
   const shouldEmitToolEvents = ctx.shouldEmitToolResult();
-  const redactedArgs = redactToolValue(args) as Record<string, unknown>;
+  const redactOptions = resolveRedactSensitiveOptionsFromConfig();
+  const redactedArgs = redactToolValue(args, redactOptions) as Record<string, unknown>;
 
   emitAgentEvent({
     runId: ctx.params.runId,
@@ -150,7 +155,8 @@ export function handleToolExecutionUpdate(
   const toolCallId = String(evt.toolCallId);
   const partial = evt.partialResult;
   const sanitized = sanitizeToolResult(partial);
-  const redactedPartial = redactToolValue(sanitized);
+  const redactOptions = resolveRedactSensitiveOptionsFromConfig();
+  const redactedPartial = redactToolValue(sanitized, redactOptions);
   emitAgentEvent({
     runId: ctx.params.runId,
     stream: "tool",
@@ -186,13 +192,17 @@ export function handleToolExecutionEnd(
   const result = evt.result;
   const isToolError = isError || isToolResultError(result);
   const sanitizedResult = sanitizeToolResult(result);
-  const redactedResult = redactToolValue(sanitizedResult);
+  const redactOptions = resolveRedactSensitiveOptionsFromConfig();
+  const redactedResult = redactToolValue(sanitizedResult, redactOptions);
   const meta = ctx.state.toolMetaById.get(toolCallId);
   ctx.state.toolMetas.push({ toolName, meta });
   ctx.state.toolMetaById.delete(toolCallId);
   ctx.state.toolSummaryById.delete(toolCallId);
   if (isToolError) {
-    const errorMessage = redactSensitiveText(extractToolErrorMessage(sanitizedResult));
+    const errorMessage = redactSensitiveText(
+      extractToolErrorMessage(sanitizedResult),
+      redactOptions,
+    );
     ctx.state.lastToolError = {
       toolName,
       meta,
