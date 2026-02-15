@@ -1,5 +1,4 @@
 import type { Tab } from "./navigation.ts";
-import { connectGateway } from "./app-gateway.ts";
 import {
   startLogsPolling,
   startNodesPolling,
@@ -21,6 +20,7 @@ import {
 type LifecycleHost = {
   basePath: string;
   tab: Tab;
+  connect: () => void;
   chatHasAutoScrolled: boolean;
   chatManualRefreshInFlight: boolean;
   chatLoading: boolean;
@@ -41,7 +41,7 @@ export function handleConnected(host: LifecycleHost) {
   syncThemeWithSettings(host as unknown as Parameters<typeof syncThemeWithSettings>[0]);
   attachThemeListener(host as unknown as Parameters<typeof attachThemeListener>[0]);
   window.addEventListener("popstate", host.popStateHandler);
-  connectGateway(host as unknown as Parameters<typeof connectGateway>[0]);
+  host.connect();
   startNodesPolling(host as unknown as Parameters<typeof startNodesPolling>[0]);
   if (host.tab === "logs") {
     startLogsPolling(host as unknown as Parameters<typeof startLogsPolling>[0]);

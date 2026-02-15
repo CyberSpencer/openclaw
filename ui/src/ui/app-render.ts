@@ -118,8 +118,8 @@ function classifyModelSource(provider: string | null): {
 }
 
 function renderModelPill(state: AppViewState) {
-  const provider = state.chatModelProvider;
-  const modelId = state.chatModelId;
+  const provider = state.chatModelSelection?.provider ?? null;
+  const modelId = state.chatModelSelection?.model ?? null;
   if (!provider && !modelId) {
     return nothing;
   }

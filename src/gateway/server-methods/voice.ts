@@ -45,6 +45,7 @@ import {
   processVoiceInput,
   processTextToVoice,
 } from "../../voice/voice.js";
+import { GATEWAY_CLIENT_CAPS, hasGatewayClientCap } from "../protocol/client-info.js";
 import { ErrorCodes, errorShape } from "../protocol/index.js";
 import { loadSessionEntry } from "../session-utils.js";
 import { formatForLog } from "../ws-log.js";
@@ -347,7 +348,7 @@ export const voiceHandlers: GatewayRequestHandlers = {
    * - audio: Base64-encoded audio data (WAV format)
    * - sessionKey: Optional session key for chat context
    */
-  "voice.process": async ({ params, respond, context }) => {
+  "voice.process": async ({ params, respond, context, client }) => {
     const audioBase64 = typeof params.audio === "string" ? params.audio : "";
     if (!audioBase64) {
       respond(
@@ -459,8 +460,16 @@ export const voiceHandlers: GatewayRequestHandlers = {
               replyOptions: {
                 runId,
                 disableBlockStreaming: true,
-                onAgentRunStart: () => {
+                onAgentRunStart: (agentRunId) => {
                   agentRunStarted = true;
+                  const connId = typeof client?.connId === "string" ? client.connId : undefined;
+                  const wantsToolEvents = hasGatewayClientCap(
+                    client?.connect?.caps,
+                    GATEWAY_CLIENT_CAPS.TOOL_EVENTS,
+                  );
+                  if (connId && wantsToolEvents) {
+                    context.registerToolEventRecipient(agentRunId, connId);
+                  }
                 },
                 onModelSelected: (sel) => {
                   selectedModelRef.value = {
@@ -554,7 +563,7 @@ export const voiceHandlers: GatewayRequestHandlers = {
    * - driveOpenClaw: Optional parity flag with voice.process config shaping
    * - skipTts: Optional flag to return text-only response (no local TTS synthesis)
    */
-  "voice.processText": async ({ params, respond, context }) => {
+  "voice.processText": async ({ params, respond, context, client }) => {
     const text = typeof params.text === "string" ? params.text.trim() : "";
     if (!text) {
       respond(
@@ -649,8 +658,16 @@ export const voiceHandlers: GatewayRequestHandlers = {
               replyOptions: {
                 runId,
                 disableBlockStreaming: true,
-                onAgentRunStart: () => {
+                onAgentRunStart: (agentRunId) => {
                   agentRunStarted = true;
+                  const connId = typeof client?.connId === "string" ? client.connId : undefined;
+                  const wantsToolEvents = hasGatewayClientCap(
+                    client?.connect?.caps,
+                    GATEWAY_CLIENT_CAPS.TOOL_EVENTS,
+                  );
+                  if (connId && wantsToolEvents) {
+                    context.registerToolEventRecipient(agentRunId, connId);
+                  }
                 },
                 onModelSelected: (sel) => {
                   selectedModelRef.value = {

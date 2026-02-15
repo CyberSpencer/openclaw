@@ -570,9 +570,9 @@ describe("subagent announce formatting", () => {
 
   it("warns when requester and child lineage do not match", async () => {
     const { defaultRuntime } = await import("../runtime.js");
-    const originalWarn = defaultRuntime.warn;
-    const warnSpy = vi.fn();
-    (defaultRuntime as { warn?: (...args: unknown[]) => void }).warn = warnSpy;
+    const originalLog = defaultRuntime.log;
+    const logSpy = vi.fn();
+    (defaultRuntime as { log?: (...args: unknown[]) => void }).log = logSpy;
     try {
       const { runSubagentAnnounceFlow } = await import("./subagent-announce.js");
 
@@ -601,11 +601,11 @@ describe("subagent announce formatting", () => {
         outcome: { status: "ok" },
       });
 
-      expect(warnSpy).toHaveBeenCalledWith(
+      expect(logSpy).toHaveBeenCalledWith(
         expect.stringContaining("announce_target_lineage_mismatch"),
       );
     } finally {
-      (defaultRuntime as { warn?: (...args: unknown[]) => void }).warn = originalWarn;
+      (defaultRuntime as { log?: (...args: unknown[]) => void }).log = originalLog;
     }
   });
 });

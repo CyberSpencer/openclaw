@@ -18,7 +18,8 @@ import {
   refreshActiveTab,
   setLastActiveSessionKey,
 } from "./app-settings.ts";
-import { handleAgentEvent, resetToolStream, type AgentEventPayload } from "./app-tool-stream.ts";
+import { handleAgentEvent, type AgentEventPayload } from "./app-tool-stream.ts";
+import { extractText } from "./chat/message-extract.ts";
 import { loadAgents } from "./controllers/agents.ts";
 import { loadAssistantIdentity } from "./controllers/assistant-identity.ts";
 import { loadChatThreads } from "./controllers/chat-threads.ts";
@@ -134,6 +135,54 @@ function applySessionDefaults(host: GatewayHost, defaults?: SessionDefaultsSnaps
   }
 }
 
+type SessionRunStateHost = {
+  chatRunId: string | null;
+  chatStream: string | null;
+  chatStreamStartedAt: number | null;
+};
+
+function applyChatEventToRunHost(host: SessionRunStateHost, payload: unknown) {
+  if (!payload || typeof payload !== "object") {
+    return;
+  }
+  const record = payload as { runId?: unknown; state?: unknown; message?: unknown };
+  const runId = typeof record.runId === "string" ? record.runId : "";
+  const state = typeof record.state === "string" ? record.state : "";
+  if (!runId || !state) {
+    return;
+  }
+
+  if (state === "delta") {
+    if (host.chatRunId && host.chatRunId !== runId) {
+      return;
+    }
+    if (!host.chatRunId) {
+      host.chatRunId = runId;
+      host.chatStreamStartedAt = Date.now();
+      if (host.chatStream === null) {
+        host.chatStream = "";
+      }
+    }
+    const next = extractText(record.message);
+    if (typeof next === "string") {
+      const current = host.chatStream ?? "";
+      if (!current || next.length >= current.length) {
+        host.chatStream = next;
+      }
+    }
+    return;
+  }
+
+  if (state === "final" || state === "aborted" || state === "error") {
+    if (host.chatRunId && host.chatRunId !== runId) {
+      return;
+    }
+    host.chatStream = null;
+    host.chatRunId = null;
+    host.chatStreamStartedAt = null;
+  }
+}
+
 export function connectGateway(host: GatewayHost) {
   host.lastError = null;
   host.hello = null;
@@ -153,14 +202,9 @@ export function connectGateway(host: GatewayHost) {
       host.lastError = null;
       host.hello = hello;
       applySnapshot(host, hello);
-      // Reset orphaned chat run state from before disconnect.
-      // Any in-flight run's final event was lost during the disconnect window.
-      host.chatRunId = null;
-      (host as unknown as { chatStream: string | null }).chatStream = null;
-      (host as unknown as { chatStreamStartedAt: number | null }).chatStreamStartedAt = null;
-      (host as unknown as { chatModelProvider: string | null }).chatModelProvider = null;
-      (host as unknown as { chatModelId: string | null }).chatModelId = null;
-      resetToolStream(host as unknown as Parameters<typeof resetToolStream>[0]);
+      // We can miss "final" events during disconnects, so clear all in-flight UI run state.
+      // The next chat refresh / streaming delta will re-bind to any still-running sessions.
+      (host as unknown as OpenClawApp).resetAllSessionRunState();
       void loadAssistantIdentity(host as unknown as OpenClawApp);
       void host.loadOrchestratorFromGateway?.({ seedIfMissing: true });
       void host.reconcileInFlightOrchestratorRuns?.();
@@ -206,11 +250,17 @@ function handleGatewayEventUnsafe(host: GatewayHost, evt: GatewayEventFrame) {
     if (host.onboarding) {
       return;
     }
-    const payload = evt.payload;
+    const payload = evt.payload as AgentEventPayload | undefined;
     if (payload) {
       host.handleOrchestratorAgentEvent?.(payload);
     }
-    handleAgentEvent(host as unknown as Parameters<typeof handleAgentEvent>[0], payload);
+    const app = host as unknown as OpenClawApp;
+    const directSessionKey = typeof payload?.sessionKey === "string" ? payload.sessionKey : "";
+    const inferredSessionKey =
+      !directSessionKey && payload?.runId ? app.resolveSessionKeyForRunId(payload.runId) : null;
+    const targetSessionKey = directSessionKey || inferredSessionKey || app.sessionKey;
+    const runHost = app.getSessionRunHost(targetSessionKey);
+    handleAgentEvent(runHost as unknown as Parameters<typeof handleAgentEvent>[0], payload);
     return;
   }
 
@@ -220,24 +270,38 @@ function handleGatewayEventUnsafe(host: GatewayHost, evt: GatewayEventFrame) {
   }
 
   if (evt.event === "chat") {
-    const payload = evt.payload;
-    if (payload?.sessionKey) {
-      setLastActiveSessionKey(
-        host as unknown as Parameters<typeof setLastActiveSessionKey>[0],
-        payload.sessionKey,
-      );
+    const payload = evt.payload as { sessionKey?: unknown; state?: unknown } | undefined;
+    const sessionKey = typeof payload?.sessionKey === "string" ? payload.sessionKey : "";
+    if (!sessionKey) {
+      return;
     }
-    const state = handleChatEvent(host as unknown as OpenClawApp, payload);
+
+    const app = host as unknown as OpenClawApp;
+    const isActiveSession = sessionKey === app.sessionKey;
+    const runHost = app.getSessionRunHost(sessionKey);
+
+    if (!isActiveSession) {
+      applyChatEventToRunHost(runHost, payload);
+      if (payload?.state === "final" && host.tab === "chat") {
+        host.handleChatThreadFinalEvent?.(sessionKey);
+        void loadChatThreads(host as unknown as Parameters<typeof loadChatThreads>[0], {
+          search: host.chatThreadsQuery,
+        });
+      }
+      return;
+    }
+
+    setLastActiveSessionKey(
+      host as unknown as Parameters<typeof setLastActiveSessionKey>[0],
+      sessionKey,
+    );
+    const state = handleChatEvent(app, payload as unknown as Parameters<typeof handleChatEvent>[1]);
     if (state === "final" || state === "error" || state === "aborted") {
-      resetToolStream(host as unknown as Parameters<typeof resetToolStream>[0]);
       void flushChatQueueForEvent(host as unknown as Parameters<typeof flushChatQueueForEvent>[0]);
     }
     if (state === "final") {
-      const sessionKey = typeof payload?.sessionKey === "string" ? payload.sessionKey : "";
-      if (sessionKey) {
-        host.handleChatThreadFinalEvent?.(sessionKey);
-      }
-      void loadChatHistory(host as unknown as OpenClawApp);
+      host.handleChatThreadFinalEvent?.(sessionKey);
+      void loadChatHistory(app);
       void loadChatThreads(host as unknown as Parameters<typeof loadChatThreads>[0], {
         search: host.chatThreadsQuery,
       });

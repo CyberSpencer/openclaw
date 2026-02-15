@@ -72,6 +72,7 @@ import {
 } from "./app-settings.ts";
 import {
   resetToolStream as resetToolStreamInternal,
+  flushToolStreamSync as flushToolStreamSyncInternal,
   type AgentEventPayload,
   type ModelSelectionInfo,
   type ToolStreamEntry,
@@ -219,6 +220,21 @@ function asObject(value: unknown): Record<string, unknown> | null {
   return value as Record<string, unknown>;
 }
 
+type SessionRunHost = {
+  sessionKey: string;
+  chatStream: string | null;
+  chatStreamStartedAt: number | null;
+  chatRunId: string | null;
+  chatModelSelection: ModelSelectionInfo | null;
+  chatTaskPlan: TaskPlan | null;
+  compactionStatus: import("./app-tool-stream.ts").CompactionStatus | null;
+  compactionClearTimer: number | null;
+  toolStreamById: Map<string, ToolStreamEntry>;
+  toolStreamOrder: string[];
+  chatToolMessages: unknown[];
+  toolStreamSyncTimer: number | null;
+};
+
 function resolveMemorySearchEnabled(config: Record<string, unknown> | null | undefined): boolean {
   const agents = asObject(config?.agents);
   const defaults = asObject(agents?.defaults);
@@ -362,7 +378,10 @@ export class OpenClawApp extends LitElement {
   @state() eventLog: EventLogEntry[] = [];
   private eventLogBuffer: EventLogEntry[] = [];
   private toolStreamSyncTimer: number | null = null;
+  private compactionClearTimer: number | null = null;
   private sidebarCloseTimer: number | null = null;
+  private sessionKeyTransition: { prevKey: string; nextKey: string } | null = null;
+  private sessionRunHosts = new Map<string, SessionRunHost>();
 
   @state() assistantName = injectedAssistantIdentity.name;
   @state() assistantAvatar = injectedAssistantIdentity.avatar;
@@ -707,6 +726,179 @@ export class OpenClawApp extends LitElement {
     return this;
   }
 
+  private createSessionRunHost(sessionKey: string): SessionRunHost {
+    return {
+      sessionKey,
+      chatStream: null,
+      chatStreamStartedAt: null,
+      chatRunId: null,
+      chatModelSelection: null,
+      chatTaskPlan: null,
+      compactionStatus: null,
+      compactionClearTimer: null,
+      toolStreamById: new Map<string, ToolStreamEntry>(),
+      toolStreamOrder: [],
+      chatToolMessages: [],
+      toolStreamSyncTimer: null,
+    };
+  }
+
+  getSessionRunHost(sessionKey: string): SessionRunHost {
+    const key = sessionKey.trim();
+    const activeKey = (this.sessionKey ?? "").trim();
+    if (!key || key === activeKey) {
+      return this as unknown as SessionRunHost;
+    }
+    const existing = this.sessionRunHosts.get(key);
+    if (existing) {
+      return existing;
+    }
+    const created = this.createSessionRunHost(key);
+    this.sessionRunHosts.set(key, created);
+    return created;
+  }
+
+  resolveSessionKeyForRunId(runId: string): string | null {
+    const id = runId.trim();
+    if (!id) {
+      return null;
+    }
+    const activeKey = (this.sessionKey ?? "").trim();
+    if (activeKey && this.chatRunId === id) {
+      return activeKey;
+    }
+    for (const [key, host] of this.sessionRunHosts.entries()) {
+      if (host.chatRunId === id) {
+        return key;
+      }
+    }
+    return null;
+  }
+
+  private normalizeCompactionStatus(
+    status: import("./app-tool-stream.ts").CompactionStatus | null,
+  ): import("./app-tool-stream.ts").CompactionStatus | null {
+    if (!status) {
+      return null;
+    }
+    if (status.active) {
+      return status;
+    }
+    const completedAt = typeof status.completedAt === "number" ? status.completedAt : null;
+    if (!completedAt) {
+      return status;
+    }
+    const ageMs = Date.now() - completedAt;
+    return ageMs > 5000 ? null : status;
+  }
+
+  private persistRunStateForSession(sessionKey: string) {
+    const key = sessionKey.trim();
+    if (!key) {
+      return;
+    }
+
+    flushToolStreamSyncInternal(
+      this as unknown as Parameters<typeof flushToolStreamSyncInternal>[0],
+    );
+    if (this.compactionClearTimer != null) {
+      window.clearTimeout(this.compactionClearTimer);
+      this.compactionClearTimer = null;
+    }
+
+    const target = this.sessionRunHosts.get(key) ?? this.createSessionRunHost(key);
+    target.chatStream = this.chatStream;
+    target.chatStreamStartedAt = this.chatStreamStartedAt;
+    target.chatRunId = this.chatRunId;
+    target.chatModelSelection = this.chatModelSelection;
+    target.chatTaskPlan = this.chatTaskPlan;
+    target.compactionStatus = this.compactionStatus;
+    target.compactionClearTimer = null;
+
+    // Store per-session tool-stream backing stores (Maps/arrays), then we can swap them in/out.
+    target.toolStreamById = this.toolStreamById;
+    target.toolStreamOrder = this.toolStreamOrder;
+    target.chatToolMessages = [...(this.chatToolMessages ?? [])];
+    target.toolStreamSyncTimer = null;
+
+    this.sessionRunHosts.set(key, target);
+  }
+
+  private restoreRunStateForSession(sessionKey: string) {
+    const key = sessionKey.trim();
+    if (!key) {
+      this.chatStream = null;
+      this.chatStreamStartedAt = null;
+      this.chatRunId = null;
+      this.chatModelSelection = null;
+      this.chatTaskPlan = null;
+      this.compactionStatus = null;
+      this.compactionClearTimer = null;
+      resetToolStreamInternal(this as unknown as Parameters<typeof resetToolStreamInternal>[0]);
+      return;
+    }
+
+    const source = this.sessionRunHosts.get(key) ?? this.createSessionRunHost(key);
+    flushToolStreamSyncInternal(
+      source as unknown as Parameters<typeof flushToolStreamSyncInternal>[0],
+    );
+    if (source.compactionClearTimer != null) {
+      window.clearTimeout(source.compactionClearTimer);
+      source.compactionClearTimer = null;
+    }
+
+    this.chatStream = source.chatStream;
+    this.chatStreamStartedAt = source.chatStreamStartedAt;
+    this.chatRunId = source.chatRunId;
+    this.chatModelSelection = source.chatModelSelection;
+    this.chatTaskPlan = source.chatTaskPlan;
+    this.compactionStatus = this.normalizeCompactionStatus(source.compactionStatus);
+
+    // Swap the tool-stream backing store to the newly selected session.
+    this.toolStreamById = source.toolStreamById;
+    this.toolStreamOrder = source.toolStreamOrder;
+    this.chatToolMessages = [...(source.chatToolMessages ?? [])];
+    this.toolStreamSyncTimer = null;
+    this.compactionClearTimer = null;
+
+    this.sessionRunHosts.set(key, source);
+  }
+
+  resetAllSessionRunState() {
+    for (const host of this.sessionRunHosts.values()) {
+      flushToolStreamSyncInternal(
+        host as unknown as Parameters<typeof flushToolStreamSyncInternal>[0],
+      );
+      if (host.compactionClearTimer != null) {
+        window.clearTimeout(host.compactionClearTimer);
+        host.compactionClearTimer = null;
+      }
+      host.chatStream = null;
+      host.chatStreamStartedAt = null;
+      host.chatRunId = null;
+      host.chatModelSelection = null;
+      host.chatTaskPlan = null;
+      host.compactionStatus = null;
+      resetToolStreamInternal(host as unknown as Parameters<typeof resetToolStreamInternal>[0]);
+    }
+    this.sessionRunHosts.clear();
+
+    flushToolStreamSyncInternal(
+      this as unknown as Parameters<typeof flushToolStreamSyncInternal>[0],
+    );
+    if (this.compactionClearTimer != null) {
+      window.clearTimeout(this.compactionClearTimer);
+      this.compactionClearTimer = null;
+    }
+    this.chatStream = null;
+    this.chatStreamStartedAt = null;
+    this.chatRunId = null;
+    this.chatModelSelection = null;
+    this.chatTaskPlan = null;
+    this.compactionStatus = null;
+    resetToolStreamInternal(this as unknown as Parameters<typeof resetToolStreamInternal>[0]);
+  }
+
   connectedCallback() {
     super.connectedCallback();
     window.addEventListener("keydown", this.globalKeydownHandler);
@@ -724,6 +916,34 @@ export class OpenClawApp extends LitElement {
     this.stopSparkStatusPolling();
     this.stopSubagentMonitorPolling();
     super.disconnectedCallback();
+  }
+
+  protected willUpdate(changed: Map<PropertyKey, unknown>) {
+    if (!changed.has("sessionKey")) {
+      return;
+    }
+
+    // Persist state for the previous sessionKey and restore it for the new sessionKey
+    // before render, so back/forward navigation doesn't drop in-flight run UI state.
+    const previous = changed.get("sessionKey");
+    const prevKey = typeof previous === "string" ? previous.trim() : "";
+    const nextKey = (this.sessionKey ?? "").trim();
+    const transition = this.sessionKeyTransition;
+    const handledByOpenChatSession =
+      transition != null && transition.prevKey === prevKey && transition.nextKey === nextKey;
+    if (handledByOpenChatSession) {
+      this.sessionKeyTransition = null;
+    } else {
+      if (prevKey) {
+        this.persistComposeStateForSession(prevKey);
+        this.persistRunStateForSession(prevKey);
+      }
+      this.restoreComposeStateForSession(nextKey);
+      this.restoreRunStateForSession(nextKey);
+    }
+    this.subagentMonitorResult = null;
+    this.subagentMonitorError = null;
+    this.resetChatScroll();
   }
 
   protected updated(changed: Map<PropertyKey, unknown>) {
@@ -1814,19 +2034,22 @@ export class OpenClawApp extends LitElement {
     if (!key) {
       return;
     }
+
     const previousSessionKey = (this.sessionKey ?? "").trim();
-    if (previousSessionKey) {
+    if (previousSessionKey && previousSessionKey !== key) {
       this.persistComposeStateForSession(previousSessionKey);
+      this.persistRunStateForSession(previousSessionKey);
     }
 
+    // openChatSession is used synchronously in some controller paths/tests, so restore
+    // per-session state immediately. willUpdate will detect this and avoid re-persisting
+    // the previous sessionKey after we've already swapped state over.
+    this.sessionKeyTransition = { prevKey: previousSessionKey, nextKey: key };
     this.sessionKey = key;
     this.restoreComposeStateForSession(key);
-    this.chatStream = null;
-    this.chatStreamStartedAt = null;
-    this.chatRunId = null;
+    this.restoreRunStateForSession(key);
     this.subagentMonitorResult = null;
     this.subagentMonitorError = null;
-    this.resetToolStream();
     this.resetChatScroll();
     this.applySettings({
       ...this.settings,

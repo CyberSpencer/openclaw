@@ -201,4 +201,39 @@ describe("voice.processText gateway handler", () => {
       expect.objectContaining({ model: "openai-codex/gpt-5.3-codex", thinkingLevel: "medium" }),
     );
   });
+
+  it("registers tool-event recipients when the client advertises tool-events", async () => {
+    const registerToolEventRecipient = vi.fn();
+
+    mocks.dispatchInboundMessage.mockImplementationOnce(async (arg: unknown) => {
+      const typed = arg as { replyOptions?: { onAgentRunStart?: (runId: string) => void } };
+      typed.replyOptions?.onAgentRunStart?.("run-123");
+    });
+    mocks.processTextToVoice.mockImplementationOnce(async (_text, _config, llmInvoke) => {
+      await llmInvoke("hello");
+      return {
+        success: true,
+        sessionId: "s-4",
+        response: "",
+        timings: { totalMs: 5 },
+      };
+    });
+
+    const respond = vi.fn<GatewayResponder>();
+    const base = makeInvocation(respond, { text: "hello" });
+    await voiceHandlers["voice.processText"]?.({
+      ...base,
+      client: {
+        connId: "c-1",
+        connect: { caps: ["tool-events"] },
+      },
+      context: {
+        ...base.context,
+        registerToolEventRecipient,
+      } as unknown as GatewayRequestContext,
+    });
+
+    expect(registerToolEventRecipient).toHaveBeenCalledTimes(1);
+    expect(registerToolEventRecipient).toHaveBeenCalledWith("run-123", "c-1");
+  });
 });
