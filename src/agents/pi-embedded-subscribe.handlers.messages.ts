@@ -142,6 +142,12 @@ export function handleMessageUpdate(
     } else if (previousCleaned && !cleanedText.startsWith(previousCleaned)) {
       // Non-monotonic update (provider resend/rewind). Keep streaming quiet; final message_end
       // will deliver a safe redacted answer.
+      //
+      // Important: reset the streaming redactor so future deltas don't accidentally combine
+      // stale suffix buffers with the rewritten text.
+      ctx.state.assistantRedactor.reset();
+      nextRedacted = ctx.state.assistantRedactor.process(cleanedText);
+      ctx.state.lastStreamedAssistantRedacted = nextRedacted;
       shouldEmit = false;
     } else {
       deltaText = cleanedText.slice(previousCleaned.length);
