@@ -4,6 +4,7 @@ import type { CommandHandler } from "./commands-types.js";
 import { updateSessionStore } from "../../config/sessions.js";
 import { logVerbose } from "../../globals.js";
 import { cloneProjectRepo } from "../../projects/git.js";
+import { initProject } from "../../projects/init.js";
 import { listProjects, sanitizeProjectId } from "../../projects/projects.js";
 
 type ProjectMemoryMode = NonNullable<SessionEntry["projectMemoryMode"]>;
@@ -12,7 +13,7 @@ type ParsedProjectCommand =
   | { hasCommand: false }
   | {
       hasCommand: true;
-      action: "set" | "clear" | "show" | "list" | "mode" | "clone";
+      action: "set" | "clear" | "show" | "list" | "mode" | "clone" | "init";
       value: string;
     };
 
@@ -34,7 +35,8 @@ function parseProjectCommand(normalized: string): ParsedProjectCommand {
     action === "clear" ||
     action === "show" ||
     action === "list" ||
-    action === "clone"
+    action === "clone" ||
+    action === "init"
   ) {
     return { hasCommand: true, action, value };
   }
@@ -158,6 +160,40 @@ export const handleProjectCommand: CommandHandler = async (params, allowTextComm
       shouldContinue: false,
       reply: { text: `📦 Project memory mode set to ${nextMode}.` },
     };
+  }
+
+  if (parsed.action === "init") {
+    const requested = parsed.value.trim();
+    if (!requested) {
+      return {
+        shouldContinue: false,
+        reply: { text: "📦 Usage: /project init <id>" },
+      };
+    }
+
+    try {
+      const result = await initProject({
+        workspaceDir: params.workspaceDir,
+        projectId: requested,
+      });
+      const created = result.created.length
+        ? `\n\nCreated (${result.created.length}):\n- ${result.created.join("\n- ")}`
+        : "";
+      const skipped = result.skipped.length
+        ? `\n\nSkipped (${result.skipped.length} already existed).`
+        : "";
+
+      return {
+        shouldContinue: false,
+        reply: { text: `📦 Project initialized: ${result.projectId}${created}${skipped}` },
+      };
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      return {
+        shouldContinue: false,
+        reply: { text: `📦 Init failed: ${message}` },
+      };
+    }
   }
 
   if (parsed.action === "clone") {
