@@ -73,21 +73,22 @@ export function createMemorySearchTool(options: {
         });
         const status = manager.status();
         const decorated = decorateCitations(rawResults, includeCitations);
-        const resolved = resolveMemoryBackendConfig({ cfg, agentId });
-        const results =
-          status.backend === "qmd"
-            ? clampResultsByInjectedChars(decorated, resolved.qmd?.limits.maxInjectedChars)
-            : decorated;
 
         const scoped = await applyProjectScopeToMemoryResults({
           cfg,
           agentId,
           sessionKey: options.agentSessionKey,
-          results,
+          results: decorated,
         });
 
+        const resolved = resolveMemoryBackendConfig({ cfg, agentId });
+        const results =
+          status.backend === "qmd"
+            ? clampResultsByInjectedChars(scoped, resolved.qmd?.limits.maxInjectedChars)
+            : scoped;
+
         return jsonResult({
-          results: scoped,
+          results,
           provider: status.provider,
           model: status.model,
           fallback: status.fallback,
