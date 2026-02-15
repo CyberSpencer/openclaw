@@ -20,6 +20,9 @@ export type StreamingSensitiveRedactor = {
 
 const DEFAULT_LOOKBACK_CHARS = 2048;
 
+const PEM_BEGIN_RE = /-----BEGIN [A-Z ]*PRIVATE KEY-----/;
+const PEM_END_RE = /-----END [A-Z ]*PRIVATE KEY-----/;
+
 // Heuristics to hold trailing suffixes that look like incomplete secrets.
 // We anchor to end-of-string so we only hold suffixes.
 const HOLD_SUFFIX_RULES: RegExp[] = [
@@ -36,6 +39,9 @@ const HOLD_SUFFIX_RULES: RegExp[] = [
   /\bAIza[0-9A-Za-z\-_]{0,}$/,
   /\bpplx-[A-Za-z0-9_-]{0,}$/i,
   /\bnpm_[A-Za-z0-9]{0,}$/i,
+
+  // Telegram-style tokens.
+  /\b\d{6,}:[A-Za-z0-9_-]{0,}$/,
 
   // ENV-style assignments (key=value) where value may be incomplete.
   /\b[A-Z0-9_]*(?:KEY|TOKEN|SECRET|PASSWORD|PASSWD)\b\s*[=:]\s*(["']?)[^\s"'\\]{0,}$/i,
@@ -59,6 +65,24 @@ function computeHoldLen(raw: string, lookbackChars: number): number {
   if (!raw) {
     return 0;
   }
+
+  // Sticky hold: if we see the beginning of a private key block but not the end yet,
+  // hold everything from the BEGIN marker onward (even if it grows beyond lookback).
+  let lastBeginIndex: number | null = null;
+  const beginGlobal = new RegExp(PEM_BEGIN_RE.source, "g");
+  for (const match of raw.matchAll(beginGlobal)) {
+    if (match.index !== undefined) {
+      lastBeginIndex = match.index;
+    }
+  }
+
+  if (lastBeginIndex !== null) {
+    const afterBegin = raw.slice(lastBeginIndex);
+    if (!PEM_END_RE.test(afterBegin)) {
+      return raw.length - lastBeginIndex;
+    }
+  }
+
   const lookback = Math.max(64, Math.floor(lookbackChars));
   const tail = raw.slice(-lookback);
   let max = 0;
