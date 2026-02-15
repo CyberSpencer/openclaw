@@ -394,20 +394,20 @@ function buildChatCommands(): ChatCommandDefinition[] {
     defineChatCommand({
       key: "project",
       nativeName: "project",
-      description: "Manage active project context (set/clear/show/list/mode).",
+      description: "Manage active project context (set/clear/show/list/mode/clone).",
       textAlias: "/project",
       acceptsArgs: true,
       category: "management",
       args: [
         {
           name: "action",
-          description: "set, clear, show, list, or mode",
+          description: "set, clear, show, list, mode, or clone",
           type: "string",
-          choices: ["set", "clear", "show", "list", "mode"],
+          choices: ["set", "clear", "show", "list", "mode", "clone"],
         },
         {
           name: "value",
-          description: "Project id (for set), or memory mode (for mode)",
+          description: "Project id (set), memory mode (mode), or clone args (clone)",
           type: "string",
           captureRemaining: true,
         },
