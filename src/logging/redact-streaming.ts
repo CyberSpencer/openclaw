@@ -8,7 +8,10 @@ export type StreamingSensitiveRedactorOptions = {
   mode?: RedactSensitiveMode;
   /** Regex source patterns, same format as logging.redactPatterns / getDefaultRedactPatterns(). */
   patterns?: string[];
-  /** Max trailing characters to scan when deciding whether to hold a suffix. Default: 2048. */
+  /**
+   * Max trailing characters to scan when deciding whether to hold a suffix.
+   * Minimum enforced: 64. Default: 2048.
+   */
   lookbackChars?: number;
 };
 
@@ -22,6 +25,7 @@ const DEFAULT_LOOKBACK_CHARS = 2048;
 
 const PEM_BEGIN_RE = /-----BEGIN [A-Z ]*PRIVATE KEY-----/;
 const PEM_END_RE = /-----END [A-Z ]*PRIVATE KEY-----/;
+const PEM_END_LOOKBACK_CHARS = 256;
 
 // Heuristics to hold trailing suffixes that look like incomplete secrets.
 // We anchor to end-of-string so we only hold suffixes.
@@ -61,13 +65,7 @@ function resolvePatterns(patterns?: string[]): string[] {
   return patterns?.length ? patterns : getDefaultRedactPatterns();
 }
 
-function computeHoldLen(raw: string, lookbackChars: number): number {
-  if (!raw) {
-    return 0;
-  }
-
-  // Sticky hold: if we see the beginning of a private key block but not the end yet,
-  // hold everything from the BEGIN marker onward (even if it grows beyond lookback).
+function findUnterminatedPemBeginIndex(raw: string): number | null {
   let lastBeginIndex: number | null = null;
   const beginGlobal = new RegExp(PEM_BEGIN_RE.source, "g");
   for (const match of raw.matchAll(beginGlobal)) {
@@ -75,12 +73,26 @@ function computeHoldLen(raw: string, lookbackChars: number): number {
       lastBeginIndex = match.index;
     }
   }
+  if (lastBeginIndex === null) {
+    return null;
+  }
+  const afterBegin = raw.slice(lastBeginIndex);
+  if (PEM_END_RE.test(afterBegin)) {
+    return null;
+  }
+  return lastBeginIndex;
+}
 
-  if (lastBeginIndex !== null) {
-    const afterBegin = raw.slice(lastBeginIndex);
-    if (!PEM_END_RE.test(afterBegin)) {
-      return raw.length - lastBeginIndex;
-    }
+function computeHoldLen(raw: string, lookbackChars: number): number {
+  if (!raw) {
+    return 0;
+  }
+
+  // Sticky hold: if we see the beginning of a private key block but not the end yet,
+  // hold everything from the BEGIN marker onward.
+  const pemBeginIndex = findUnterminatedPemBeginIndex(raw);
+  if (pemBeginIndex !== null) {
+    return raw.length - pemBeginIndex;
   }
 
   const lookback = Math.max(64, Math.floor(lookbackChars));
@@ -104,9 +116,13 @@ export function createStreamingSensitiveRedactor(
   const lookbackChars = options?.lookbackChars ?? DEFAULT_LOOKBACK_CHARS;
 
   let pending = "";
+  let pemGuardActive = false;
+  let pemEndScan = "";
 
   const reset = () => {
     pending = "";
+    pemGuardActive = false;
+    pemEndScan = "";
   };
 
   const process = (chunk: string): string => {
@@ -117,7 +133,32 @@ export function createStreamingSensitiveRedactor(
       return chunk;
     }
 
+    if (pemGuardActive) {
+      pemEndScan = `${pemEndScan}${chunk}`.slice(-PEM_END_LOOKBACK_CHARS);
+      if (PEM_END_RE.test(pemEndScan)) {
+        pemGuardActive = false;
+        pemEndScan = "";
+      }
+      return "";
+    }
+
     pending += chunk;
+
+    // Guardrail: if we detect an unterminated private key block that is growing without
+    // bound, stop buffering and suppress output until the END marker is observed.
+    const pemBeginIndex = findUnterminatedPemBeginIndex(pending);
+    if (pemBeginIndex !== null) {
+      const pemLen = pending.length - pemBeginIndex;
+      const maxPemHoldChars = Math.max(4096, Math.floor(lookbackChars) * 4);
+      if (pemLen > maxPemHoldChars) {
+        const emitRaw = pending.slice(0, pemBeginIndex);
+        pending = "";
+        pemGuardActive = true;
+        pemEndScan = chunk.slice(-PEM_END_LOOKBACK_CHARS);
+        const prefix = emitRaw ? redactSensitiveText(emitRaw, { mode, patterns }) : "";
+        return `${prefix}***`;
+      }
+    }
 
     const holdLen = computeHoldLen(pending, lookbackChars);
     const cutIndex = Math.max(0, pending.length - holdLen);
@@ -136,6 +177,13 @@ export function createStreamingSensitiveRedactor(
       const out = pending;
       pending = "";
       return out;
+    }
+
+    if (pemGuardActive) {
+      pending = "";
+      pemGuardActive = false;
+      pemEndScan = "";
+      return "";
     }
 
     if (!pending) {
