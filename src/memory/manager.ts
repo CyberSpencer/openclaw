@@ -71,6 +71,7 @@ type QdrantConfig = {
   endpoints?: Array<{
     url: string;
     apiKey?: string;
+    headers?: Record<string, string>;
     timeoutMs?: number;
     priority?: number;
     healthUrl?: string;
@@ -131,6 +132,7 @@ const qdrantHealthCache = new Map<string, { ok: boolean; checkedAt: number }>();
 type QdrantEndpointConfig = {
   url: string;
   apiKey?: string;
+  headers?: Record<string, string>;
   timeoutMs?: number;
   priority?: number;
   healthUrl?: string;
@@ -163,7 +165,12 @@ async function checkQdrantEndpoint(
   const timer = setTimeout(() => controller.abort(), timeoutMs);
   try {
     const apiKey = endpoint.apiKey ?? fallbackApiKey;
-    const headers = apiKey ? { "api-key": apiKey } : undefined;
+    const headers: Record<string, string> = {
+      ...endpoint.headers,
+    };
+    if (apiKey) {
+      headers["api-key"] = apiKey;
+    }
     const res = await fetch(url, { method: "GET", headers, signal: controller.signal });
     ok = res.status === 200;
   } catch (err) {
@@ -301,6 +308,13 @@ export class MemoryIndexManager {
   private sessionWarm = new Set<string>();
   private syncing: Promise<void> | null = null;
   private sqliteFallbackWarned = false;
+  private degradedActiveCode?: string;
+  private degradedActiveReason?: string;
+  private embeddingFailureStreak = 0;
+  private emergencyLocalActivatedAt = 0;
+  private recoveryProbeSuccessStreak = 0;
+  private lastRecoveryProbeAt = 0;
+  private lastRecoveryError?: string;
 
   static async get(params: {
     cfg: OpenClawConfig;
@@ -415,6 +429,7 @@ export class MemoryIndexManager {
       sessionKey?: string;
     },
   ): Promise<MemorySearchResult[]> {
+    await this.maybeRecoverPrimaryProvider();
     void this.warmSession(opts?.sessionKey);
     if (this.settings.sync.onSearch && (this.dirty || this.sessionsDirty)) {
       void this.sync({ reason: "search" }).catch((err) => {
@@ -433,11 +448,61 @@ export class MemoryIndexManager {
       Math.max(1, Math.floor(maxResults * hybrid.candidateMultiplier)),
     );
 
-    const keywordResults = hybrid.enabled
-      ? await this.searchKeyword(cleaned, candidates).catch(() => [])
-      : [];
+    const keywordResults =
+      hybrid.enabled || this.settings.degraded.mode === "keyword-only"
+        ? await this.searchKeyword(cleaned, candidates).catch(() => [])
+        : [];
 
-    const queryVec = await this.embedQueryWithTimeout(cleaned);
+    let queryVec: number[] = [];
+    try {
+      queryVec = await this.embedQueryWithTimeout(cleaned);
+      this.embeddingFailureStreak = 0;
+      if (
+        !(this.provider.id === "local" && this.emergencyLocalActivatedAt > 0 && this.fallbackFrom)
+      ) {
+        this.degradedActiveCode = undefined;
+        this.degradedActiveReason = undefined;
+      }
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      this.embeddingFailureStreak += 1;
+      const activated = await this.maybeActivateAutomaticLocalFallback(message);
+      if (activated) {
+        try {
+          queryVec = await this.embedQueryWithTimeout(cleaned);
+          this.embeddingFailureStreak = 0;
+          if (
+            !(
+              this.provider.id === "local" &&
+              this.emergencyLocalActivatedAt > 0 &&
+              this.fallbackFrom
+            )
+          ) {
+            this.degradedActiveCode = undefined;
+            this.degradedActiveReason = undefined;
+          }
+        } catch (retryErr) {
+          const retryMessage = retryErr instanceof Error ? retryErr.message : String(retryErr);
+          if (this.settings.degraded.mode === "keyword-only") {
+            if (this.settings.degraded.reasonCodes) {
+              this.degradedActiveCode = "embedding_unavailable_keyword_only";
+            }
+            this.degradedActiveReason = `keyword-only: embedding unavailable (${retryMessage})`;
+            return this.keywordOnlyResults(keywordResults, minScore, maxResults);
+          }
+          throw retryErr;
+        }
+      } else if (this.settings.degraded.mode === "keyword-only") {
+        if (this.settings.degraded.reasonCodes) {
+          this.degradedActiveCode = "embedding_unavailable_keyword_only";
+        }
+        this.degradedActiveReason = `keyword-only: embedding unavailable (${message})`;
+        return this.keywordOnlyResults(keywordResults, minScore, maxResults);
+      } else {
+        throw err;
+      }
+    }
+
     const hasVector = queryVec.some((v) => v !== 0);
     const vectorResults = hasVector
       ? await this.searchVector(queryVec, candidates).catch(() => [])
@@ -455,6 +520,15 @@ export class MemoryIndexManager {
     });
 
     return merged.filter((entry) => entry.score >= minScore).slice(0, maxResults);
+  }
+
+  private keywordOnlyResults(
+    results: Array<MemorySearchResult & { id: string; textScore: number }>,
+    minScore: number,
+    maxResults: number,
+  ): MemorySearchResult[] {
+    const degradedLimit = Math.max(1, Math.min(maxResults, this.settings.degraded.maxResults));
+    return results.filter((entry) => entry.score >= minScore).slice(0, degradedLimit);
   }
 
   private async searchVector(
@@ -676,13 +750,30 @@ export class MemoryIndexManager {
       }
       return sources.map((source) => ({ source, ...bySource.get(source)! }));
     })();
-    const custom =
-      this.provider.id === "local" && this.fallbackFrom
-        ? {
-            mode: "emergency_local",
-            degradedActiveReason: this.fallbackReason,
-          }
-        : undefined;
+    const custom: Record<string, unknown> = {
+      mode: this.provider.id === "local" && this.fallbackFrom ? "emergency_local" : "normal",
+      degradedMode: this.settings.degraded.mode,
+      degradedReasonCode:
+        this.settings.degraded.reasonCodes && this.degradedActiveCode
+          ? this.degradedActiveCode
+          : undefined,
+      degradedActiveReason: this.degradedActiveReason,
+      embeddingFailureStreak: this.embeddingFailureStreak,
+      recoveryProbeSuccessStreak: this.recoveryProbeSuccessStreak,
+      emergencyLocalActivatedAt:
+        this.emergencyLocalActivatedAt > 0
+          ? new Date(this.emergencyLocalActivatedAt).toISOString()
+          : undefined,
+      lastRecoveryProbeAt:
+        this.lastRecoveryProbeAt > 0 ? new Date(this.lastRecoveryProbeAt).toISOString() : undefined,
+      lastRecoveryError: this.lastRecoveryError,
+    };
+    if (this.openAi?.activeEndpoint) {
+      custom.remoteEndpoint = this.openAi.activeEndpoint;
+    }
+    if (this.openAi?.lastEndpointErrors && this.openAi.lastEndpointErrors.length > 0) {
+      custom.remoteEndpointErrors = this.openAi.lastEndpointErrors;
+    }
     return {
       backend: "builtin",
       files: files?.c ?? 0,
@@ -737,7 +828,7 @@ export class MemoryIndexManager {
         lastError: this.batchFailureLastError,
         lastProvider: this.batchFailureLastProvider,
       },
-      custom,
+      custom: Object.values(custom).some((value) => value !== undefined) ? custom : undefined,
     };
   }
 
@@ -897,8 +988,14 @@ export class MemoryIndexManager {
     return `${base}${suffix}`;
   }
 
-  private qdrantHeadersFor(apiKey?: string): Record<string, string> {
-    const headers: Record<string, string> = { "Content-Type": "application/json" };
+  private qdrantHeadersFor(
+    apiKey?: string,
+    endpointHeaders?: Record<string, string>,
+  ): Record<string, string> {
+    const headers: Record<string, string> = {
+      "Content-Type": "application/json",
+      ...endpointHeaders,
+    };
     if (apiKey) {
       headers["api-key"] = apiKey;
     }
@@ -953,7 +1050,7 @@ export class MemoryIndexManager {
       try {
         const res = await fetch(this.qdrantUrlFor(endpoint.url, pathname), {
           method: options?.method ?? "GET",
-          headers: this.qdrantHeadersFor(endpoint.apiKey ?? cfg.apiKey),
+          headers: this.qdrantHeadersFor(endpoint.apiKey ?? cfg.apiKey, endpoint.headers),
           body: options?.body ? JSON.stringify(options.body) : undefined,
           signal: controller.signal,
         });
@@ -996,7 +1093,10 @@ export class MemoryIndexManager {
           "noQdrantFailover" in err &&
           (err as { noQdrantFailover?: boolean }).noQdrantFailover
         ) {
-          throw err instanceof Error ? err : new Error(String(err));
+          if (err instanceof Error) {
+            throw err;
+          }
+          throw new Error("Qdrant request failed (noQdrantFailover)", { cause: err });
         }
         const message = err instanceof Error ? err.message : String(err);
         errors.push(`${endpoint.url}: ${message}`);
@@ -2012,6 +2112,168 @@ export class MemoryIndexManager {
     this.batch = this.resolveBatchConfig();
     log.warn(`memory embeddings: switched to fallback provider (${fallback})`, { reason });
     return true;
+  }
+
+  private resolvePrimaryProviderForRecovery(): "openai" | "gemini" | "voyage" | null {
+    const configured = this.settings.provider;
+    if (configured === "openai" || configured === "gemini" || configured === "voyage") {
+      return configured;
+    }
+    if (
+      this.provider.id === "openai" ||
+      this.provider.id === "gemini" ||
+      this.provider.id === "voyage"
+    ) {
+      return this.provider.id;
+    }
+    if (
+      this.fallbackFrom === "openai" ||
+      this.fallbackFrom === "gemini" ||
+      this.fallbackFrom === "voyage"
+    ) {
+      return this.fallbackFrom;
+    }
+    return null;
+  }
+
+  private async activateEmergencyLocalProvider(
+    reason: string,
+    primaryProvider: "openai" | "gemini" | "voyage",
+  ): Promise<boolean> {
+    if (this.provider.id === "local") {
+      return false;
+    }
+    const localResult = await createEmbeddingProvider({
+      config: this.cfg,
+      agentDir: resolveAgentDir(this.cfg, this.agentId),
+      provider: "local",
+      remote: this.settings.remote,
+      model: this.settings.local.modelPath ?? this.settings.model,
+      fallback: "none",
+      local: this.settings.local,
+    });
+    this.fallbackFrom = primaryProvider;
+    this.fallbackReason = reason;
+    this.provider = localResult.provider;
+    this.openAi = localResult.openAi;
+    this.gemini = localResult.gemini;
+    this.voyage = localResult.voyage;
+    this.providerKey = this.computeProviderKey();
+    this.batch = this.resolveBatchConfig();
+    return true;
+  }
+
+  private async maybeActivateAutomaticLocalFallback(reason: string): Promise<boolean> {
+    if (!this.settings.degraded.emergency.autoLocal) {
+      return false;
+    }
+    if (this.provider.id === "local") {
+      return false;
+    }
+    const primaryProvider = this.resolvePrimaryProviderForRecovery();
+    if (!primaryProvider) {
+      return false;
+    }
+    if (this.embeddingFailureStreak < this.settings.degraded.emergency.failoverThreshold) {
+      return false;
+    }
+    let switched = false;
+    try {
+      switched = await this.activateEmergencyLocalProvider(
+        `auto-emergency-local: ${reason} (streak=${this.embeddingFailureStreak})`,
+        primaryProvider,
+      );
+    } catch (err) {
+      this.lastRecoveryError = err instanceof Error ? err.message : String(err);
+      log.warn("memory embeddings: automatic emergency local activation failed", {
+        agentId: this.agentId,
+        error: this.lastRecoveryError,
+      });
+      return false;
+    }
+    if (switched) {
+      this.emergencyLocalActivatedAt = Date.now();
+      this.recoveryProbeSuccessStreak = 0;
+      this.lastRecoveryProbeAt = 0;
+      this.lastRecoveryError = undefined;
+      if (this.settings.degraded.reasonCodes) {
+        this.degradedActiveCode = "emergency_local_active";
+      }
+      this.degradedActiveReason = "automatic emergency local fallback active";
+      log.warn("memory embeddings: entered emergency local mode", {
+        agentId: this.agentId,
+        failureStreak: this.embeddingFailureStreak,
+      });
+    }
+    return switched;
+  }
+
+  private async maybeRecoverPrimaryProvider(): Promise<void> {
+    if (!this.settings.degraded.emergency.autoLocal) {
+      return;
+    }
+    if (this.provider.id !== "local" || !this.fallbackFrom) {
+      return;
+    }
+    const now = Date.now();
+    if (now - this.emergencyLocalActivatedAt < this.settings.degraded.emergency.recoverCooldownMs) {
+      return;
+    }
+    if (now - this.lastRecoveryProbeAt < this.settings.degraded.emergency.probeIntervalMs) {
+      return;
+    }
+    this.lastRecoveryProbeAt = now;
+
+    const primaryProvider = this.resolvePrimaryProviderForRecovery();
+    if (!primaryProvider) {
+      return;
+    }
+
+    try {
+      const primaryResult = await createEmbeddingProvider({
+        config: this.cfg,
+        agentDir: resolveAgentDir(this.cfg, this.agentId),
+        provider: primaryProvider,
+        remote: this.settings.remote,
+        model: this.settings.model,
+        fallback: "none",
+        local: this.settings.local,
+      });
+      await this.withTimeout(
+        primaryResult.provider.embedQuery("memory-recovery-probe"),
+        EMBEDDING_QUERY_TIMEOUT_REMOTE_MS,
+        "memory recovery probe timed out",
+      );
+      this.recoveryProbeSuccessStreak += 1;
+      this.lastRecoveryError = undefined;
+      if (this.recoveryProbeSuccessStreak < this.settings.degraded.emergency.recoverThreshold) {
+        return;
+      }
+      this.provider = primaryResult.provider;
+      this.openAi = primaryResult.openAi;
+      this.gemini = primaryResult.gemini;
+      this.voyage = primaryResult.voyage;
+      this.providerKey = this.computeProviderKey();
+      this.batch = this.resolveBatchConfig();
+      this.fallbackFrom = undefined;
+      this.fallbackReason = undefined;
+      this.embeddingFailureStreak = 0;
+      this.recoveryProbeSuccessStreak = 0;
+      this.emergencyLocalActivatedAt = 0;
+      this.degradedActiveCode = undefined;
+      this.degradedActiveReason = undefined;
+      log.info("memory embeddings: exited emergency local mode after remote recovery", {
+        agentId: this.agentId,
+        provider: this.provider.id,
+      });
+    } catch (err) {
+      this.recoveryProbeSuccessStreak = 0;
+      this.lastRecoveryError = err instanceof Error ? err.message : String(err);
+      log.debug("memory embeddings: remote recovery probe failed", {
+        agentId: this.agentId,
+        error: this.lastRecoveryError,
+      });
+    }
   }
 
   private async runSafeReindex(params: {

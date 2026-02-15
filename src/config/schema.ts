@@ -212,6 +212,13 @@ const FIELD_LABELS: Record<string, string> = {
   "gateway.nodes.browser.node": "Gateway Node Browser Pin",
   "gateway.nodes.allowCommands": "Gateway Node Allowlist (Extra Commands)",
   "gateway.nodes.denyCommands": "Gateway Node Denylist",
+  "dgx.accessMode": "DGX Access Mode",
+  "dgx.wanBaseUrl": "DGX WAN Base URL",
+  "dgx.wanHeaders": "DGX WAN Headers",
+  "routing.localFallbackModel": "Local Fallback Model",
+  "auth.cooldowns.timeoutCooldownSeconds": "Timeout Cooldown (seconds)",
+  "auth.cooldowns.timeoutMaxSeconds": "Timeout Max (seconds)",
+  "agents.defaults.secretsLocalModel": "Secrets-Local Model",
   "nodeHost.browserProxy.enabled": "Node Browser Proxy Enabled",
   "nodeHost.browserProxy.allowProfiles": "Node Browser Proxy Allowed Profiles",
   "skills.load.watch": "Watch Skills",
@@ -230,6 +237,7 @@ const FIELD_LABELS: Record<string, string> = {
     "Memory Search Session Index (Experimental)",
   "agents.defaults.memorySearch.provider": "Memory Search Provider",
   "agents.defaults.memorySearch.remote.baseUrl": "Remote Embedding Base URL",
+  "agents.defaults.memorySearch.remote.endpoints": "Remote Embedding Endpoints",
   "agents.defaults.memorySearch.remote.apiKey": "Remote Embedding API Key",
   "agents.defaults.memorySearch.remote.headers": "Remote Embedding Headers",
   "agents.defaults.memorySearch.remote.batch.concurrency": "Remote Batch Concurrency",
@@ -239,6 +247,7 @@ const FIELD_LABELS: Record<string, string> = {
   "agents.defaults.memorySearch.store.driver": "Memory Search Store Driver",
   "agents.defaults.memorySearch.store.path": "Memory Search Index Path",
   "agents.defaults.memorySearch.store.qdrant.url": "Qdrant URL",
+  "agents.defaults.memorySearch.store.qdrant.endpoints": "Qdrant Endpoints",
   "agents.defaults.memorySearch.store.qdrant.collection": "Qdrant Collection",
   "agents.defaults.memorySearch.store.qdrant.apiKey": "Qdrant API Key",
   "agents.defaults.memorySearch.store.qdrant.timeoutMs": "Qdrant Timeout (ms)",
@@ -259,6 +268,9 @@ const FIELD_LABELS: Record<string, string> = {
   "agents.defaults.memorySearch.query.hybrid.textWeight": "Memory Search Text Weight",
   "agents.defaults.memorySearch.query.hybrid.candidateMultiplier":
     "Memory Search Hybrid Candidate Multiplier",
+  "agents.defaults.memorySearch.degraded.mode": "Memory Search Degraded Mode",
+  "agents.defaults.memorySearch.degraded.maxResults": "Memory Search Degraded Max Results",
+  "agents.defaults.memorySearch.degraded.reasonCodes": "Memory Search Degraded Reason Codes",
   "agents.defaults.memorySearch.cache.enabled": "Memory Search Embedding Cache",
   "agents.defaults.memorySearch.cache.maxEntries": "Memory Search Embedding Cache Max Entries",
   memory: "Memory",
@@ -444,6 +456,17 @@ const FIELD_HELP: Record<string, string> = {
     "Extra node.invoke commands to allow beyond the gateway defaults (array of command strings).",
   "gateway.nodes.denyCommands":
     "Commands to block even if present in node claims or default allowlist.",
+  "dgx.accessMode": 'DGX access mode for WAN/LAN routing ("auto", "lan", or "wan").',
+  "dgx.wanBaseUrl": "WAN base URL for DGX access (e.g. ngrok HTTPS endpoint).",
+  "dgx.wanHeaders": "Extra headers to attach to DGX WAN requests (e.g. auth tokens).",
+  "routing.localFallbackModel":
+    "Local fallback model to use when the router fails (e.g. spark-ollama/gpt-oss:120b or ollama/gpt-oss:20b).",
+  "auth.cooldowns.timeoutCooldownSeconds":
+    "Base cooldown for timeout failures (seconds). Uses 2x exponential backoff capped at timeoutMaxSeconds. Default: 15.",
+  "auth.cooldowns.timeoutMaxSeconds":
+    "Maximum cooldown for timeout failures (seconds). Default: 120.",
+  "agents.defaults.secretsLocalModel":
+    "Local model for secrets-local routing; never sent to cloud providers (e.g. spark-ollama/gpt-oss:120b).",
   "nodeHost.browserProxy.enabled": "Expose the local browser control server via node proxy.",
   "nodeHost.browserProxy.allowProfiles":
     "Optional allowlist of browser profile names exposed via the node proxy.",
@@ -555,6 +578,8 @@ const FIELD_HELP: Record<string, string> = {
     'Embedding provider ("openai", "gemini", "local", or "auto").',
   "agents.defaults.memorySearch.remote.baseUrl":
     "Custom base URL for remote embeddings (OpenAI-compatible proxies or Gemini overrides).",
+  "agents.defaults.memorySearch.remote.endpoints":
+    "Ordered remote embedding endpoints with per-endpoint priority, timeout, health probe, and optional headers.",
   "agents.defaults.memorySearch.remote.apiKey": "Custom API key for the remote embedding provider.",
   "agents.defaults.memorySearch.remote.headers":
     "Extra headers for remote embeddings (merged; remote overrides OpenAI headers).",
@@ -578,6 +603,8 @@ const FIELD_HELP: Record<string, string> = {
     'Memory search store driver ("sqlite", "qdrant", or "auto").',
   "agents.defaults.memorySearch.store.qdrant.url":
     "Qdrant base URL (default: http://127.0.0.1:6333).",
+  "agents.defaults.memorySearch.store.qdrant.endpoints":
+    "Ordered Qdrant endpoints with failover metadata (priority, timeout, health, headers).",
   "agents.defaults.memorySearch.store.qdrant.collection":
     "Qdrant collection name (default: jarvis_memory_chunks).",
   "agents.defaults.memorySearch.store.qdrant.apiKey": "Qdrant API key (sent as api-key header).",
@@ -595,6 +622,12 @@ const FIELD_HELP: Record<string, string> = {
     "Weight for BM25 text relevance when merging results (0-1).",
   "agents.defaults.memorySearch.query.hybrid.candidateMultiplier":
     "Multiplier for candidate pool size (default: 4).",
+  "agents.defaults.memorySearch.degraded.mode":
+    'Degraded fallback mode when semantic embeddings are unavailable ("keyword-only" or "off").',
+  "agents.defaults.memorySearch.degraded.maxResults":
+    "Maximum results returned in degraded keyword-only mode (default: 6).",
+  "agents.defaults.memorySearch.degraded.reasonCodes":
+    "Emit machine-readable degraded reason codes in memory status output (default: true).",
   "agents.defaults.memorySearch.cache.enabled":
     "Cache chunk embeddings in SQLite to speed up reindexing and frequent updates (default: true).",
   memory: "Memory backend configuration (global).",
@@ -787,6 +820,8 @@ const FIELD_PLACEHOLDERS: Record<string, string> = {
   "gateway.controlUi.allowedOrigins": "https://control.example.com",
   "channels.mattermost.baseUrl": "https://chat.example.com",
   "agents.list[].identity.avatar": "avatars/openclaw.png",
+  "dgx.accessMode": "auto",
+  "dgx.wanBaseUrl": "https://xxxx.ngrok-free.app",
 };
 
 const SENSITIVE_PATTERNS = [/token/i, /password/i, /secret/i, /api.?key/i];

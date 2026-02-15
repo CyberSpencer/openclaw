@@ -237,6 +237,27 @@ export type MemorySearchConfig = {
   provider?: "openai" | "gemini" | "voyage" | "local" | "auto";
   remote?: {
     baseUrl?: string;
+    /** Optional endpoint list for remote embedding failover. */
+    endpoints?: Array<{
+      /** Base URL for this endpoint. */
+      baseUrl?: string;
+      /** URL alias (accepted for compatibility). */
+      url?: string;
+      /** Optional per-endpoint API key override. */
+      apiKey?: string;
+      /** Optional per-endpoint headers merged into requests. */
+      headers?: Record<string, string>;
+      /** Lower numbers are higher priority (default: 0). */
+      priority?: number;
+      /** Optional request timeout override in ms. */
+      timeoutMs?: number;
+      /** Optional health check URL for endpoint selection. */
+      healthUrl?: string;
+      /** Optional health check timeout in ms. */
+      healthTimeoutMs?: number;
+      /** Optional health check cache TTL in ms (default: 10000). */
+      healthCacheTtlMs?: number;
+    }>;
     apiKey?: string;
     headers?: Record<string, string>;
     batch?: {
@@ -278,6 +299,8 @@ export type MemorySearchConfig = {
         url: string;
         /** Optional API key override for this endpoint. */
         apiKey?: string;
+        /** Optional per-endpoint headers merged into requests. */
+        headers?: Record<string, string>;
         /** Optional timeout override in ms. */
         timeoutMs?: number;
         /** Lower numbers are higher priority (default: 0). */

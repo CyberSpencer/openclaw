@@ -327,11 +327,42 @@ export const MemorySearchSchema = z
       .strict()
       .optional(),
     provider: z
-      .union([z.literal("openai"), z.literal("local"), z.literal("gemini"), z.literal("auto")])
+      .union([
+        z.literal("openai"),
+        z.literal("local"),
+        z.literal("gemini"),
+        z.literal("voyage"),
+        z.literal("auto"),
+      ])
       .optional(),
     remote: z
       .object({
         baseUrl: z.string().optional(),
+        endpoints: z
+          .array(
+            z
+              .object({
+                baseUrl: z.string().optional(),
+                url: z.string().optional(),
+                apiKey: z.string().optional(),
+                headers: z.record(z.string(), z.string()).optional(),
+                priority: z.number().int().optional(),
+                timeoutMs: z.number().int().positive().optional(),
+                healthUrl: z.string().optional(),
+                healthTimeoutMs: z.number().int().positive().optional(),
+                healthCacheTtlMs: z.number().int().positive().optional(),
+              })
+              .strict()
+              .superRefine((value, ctx) => {
+                if (!value.baseUrl && !value.url) {
+                  ctx.addIssue({
+                    code: z.ZodIssueCode.custom,
+                    message: "memorySearch.remote.endpoints entry requires baseUrl or url",
+                  });
+                }
+              }),
+          )
+          .optional(),
         apiKey: z.string().optional(),
         headers: z.record(z.string(), z.string()).optional(),
         batch: z
@@ -377,6 +408,7 @@ export const MemorySearchSchema = z
                   .object({
                     url: z.string(),
                     apiKey: z.string().optional(),
+                    headers: z.record(z.string(), z.string()).optional(),
                     timeoutMs: z.number().int().positive().optional(),
                     priority: z.number().int().optional(),
                     healthUrl: z.string().optional(),
@@ -396,6 +428,24 @@ export const MemorySearchSchema = z
           .object({
             enabled: z.boolean().optional(),
             extensionPath: z.string().optional(),
+          })
+          .strict()
+          .optional(),
+      })
+      .strict()
+      .optional(),
+    degraded: z
+      .object({
+        mode: z.union([z.literal("keyword-only"), z.literal("off")]).optional(),
+        maxResults: z.number().int().positive().optional(),
+        reasonCodes: z.boolean().optional(),
+        emergency: z
+          .object({
+            autoLocal: z.boolean().optional(),
+            failoverThreshold: z.number().int().positive().optional(),
+            recoverThreshold: z.number().int().positive().optional(),
+            recoverCooldownMs: z.number().int().nonnegative().optional(),
+            probeIntervalMs: z.number().int().nonnegative().optional(),
           })
           .strict()
           .optional(),
@@ -436,24 +486,6 @@ export const MemorySearchSchema = z
             vectorWeight: z.number().min(0).max(1).optional(),
             textWeight: z.number().min(0).max(1).optional(),
             candidateMultiplier: z.number().int().positive().optional(),
-          })
-          .strict()
-          .optional(),
-      })
-      .strict()
-      .optional(),
-    degraded: z
-      .object({
-        mode: z.union([z.literal("keyword-only"), z.literal("off")]).optional(),
-        maxResults: z.number().int().positive().optional(),
-        reasonCodes: z.boolean().optional(),
-        emergency: z
-          .object({
-            autoLocal: z.boolean().optional(),
-            failoverThreshold: z.number().int().positive().optional(),
-            recoverThreshold: z.number().int().positive().optional(),
-            recoverCooldownMs: z.number().int().nonnegative().optional(),
-            probeIntervalMs: z.number().int().nonnegative().optional(),
           })
           .strict()
           .optional(),

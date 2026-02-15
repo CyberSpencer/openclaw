@@ -264,6 +264,8 @@ export const OpenClawSchema = z
             billingBackoffHoursByProvider: z.record(z.string(), z.number().positive()).optional(),
             billingMaxHours: z.number().positive().optional(),
             failureWindowHours: z.number().positive().optional(),
+            timeoutCooldownSeconds: z.number().positive().optional(),
+            timeoutMaxSeconds: z.number().positive().optional(),
           })
           .strict()
           .optional(),
@@ -695,6 +697,20 @@ export const OpenClawSchema = z
         bufferMs: z.number().int().positive().optional(),
         maxRecordingSeconds: z.number().int().positive().optional(),
         vadSensitivity: z.number().min(0).max(1).optional(),
+      })
+      .strict()
+      .optional(),
+    dgx: z
+      .object({
+        accessMode: z.union([z.literal("auto"), z.literal("lan"), z.literal("wan")]).optional(),
+        wanBaseUrl: z.string().optional(),
+        wanHeaders: z.record(z.string(), z.string()).optional(),
+      })
+      .strict()
+      .optional(),
+    routing: z
+      .object({
+        localFallbackModel: z.string().optional(),
       })
       .strict()
       .optional(),

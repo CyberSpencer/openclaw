@@ -165,6 +165,71 @@ describe("embedding provider remote overrides", () => {
     expect(headers["x-goog-api-key"]).toBe("gemini-key");
     expect(headers["Content-Type"]).toBe("application/json");
   });
+
+  it("fails over from LAN endpoint to WAN endpoint and tracks active endpoint", async () => {
+    const fetchMock = vi.fn(async (input: unknown, init?: RequestInit) => {
+      const url = String(input);
+      if (url === "http://spark-lan:8081/v1/health") {
+        return new Response("", { status: 503 });
+      }
+      if (url === "https://spark-wan.example/embeddings/v1/health") {
+        return new Response("", { status: 200 });
+      }
+      if (url === "https://spark-wan.example/embeddings/v1/embeddings") {
+        const headers = (init?.headers ?? {}) as Record<string, string>;
+        expect(headers["X-OpenClaw-Token"]).toBe("wan-token");
+        return new Response(
+          JSON.stringify({
+            data: [{ embedding: [1, 2, 3] }],
+          }),
+          { status: 200, headers: { "Content-Type": "application/json" } },
+        );
+      }
+      return new Response("unreachable", { status: 502 });
+    }) as unknown as typeof fetch;
+    vi.stubGlobal("fetch", fetchMock);
+
+    const { createEmbeddingProvider } = await import("./embeddings.js");
+    const authModule = await import("../agents/model-auth.js");
+    vi.mocked(authModule.resolveApiKeyForProvider).mockResolvedValue({
+      apiKey: "provider-key",
+      mode: "api-key",
+      source: "test",
+    });
+
+    const result = await createEmbeddingProvider({
+      config: {} as never,
+      provider: "openai",
+      remote: {
+        apiKey: "remote-key",
+        endpoints: [
+          {
+            baseUrl: "http://spark-lan:8081/v1",
+            priority: 0,
+            healthUrl: "http://spark-lan:8081/v1/health",
+            healthTimeoutMs: 500,
+            healthCacheTtlMs: 1,
+          },
+          {
+            baseUrl: "https://spark-wan.example/embeddings/v1",
+            priority: 5,
+            headers: { "X-OpenClaw-Token": "wan-token" },
+            healthUrl: "https://spark-wan.example/embeddings/v1/health",
+            healthTimeoutMs: 500,
+            healthCacheTtlMs: 1,
+          },
+        ],
+      },
+      model: "text-embedding-3-small",
+      fallback: "none",
+    });
+
+    const vector = await result.provider.embedQuery("hello");
+    expect(vector).toEqual([1, 2, 3]);
+    expect(result.openAi?.activeEndpoint).toBe("https://spark-wan.example/embeddings/v1");
+    expect(result.openAi?.lastEndpointErrors).toEqual([]);
+    expect(authModule.resolveApiKeyForProvider).not.toHaveBeenCalled();
+  });
 });
 
 describe("embedding provider auto selection", () => {

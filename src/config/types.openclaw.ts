@@ -99,6 +99,18 @@ export type OpenClawConfig = {
   gateway?: GatewayConfig;
   voice?: VoiceConfig;
   memory?: MemoryConfig;
+  dgx?: {
+    /** DGX access mode for WAN/LAN routing (auto, lan, wan). */
+    accessMode?: "auto" | "lan" | "wan";
+    /** WAN base URL (e.g. ngrok HTTPS endpoint). */
+    wanBaseUrl?: string;
+    /** Extra headers for WAN requests (e.g. auth tokens). */
+    wanHeaders?: Record<string, string>;
+  };
+  routing?: {
+    /** Local fallback model when router fails (e.g. "spark-ollama/gpt-oss:120b" or "ollama/gpt-oss:20b"). */
+    localFallbackModel?: string;
+  };
 };
 
 export type ConfigValidationIssue = {

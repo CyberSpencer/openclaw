@@ -170,6 +170,7 @@ export const AgentDefaultsSchema = z
       })
       .strict()
       .optional(),
+    secretsLocalModel: z.string().optional(),
   })
   .strict()
   .optional();

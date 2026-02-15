@@ -304,6 +304,110 @@ describe("memory search config", () => {
     ]);
   });
 
+  it("merges remote endpoint arrays with deterministic priority ordering", () => {
+    const cfg = {
+      agents: {
+        defaults: {
+          memorySearch: {
+            provider: "openai",
+            remote: {
+              endpoints: [
+                {
+                  baseUrl: "https://spark-wan.example/embeddings/v1",
+                  priority: 5,
+                  headers: { "X-Wan": "1" },
+                },
+                {
+                  baseUrl: "http://spark-lan:8081/v1",
+                  priority: 10,
+                },
+              ],
+            },
+          },
+        },
+        list: [
+          {
+            id: "main",
+            default: true,
+            memorySearch: {
+              remote: {
+                endpoints: [
+                  {
+                    baseUrl: "http://spark-lan:8081/v1",
+                    priority: 0,
+                    timeoutMs: 1500,
+                  },
+                ],
+              },
+            },
+          },
+        ],
+      },
+    };
+    const resolved = resolveMemorySearchConfig(cfg, "main");
+    expect(resolved?.remote?.endpoints).toEqual([
+      {
+        baseUrl: "http://spark-lan:8081/v1",
+        priority: 0,
+        timeoutMs: 1500,
+      },
+      {
+        baseUrl: "https://spark-wan.example/embeddings/v1",
+        priority: 5,
+        headers: { "X-Wan": "1" },
+      },
+    ]);
+  });
+
+  it("preserves qdrant endpoint headers and applies degraded defaults", () => {
+    const cfg = {
+      agents: {
+        defaults: {
+          memorySearch: {
+            provider: "openai",
+            store: {
+              qdrant: {
+                endpoints: [
+                  {
+                    url: "https://spark-wan.example/qdrant",
+                    priority: 5,
+                    headers: {
+                      "ngrok-skip-browser-warning": "true",
+                      "X-OpenClaw-Token": "${DGX_WAN_TOKEN}",
+                    },
+                  },
+                ],
+              },
+            },
+          },
+        },
+      },
+    };
+    const resolved = resolveMemorySearchConfig(cfg, "main");
+    expect(resolved?.store.qdrant.endpoints).toEqual([
+      {
+        url: "https://spark-wan.example/qdrant",
+        priority: 5,
+        headers: {
+          "ngrok-skip-browser-warning": "true",
+          "X-OpenClaw-Token": "${DGX_WAN_TOKEN}",
+        },
+      },
+    ]);
+    expect(resolved?.degraded).toEqual({
+      mode: "keyword-only",
+      maxResults: 6,
+      reasonCodes: true,
+      emergency: {
+        autoLocal: true,
+        failoverThreshold: 2,
+        recoverThreshold: 2,
+        recoverCooldownMs: 30000,
+        probeIntervalMs: 10000,
+      },
+    });
+  });
+
   it("applies degraded emergency override values", () => {
     const cfg = {
       agents: {

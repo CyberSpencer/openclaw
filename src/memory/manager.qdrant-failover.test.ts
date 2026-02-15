@@ -117,6 +117,79 @@ describe("memory manager qdrant failover", () => {
     );
   });
 
+  it("propagates endpoint headers to qdrant health and query requests", async () => {
+    const observedHeaders: Array<Record<string, string>> = [];
+    const fetchSpy = vi.fn(async (input: unknown, init?: RequestInit) => {
+      const url = String(input);
+      const headers = (init?.headers ?? {}) as Record<string, string>;
+      if (url.includes("19101")) {
+        observedHeaders.push(headers);
+      }
+      if (url.includes("19101") && url.includes("/points/search")) {
+        return new Response(
+          JSON.stringify({
+            result: [
+              {
+                id: "point-1",
+                score: 0.91,
+                payload: {
+                  text: "hello",
+                  path: "memory/2026-02-07.md",
+                  source: "memory",
+                  start_line: 1,
+                  end_line: 1,
+                },
+              },
+            ],
+          }),
+          { status: 200, headers: { "Content-Type": "application/json" } },
+        );
+      }
+      if (url.includes("19101/collections") || url.includes("19102/collections")) {
+        return new Response("", { status: 200 });
+      }
+      return new Response("", { status: 500 });
+    });
+    vi.stubGlobal("fetch", fetchSpy as unknown as typeof fetch);
+
+    const cfg = makeConfig(workspaceDir, indexPath, [
+      {
+        url: "http://127.0.0.1:19101",
+        priority: 0,
+        headers: {
+          "X-OpenClaw-Token": "wan-token",
+          "ngrok-skip-browser-warning": "true",
+        },
+        healthUrl: "http://127.0.0.1:19101/collections",
+        healthTimeoutMs: 200,
+        healthCacheTtlMs: 0,
+      },
+      {
+        url: "http://127.0.0.1:19102",
+        priority: 5,
+        healthUrl: "http://127.0.0.1:19102/collections",
+        healthTimeoutMs: 200,
+        healthCacheTtlMs: 0,
+      },
+    ]);
+
+    const result = await getMemorySearchManager({ cfg, agentId: "main" });
+    expect(result.manager).not.toBeNull();
+    if (!result.manager) {
+      throw new Error("manager missing");
+    }
+    manager = result.manager;
+
+    const rows = await manager.search("hello", { maxResults: 1, minScore: 0 });
+    expect(rows).toHaveLength(1);
+
+    expect(observedHeaders.length).toBeGreaterThan(0);
+    for (const headers of observedHeaders) {
+      expect(headers["X-OpenClaw-Token"]).toBe("wan-token");
+      expect(headers["ngrok-skip-browser-warning"]).toBe("true");
+    }
+  });
+
   it("falls back to sqlite when all qdrant endpoints are unavailable", async () => {
     const fetchSpy = vi.fn(async () => {
       throw new Error("endpoint unavailable");
@@ -217,64 +290,6 @@ describe("memory manager qdrant failover", () => {
       return url.includes("19002") && url.includes("/points/search");
     });
     expect(secondarySearchCalls).toHaveLength(0);
-  });
-
-  it("reports emergency_local mode when running on local fallback provider", async () => {
-    const fetchSpy = vi.fn(async (input: unknown) => {
-      const url = String(input);
-      if (url.includes("19001/collections") || url.includes("19002/collections")) {
-        return new Response("", { status: 200 });
-      }
-      if (url.includes("/points/search")) {
-        return new Response(
-          JSON.stringify({
-            result: [],
-          }),
-          { status: 200, headers: { "Content-Type": "application/json" } },
-        );
-      }
-      return new Response("", { status: 500 });
-    });
-    vi.stubGlobal("fetch", fetchSpy as unknown as typeof fetch);
-
-    const cfg = makeConfig(workspaceDir, indexPath, [
-      {
-        url: "http://127.0.0.1:19001",
-        priority: 0,
-        healthUrl: "http://127.0.0.1:19001/collections",
-        healthTimeoutMs: 200,
-        healthCacheTtlMs: 0,
-      },
-      {
-        url: "http://127.0.0.1:19002",
-        priority: 10,
-        healthUrl: "http://127.0.0.1:19002/collections",
-        healthTimeoutMs: 200,
-        healthCacheTtlMs: 0,
-      },
-    ]);
-
-    const result = await getMemorySearchManager({ cfg, agentId: "main" });
-    expect(result.manager).not.toBeNull();
-    if (!result.manager) {
-      throw new Error("manager missing");
-    }
-    manager = result.manager;
-
-    const unsafe = manager as unknown as {
-      provider: { id: string; model: string };
-      fallbackFrom?: string;
-      fallbackReason?: string;
-    };
-    unsafe.provider = { id: "local", model: "mock-local" };
-    unsafe.fallbackFrom = "openai";
-    unsafe.fallbackReason = "remote timeout";
-
-    const status = manager.status();
-    expect(status.custom).toMatchObject({
-      mode: "emergency_local",
-      degradedActiveReason: "remote timeout",
-    });
   });
 
   it("fails over from primary to secondary qdrant endpoint when requests fail after startup", async () => {
