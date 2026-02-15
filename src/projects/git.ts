@@ -32,12 +32,12 @@ function encodeBasicAuthToken(token: string): string {
   return Buffer.from(raw, "utf-8").toString("base64");
 }
 
-function buildHttpExtraHeaderForToken(url: string, token: string): string {
+function buildHttpExtraHeaderForToken(url: string, token: string): string | null {
   if (isGithubUrl(url)) {
     return `Authorization: Basic ${encodeBasicAuthToken(token)}`;
   }
-  // Generic fallback.
-  return `Authorization: Bearer ${token}`;
+  // Avoid sending GitHub tokens to arbitrary hosts.
+  return null;
 }
 
 async function pathExists(p: string): Promise<boolean> {
@@ -60,7 +60,18 @@ export async function cloneProjectRepo(params: CloneProjectRepoParams): Promise<
   }
 
   const projectDir = resolveProjectDir(params.workspaceDir, params.projectId);
-  const destDir = path.join(projectDir, params.destSubdir?.trim() || "repo");
+  const requestedDest = params.destSubdir?.trim() || "repo";
+  if (!requestedDest) {
+    throw new Error("destSubdir required");
+  }
+  if (path.isAbsolute(requestedDest)) {
+    throw new Error("destSubdir must be a relative path");
+  }
+  const destDir = path.resolve(projectDir, requestedDest);
+  const projectRoot = path.resolve(projectDir);
+  if (!destDir.startsWith(projectRoot + path.sep)) {
+    throw new Error("destSubdir must stay within the project directory");
+  }
 
   if (await pathExists(destDir)) {
     throw new Error(`Destination already exists: ${destDir}`);
@@ -83,10 +94,12 @@ export async function cloneProjectRepo(params: CloneProjectRepoParams): Promise<
   let usedToken = false;
 
   if (token) {
-    usedToken = true;
     const header = buildHttpExtraHeaderForToken(url, token);
-    // Avoid printing token via logs; only pass it as an arg.
-    args.push("-c", `http.extraHeader=${header}`);
+    if (header) {
+      usedToken = true;
+      // Avoid printing token via logs; only pass it as an arg.
+      args.push("-c", `http.extraHeader=${header}`);
+    }
   }
 
   args.push("clone", "--depth", "1");

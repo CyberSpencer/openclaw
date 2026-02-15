@@ -19,7 +19,7 @@ import { runCommandWithTimeout } from "../process/exec.js";
 import { cloneProjectRepo } from "./git.js";
 
 describe("projects/git", () => {
-  it("clones into projects/<id>/repo and uses token header when present", async () => {
+  it("clones into projects/<id>/repo and uses token header when present (github)", async () => {
     const ws = await fs.mkdtemp(path.join(os.tmpdir(), "openclaw-project-git-"));
     const projectId = "alpha";
     const projectDir = path.join(ws, "projects", projectId);
@@ -50,5 +50,21 @@ describe("projects/git", () => {
     expect(argv.join(" ")).toContain("clone");
     // Should include http.extraHeader configuration.
     expect(argv.join(" ")).toContain("http.extraHeader=Authorization:");
+  });
+
+  it("rejects destSubdir traversal", async () => {
+    const ws = await fs.mkdtemp(path.join(os.tmpdir(), "openclaw-project-git-"));
+    const projectId = "alpha";
+    const projectDir = path.join(ws, "projects", projectId);
+    await fs.mkdir(projectDir, { recursive: true });
+
+    await expect(
+      cloneProjectRepo({
+        workspaceDir: ws,
+        projectId,
+        url: "https://github.com/example/repo.git",
+        destSubdir: "../../tmp/evil",
+      }),
+    ).rejects.toThrow(/destSubdir must stay within the project directory/i);
   });
 });
