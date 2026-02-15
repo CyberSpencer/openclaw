@@ -59,7 +59,9 @@ function clampText(text: string, maxChars: number): { text: string; truncated: b
   if (text.length <= maxChars) {
     return { text, truncated: false };
   }
-  return { text: text.slice(0, Math.max(0, maxChars)) + "\n\n…truncated…", truncated: true };
+  const marker = "\n\n…truncated…";
+  const headLen = Math.max(0, maxChars - marker.length);
+  return { text: text.slice(0, headLen) + marker, truncated: true };
 }
 
 async function readFileIfExists(absPath: string): Promise<string | null> {
