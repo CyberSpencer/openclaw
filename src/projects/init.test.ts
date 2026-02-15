@@ -17,4 +17,18 @@ describe("projects/init", () => {
     expect(second.created.length).toBe(0);
     expect(second.skipped.length).toBeGreaterThan(0);
   });
+
+  it("fails when a required directory path exists as a file", async () => {
+    const ws = await fs.mkdtemp(path.join(os.tmpdir(), "openclaw-project-init-"));
+    const projectId = "alpha";
+    const projectDir = path.join(ws, "projects", projectId);
+    await fs.mkdir(projectDir, { recursive: true });
+
+    // Create a file where instructions/ directory should exist.
+    await fs.writeFile(path.join(projectDir, "instructions"), "not a dir", "utf-8");
+
+    await expect(initProject({ workspaceDir: ws, projectId })).rejects.toThrow(
+      /exists and is not a directory/i,
+    );
+  });
 });

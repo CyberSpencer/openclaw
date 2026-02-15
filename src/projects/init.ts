@@ -22,7 +22,24 @@ async function writeFileIfMissing(absPath: string, content: string): Promise<boo
   if (await fileExists(absPath)) {
     return false;
   }
-  await fs.mkdir(path.dirname(absPath), { recursive: true });
+
+  const parent = path.dirname(absPath);
+  try {
+    const stat = await fs.stat(parent);
+    if (!stat.isDirectory()) {
+      throw new Error(`Cannot create ${absPath}: ${parent} exists and is not a directory`);
+    }
+  } catch (err) {
+    const code = err && typeof err === "object" ? (err as { code?: unknown }).code : undefined;
+    if (code === "ENOENT") {
+      await fs.mkdir(parent, { recursive: true });
+    } else if (err instanceof Error) {
+      throw err;
+    } else {
+      throw new Error(String(err), { cause: err });
+    }
+  }
+
   await fs.writeFile(absPath, content, "utf-8");
   return true;
 }
