@@ -136,7 +136,7 @@ export const handleProjectCommand: CommandHandler = async (params, allowTextComm
     sessionStore[sessionKey] = sessionEntry;
     if (params.storePath) {
       await updateSessionStore(params.storePath, (store) => {
-        store[sessionKey] = sessionEntry as SessionEntry;
+        store[sessionKey] = sessionEntry;
       });
     }
     return {
@@ -164,7 +164,7 @@ export const handleProjectCommand: CommandHandler = async (params, allowTextComm
     sessionStore[sessionKey] = sessionEntry;
     if (params.storePath) {
       await updateSessionStore(params.storePath, (store) => {
-        store[sessionKey] = sessionEntry as SessionEntry;
+        store[sessionKey] = sessionEntry;
       });
     }
     return {
@@ -197,7 +197,7 @@ export const handleProjectCommand: CommandHandler = async (params, allowTextComm
   sessionStore[sessionKey] = sessionEntry;
   if (params.storePath) {
     await updateSessionStore(params.storePath, (store) => {
-      store[sessionKey] = sessionEntry as SessionEntry;
+      store[sessionKey] = sessionEntry;
     });
   }
 
