@@ -130,16 +130,29 @@ export function handleMessageUpdate(
     const hasMedia = Boolean(mediaUrls && mediaUrls.length > 0);
     const hasAudio = Boolean(parsedDelta?.audioAsVoice);
     const previousCleaned = ctx.state.lastStreamedAssistantCleaned ?? "";
+    const previousRedacted = ctx.state.lastStreamedAssistantRedacted ?? "";
 
     let shouldEmit = false;
     let deltaText = "";
+    let deltaRedacted = "";
+    let nextRedacted = previousRedacted;
+
     if (!cleanedText && !hasMedia && !hasAudio) {
       shouldEmit = false;
     } else if (previousCleaned && !cleanedText.startsWith(previousCleaned)) {
+      // Non-monotonic update (provider resend/rewind). Keep streaming quiet; final message_end
+      // will deliver a safe redacted answer.
       shouldEmit = false;
     } else {
       deltaText = cleanedText.slice(previousCleaned.length);
-      shouldEmit = Boolean(deltaText || hasMedia || hasAudio);
+      if (deltaText) {
+        deltaRedacted = ctx.state.assistantRedactor.process(deltaText);
+        if (deltaRedacted) {
+          nextRedacted = `${previousRedacted}${deltaRedacted}`;
+          ctx.state.lastStreamedAssistantRedacted = nextRedacted;
+        }
+      }
+      shouldEmit = Boolean(deltaRedacted || hasMedia || hasAudio);
     }
 
     ctx.state.lastStreamedAssistant = next;
@@ -150,23 +163,23 @@ export function handleMessageUpdate(
         runId: ctx.params.runId,
         stream: "assistant",
         data: {
-          text: cleanedText,
-          delta: deltaText,
+          text: nextRedacted,
+          delta: deltaRedacted,
           mediaUrls: hasMedia ? mediaUrls : undefined,
         },
       });
       void ctx.params.onAgentEvent?.({
         stream: "assistant",
         data: {
-          text: cleanedText,
-          delta: deltaText,
+          text: nextRedacted,
+          delta: deltaRedacted,
           mediaUrls: hasMedia ? mediaUrls : undefined,
         },
       });
       ctx.state.emittedAssistantUpdate = true;
       if (ctx.params.onPartialReply && ctx.state.shouldEmitPartialReplies) {
         void ctx.params.onPartialReply({
-          text: cleanedText,
+          text: nextRedacted,
           mediaUrls: hasMedia ? mediaUrls : undefined,
         });
       }
@@ -235,21 +248,56 @@ export function handleMessageEnd(
     }
   }
 
-  if (!ctx.state.emittedAssistantUpdate && (cleanedText || hasMedia)) {
+  const previousRawStream = ctx.state.lastStreamedAssistantCleaned ?? "";
+  const previousRedactedStream = ctx.state.lastStreamedAssistantRedacted ?? "";
+
+  let finalRedactedText = previousRedactedStream;
+  if (cleanedText) {
+    if (previousRawStream && cleanedText.startsWith(previousRawStream)) {
+      const remainingDelta = cleanedText.slice(previousRawStream.length);
+      if (remainingDelta) {
+        const redactedDelta = ctx.state.assistantRedactor.process(remainingDelta);
+        if (redactedDelta) {
+          finalRedactedText += redactedDelta;
+        }
+      }
+      const tail = ctx.state.assistantRedactor.finalize();
+      if (tail) {
+        finalRedactedText += tail;
+      }
+    } else {
+      // Non-monotonic provider finalization: reset the streaming redactor and build a safe final answer.
+      ctx.state.assistantRedactor.reset();
+      finalRedactedText = ctx.state.assistantRedactor.process(cleanedText);
+      finalRedactedText += ctx.state.assistantRedactor.finalize();
+    }
+    ctx.state.lastStreamedAssistantRedacted = finalRedactedText;
+  }
+
+  const endDelta =
+    previousRedactedStream && finalRedactedText.startsWith(previousRedactedStream)
+      ? finalRedactedText.slice(previousRedactedStream.length)
+      : finalRedactedText;
+
+  const shouldEmitAssistantEnd =
+    (!ctx.state.emittedAssistantUpdate && (finalRedactedText || hasMedia)) || Boolean(endDelta);
+
+  if (shouldEmitAssistantEnd && (finalRedactedText || hasMedia)) {
+    const deltaForEnd = endDelta || (ctx.state.emittedAssistantUpdate ? "" : finalRedactedText);
     emitAgentEvent({
       runId: ctx.params.runId,
       stream: "assistant",
       data: {
-        text: cleanedText,
-        delta: cleanedText,
+        text: finalRedactedText,
+        delta: deltaForEnd,
         mediaUrls: hasMedia ? mediaUrls : undefined,
       },
     });
     void ctx.params.onAgentEvent?.({
       stream: "assistant",
       data: {
-        text: cleanedText,
-        delta: cleanedText,
+        text: finalRedactedText,
+        delta: deltaForEnd,
         mediaUrls: hasMedia ? mediaUrls : undefined,
       },
     });
@@ -314,10 +362,14 @@ export function handleMessageEnd(
             replyToTag,
             replyToCurrent,
           } = splitResult;
+          const redactedText = cleanedText
+            ? ctx.state.blockReplyRedactor.process(cleanedText)
+            : cleanedText;
+
           // Emit if there's content OR audioAsVoice flag (to propagate the flag).
-          if (cleanedText || (mediaUrls && mediaUrls.length > 0) || audioAsVoice) {
+          if (redactedText || (mediaUrls && mediaUrls.length > 0) || audioAsVoice) {
             void onBlockReply({
-              text: cleanedText,
+              text: redactedText,
               mediaUrls: mediaUrls?.length ? mediaUrls : undefined,
               audioAsVoice,
               replyToId,
@@ -348,9 +400,13 @@ export function handleMessageEnd(
         replyToTag,
         replyToCurrent,
       } = tailResult;
-      if (cleanedText || (mediaUrls && mediaUrls.length > 0) || audioAsVoice) {
+      const redactedText = cleanedText
+        ? ctx.state.blockReplyRedactor.process(cleanedText)
+        : cleanedText;
+
+      if (redactedText || (mediaUrls && mediaUrls.length > 0) || audioAsVoice) {
         void onBlockReply({
-          text: cleanedText,
+          text: redactedText,
           mediaUrls: mediaUrls?.length ? mediaUrls : undefined,
           audioAsVoice,
           replyToId,
@@ -358,6 +414,13 @@ export function handleMessageEnd(
           replyToCurrent,
         });
       }
+    }
+  }
+
+  if (onBlockReply) {
+    const redactedTail = ctx.state.blockReplyRedactor.finalize();
+    if (redactedTail) {
+      void onBlockReply({ text: redactedTail });
     }
   }
 

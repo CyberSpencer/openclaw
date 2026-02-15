@@ -1,6 +1,7 @@
 import {
   getDefaultRedactPatterns,
   redactSensitiveText,
+  resolveRedactSensitiveOptionsFromConfig,
   type RedactSensitiveMode,
 } from "./redact.js";
 
@@ -115,8 +116,13 @@ function computeHoldLen(raw: string, lookbackChars: number): number {
 export function createStreamingSensitiveRedactor(
   options?: StreamingSensitiveRedactorOptions,
 ): StreamingSensitiveRedactor {
-  const mode = normalizeMode(options?.mode);
-  const patterns = resolvePatterns(options?.patterns);
+  const resolvedFromConfig =
+    options?.mode === undefined && options?.patterns === undefined
+      ? resolveRedactSensitiveOptionsFromConfig()
+      : null;
+
+  const mode = normalizeMode(options?.mode ?? resolvedFromConfig?.mode);
+  const patterns = resolvePatterns(options?.patterns ?? resolvedFromConfig?.patterns);
   const lookbackChars = options?.lookbackChars ?? DEFAULT_LOOKBACK_CHARS;
 
   let pending = "";
@@ -195,15 +201,24 @@ export function createStreamingSensitiveRedactor(
     }
 
     const holdLen = computeHoldLen(pending, lookbackChars);
-    let raw = pending;
+    const raw = pending;
     pending = "";
 
-    // If the buffer ends with a suspicious suffix, mask it aggressively.
-    if (holdLen > 0) {
-      raw = `${raw.slice(0, Math.max(0, raw.length - holdLen))}***`;
+    // First attempt: normal regex redaction. If this changes the buffer,
+    // it is safe to emit (even if the suffix matches a hold rule).
+    const redacted = redactSensitiveText(raw, { mode, patterns });
+    if (redacted !== raw) {
+      return redacted;
     }
 
-    return redactSensitiveText(raw, { mode, patterns });
+    // Otherwise, the buffer contains a suspicious suffix that does not match
+    // redaction patterns yet (likely an incomplete token). Mask it aggressively.
+    if (holdLen > 0) {
+      const masked = `${raw.slice(0, Math.max(0, raw.length - holdLen))}***`;
+      return redactSensitiveText(masked, { mode, patterns });
+    }
+
+    return redacted;
   };
 
   return { process, finalize, reset };
