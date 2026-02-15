@@ -117,6 +117,11 @@ export type SessionEntry = {
   skillsSnapshot?: SessionSkillSnapshot;
   systemPromptReport?: SessionSystemPromptReport;
   taskPlan?: TaskPlan;
+
+  /** Optional active project context for this session (workspace-relative id/slug). */
+  projectId?: string;
+  /** Memory visibility mode when projectId is set (default handled by command layer). */
+  projectMemoryMode?: "project-only" | "project+global";
 };
 
 export function mergeSessionEntry(
