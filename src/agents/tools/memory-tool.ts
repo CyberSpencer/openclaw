@@ -332,7 +332,8 @@ async function loadProjectScopeForSession(params: {
     return null;
   }
 
-  const mode = (entry?.projectMemoryMode ?? "project+global") as ProjectScope["mode"];
+  const mode: ProjectScope["mode"] =
+    entry?.projectMemoryMode === "project-only" ? "project-only" : "project+global";
   return { projectId, mode };
 }
 

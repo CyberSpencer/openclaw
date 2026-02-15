@@ -107,10 +107,19 @@ describe("memory tools project scope", () => {
     }
 
     const result = await tool.execute("call_1", { query: "hello" });
-    const details = result.details as unknown as {
-      results: Array<{ path: string }>;
-    };
-    const paths = details.results.map((r) => r.path);
+    const raw = result.details;
+    if (!raw || typeof raw !== "object") {
+      throw new Error("missing tool details");
+    }
+    const results = (raw as { results?: unknown }).results;
+    if (!Array.isArray(results)) {
+      throw new Error("missing results");
+    }
+    const paths = results
+      .map((entry) =>
+        entry && typeof entry === "object" ? (entry as { path?: unknown }).path : undefined,
+      )
+      .filter((value): value is string => typeof value === "string");
     expect(paths).toEqual(["projects/alpha/MEMORY.md"]);
   });
 
@@ -163,10 +172,19 @@ describe("memory tools project scope", () => {
     }
 
     const result = await tool.execute("call_1", { query: "hello" });
-    const details = result.details as unknown as {
-      results: Array<{ path: string }>;
-    };
-    const paths = details.results.map((r) => r.path);
+    const raw = result.details;
+    if (!raw || typeof raw !== "object") {
+      throw new Error("missing tool details");
+    }
+    const results = (raw as { results?: unknown }).results;
+    if (!Array.isArray(results)) {
+      throw new Error("missing results");
+    }
+    const paths = results
+      .map((entry) =>
+        entry && typeof entry === "object" ? (entry as { path?: unknown }).path : undefined,
+      )
+      .filter((value): value is string => typeof value === "string");
     expect(paths).toEqual(["MEMORY.md", "projects/alpha/MEMORY.md"]);
   });
 
@@ -195,12 +213,14 @@ describe("memory tools project scope", () => {
     }
 
     const result = await tool.execute("call_2", { path: "projects/beta/MEMORY.md" });
-    const details = result.details as unknown as {
-      disabled?: boolean;
-      error?: string;
-    };
-    expect(details.disabled).toBe(true);
-    expect(details.error).toContain("Path not allowed");
+    const raw = result.details;
+    if (!raw || typeof raw !== "object") {
+      throw new Error("missing tool details");
+    }
+    const disabled = (raw as { disabled?: unknown }).disabled;
+    const error = (raw as { error?: unknown }).error;
+    expect(disabled).toBe(true);
+    expect(error).toContain("Path not allowed");
     expect(readFileMock).not.toHaveBeenCalled();
   });
 });
