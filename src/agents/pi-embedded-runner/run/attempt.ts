@@ -10,6 +10,8 @@ import { resolveChannelCapabilities } from "../../../config/channel-capabilities
 import { getMachineDisplayName } from "../../../infra/machine-name.js";
 import { MAX_IMAGE_BYTES } from "../../../media/constants.js";
 import { getGlobalHookRunner } from "../../../plugins/hook-runner-global.js";
+import { applyProjectEnvOverrides } from "../../../projects/env.js";
+import { resolveProjectSessionScope } from "../../../projects/session.js";
 import { isSubagentSessionKey, normalizeAgentId } from "../../../routing/session-key.js";
 import { resolveSignalReactionLevel } from "../../../signal/reaction-level.js";
 import { resolveTelegramInlineButtonsScope } from "../../../telegram/inline-buttons.js";
@@ -163,9 +165,36 @@ export async function runEmbeddedAttempt(
     : resolvedWorkspace;
   await fs.mkdir(effectiveWorkspace, { recursive: true });
 
+  let restoreProjectEnv: (() => void) | undefined;
   let restoreSkillEnv: (() => void) | undefined;
   process.chdir(effectiveWorkspace);
   try {
+    // Phase 2: apply project-scoped env vars (variables.env + secrets.env) if an active
+    // project is set on this session.
+    const resolvedAgentIdsEarly = resolveSessionAgentIds({
+      sessionKey: params.sessionKey,
+      config: params.config,
+    });
+    const projectScope = params.config
+      ? resolveProjectSessionScope({
+          cfg: params.config,
+          agentId: resolvedAgentIdsEarly.sessionAgentId,
+          sessionKey: params.sessionKey ?? params.sessionId,
+        })
+      : null;
+
+    if (projectScope) {
+      const applied = await applyProjectEnvOverrides({
+        workspaceDir: effectiveWorkspace,
+        projectId: projectScope.projectId,
+      });
+      restoreProjectEnv = applied.restore;
+      const keys = Object.keys(applied.loaded.merged);
+      log.debug(
+        `Applied project env overrides: project=${projectScope.projectId} keys=${keys.length}`,
+      );
+    }
+
     const shouldLoadSkillEntries = !params.skillsSnapshot || !params.skillsSnapshot.resolvedSkills;
     const skillEntries = shouldLoadSkillEntries
       ? loadWorkspaceSkillEntries(effectiveWorkspace)
@@ -925,6 +954,7 @@ export async function runEmbeddedAttempt(
     }
   } finally {
     restoreSkillEnv?.();
+    restoreProjectEnv?.();
     process.chdir(prevCwd);
   }
 }
