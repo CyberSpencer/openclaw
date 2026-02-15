@@ -1,5 +1,14 @@
 import type { OpenClawConfig } from "../config/config.js";
+import type { SessionEntry } from "../config/sessions.js";
 import type { EmbeddedContextFile } from "./pi-embedded-helpers.js";
+import {
+  loadSessionStore,
+  resolveStorePath,
+  canonicalizeMainSessionAlias,
+} from "../config/sessions.js";
+import { listProjectContextFiles } from "../projects/projects.js";
+import { isSubagentSessionKey } from "../routing/session-key.js";
+import { resolveSessionAgentId } from "./agent-scope.js";
 import { applyBootstrapHookOverrides } from "./bootstrap-hooks.js";
 import { buildBootstrapContextFiles, resolveBootstrapMaxChars } from "./pi-embedded-helpers.js";
 import {
@@ -56,5 +65,64 @@ export async function resolveBootstrapContextForRun(params: {
     maxChars: resolveBootstrapMaxChars(params.config),
     warn: params.warn,
   });
+
+  const projectContextFiles = await loadProjectContextForSession({
+    workspaceDir: params.workspaceDir,
+    cfg: params.config,
+    sessionKey: params.sessionKey ?? params.sessionId,
+    agentId: params.agentId,
+  });
+  if (projectContextFiles.length > 0) {
+    contextFiles.push(...projectContextFiles);
+  }
+
   return { bootstrapFiles, contextFiles };
+}
+
+async function loadProjectContextForSession(params: {
+  workspaceDir: string;
+  cfg?: OpenClawConfig;
+  sessionKey?: string;
+  sessionId?: string;
+  agentId?: string;
+}): Promise<EmbeddedContextFile[]> {
+  const cfg = params.cfg;
+  if (!cfg) {
+    return [];
+  }
+
+  const rawSessionKey = (params.sessionKey ?? params.sessionId ?? "").trim();
+  if (!rawSessionKey) {
+    return [];
+  }
+
+  // Avoid injecting project context into subagent sessions (keep context minimal).
+  if (isSubagentSessionKey(rawSessionKey)) {
+    return [];
+  }
+
+  const agentId = (
+    params.agentId ?? resolveSessionAgentId({ sessionKey: rawSessionKey, config: cfg })
+  ).trim();
+  const storePath = resolveStorePath(cfg.session?.store, { agentId });
+  const store = loadSessionStore(storePath);
+
+  const normalized = rawSessionKey.toLowerCase();
+  let candidateKey = canonicalizeMainSessionAlias({ cfg, agentId, sessionKey: normalized });
+  if (
+    candidateKey !== "global" &&
+    candidateKey !== "unknown" &&
+    !candidateKey.startsWith("agent:")
+  ) {
+    candidateKey = `agent:${agentId}:${candidateKey}`;
+  }
+
+  const entry: SessionEntry | undefined =
+    store[candidateKey] ?? store[normalized] ?? store[rawSessionKey];
+  const projectId = entry?.projectId?.trim();
+  if (!projectId) {
+    return [];
+  }
+
+  return await listProjectContextFiles(params.workspaceDir, projectId);
 }
