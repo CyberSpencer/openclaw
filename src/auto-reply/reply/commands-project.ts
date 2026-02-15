@@ -1,9 +1,8 @@
-import fs from "node:fs/promises";
-import path from "node:path";
 import type { SessionEntry } from "../../config/sessions.js";
 import type { CommandHandler } from "./commands-types.js";
 import { updateSessionStore } from "../../config/sessions.js";
 import { logVerbose } from "../../globals.js";
+import { listProjects, sanitizeProjectId } from "../../projects/projects.js";
 
 type ProjectMemoryMode = NonNullable<SessionEntry["projectMemoryMode"]>;
 
@@ -39,12 +38,6 @@ function parseProjectCommand(normalized: string): ParsedProjectCommand {
   return { hasCommand: true, action: "set", value: rest };
 }
 
-function sanitizeProjectId(input: string): string {
-  const trimmed = input.trim().toLowerCase();
-  const dashed = trimmed.replace(/[^a-z0-9-_]+/g, "-");
-  return dashed.replace(/^-+/, "").replace(/-+$/, "");
-}
-
 function normalizeMemoryMode(raw: string): ProjectMemoryMode | null {
   const value = raw.trim().toLowerCase();
   if (!value) {
@@ -57,20 +50,6 @@ function normalizeMemoryMode(raw: string): ProjectMemoryMode | null {
     return "project+global";
   }
   return null;
-}
-
-async function listProjects(workspaceDir: string): Promise<string[]> {
-  const projectsDir = path.join(workspaceDir, "projects");
-  try {
-    const entries = await fs.readdir(projectsDir, { withFileTypes: true });
-    return entries
-      .filter((entry) => entry.isDirectory())
-      .map((entry) => entry.name)
-      .filter(Boolean)
-      .toSorted((a, b) => a.localeCompare(b));
-  } catch {
-    return [];
-  }
 }
 
 export const handleProjectCommand: CommandHandler = async (params, allowTextCommands) => {
