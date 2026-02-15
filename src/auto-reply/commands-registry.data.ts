@@ -392,6 +392,29 @@ function buildChatCommands(): ChatCommandDefinition[] {
       argsMenu: "auto",
     }),
     defineChatCommand({
+      key: "project",
+      nativeName: "project",
+      description: "Manage active project context (set/clear/show/list/mode).",
+      textAlias: "/project",
+      acceptsArgs: true,
+      category: "management",
+      args: [
+        {
+          name: "action",
+          description: "set, clear, show, list, or mode",
+          type: "string",
+          choices: ["set", "clear", "show", "list", "mode"],
+        },
+        {
+          name: "value",
+          description: "Project id (for set), or memory mode (for mode)",
+          type: "string",
+          captureRemaining: true,
+        },
+      ],
+      argsMenu: "auto",
+    }),
+    defineChatCommand({
       key: "reset",
       nativeName: "reset",
       description: "Reset the current session.",

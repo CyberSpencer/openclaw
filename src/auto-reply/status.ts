@@ -525,6 +525,10 @@ export function buildHelpMessage(cfg?: OpenClawConfig): string {
   lines.push("  /status  |  /whoami  |  /context");
   lines.push("");
 
+  lines.push("Management");
+  lines.push("  /project set <id>  |  /project clear  |  /project show");
+  lines.push("");
+
   lines.push("Skills");
   lines.push("  /skill <name> [input]");
 
