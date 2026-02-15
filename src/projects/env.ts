@@ -12,17 +12,29 @@ export type ProjectEnvLoadResult = {
 const ENV_LINE_RE = /^\s*([A-Za-z_][A-Za-z0-9_]*)\s*=\s*(.*)\s*$/;
 
 function stripInlineComment(value: string): string {
-  // Best-effort: only strip comments when not inside quotes.
-  // This is intentionally conservative.
+  // Best-effort: strip trailing comments when not inside quotes.
   const trimmed = value.trim();
   if (!trimmed) {
     return "";
   }
+
   const quote = trimmed[0];
   if (quote === '"' || quote === "'") {
-    // If quoted, keep as-is and rely on unquote.
+    // If quoted, keep the quoted segment and drop anything after it.
+    for (let i = 1; i < trimmed.length; i += 1) {
+      const ch = trimmed[i];
+      if (ch === "\\") {
+        i += 1;
+        continue;
+      }
+      if (ch === quote) {
+        return trimmed.slice(0, i + 1).trim();
+      }
+    }
+    // No closing quote, leave as-is.
     return trimmed;
   }
+
   const hash = trimmed.indexOf("#");
   if (hash === -1) {
     return trimmed;

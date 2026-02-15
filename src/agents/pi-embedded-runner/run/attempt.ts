@@ -185,7 +185,9 @@ export async function runEmbeddedAttempt(
 
     if (projectScope) {
       const applied = await applyProjectEnvOverrides({
-        workspaceDir: effectiveWorkspace,
+        // Use the real workspace root for project env (./projects/<id>/...) even when
+        // sandboxing is enabled.
+        workspaceDir: resolvedWorkspace,
         projectId: projectScope.projectId,
       });
       restoreProjectEnv = applied.restore;
