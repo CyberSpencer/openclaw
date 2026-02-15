@@ -1,6 +1,7 @@
 import type { AgentEvent } from "@mariozechner/pi-agent-core";
 import type { EmbeddedPiSubscribeContext } from "./pi-embedded-subscribe.handlers.types.js";
 import { emitAgentEvent } from "../infra/agent-events.js";
+import { redactSensitiveText } from "../logging/redact.js";
 import { normalizeTextForComparison } from "./pi-embedded-helpers.js";
 import { isMessagingTool, isMessagingToolSendAction } from "./pi-embedded-messaging.js";
 import {
@@ -12,6 +13,28 @@ import {
 } from "./pi-embedded-subscribe.tools.js";
 import { inferToolMetaFromArgs } from "./pi-embedded-utils.js";
 import { normalizeToolName } from "./tool-policy.js";
+
+function redactToolValue(value: unknown, depth = 0): unknown {
+  if (depth > 8) {
+    return value;
+  }
+  if (typeof value === "string") {
+    return redactSensitiveText(value);
+  }
+  if (Array.isArray(value)) {
+    return value.map((entry) => redactToolValue(entry, depth + 1));
+  }
+  if (!value || typeof value !== "object") {
+    return value;
+  }
+  // Best-effort plain-object walk.
+  const rec = value as Record<string, unknown>;
+  const out: Record<string, unknown> = {};
+  for (const [k, v] of Object.entries(rec)) {
+    out[k] = redactToolValue(v, depth + 1);
+  }
+  return out;
+}
 
 function extendExecMeta(toolName: string, args: unknown, meta?: string): string | undefined {
   const normalized = toolName.trim().toLowerCase();
@@ -69,6 +92,8 @@ export async function handleToolExecutionStart(
   );
 
   const shouldEmitToolEvents = ctx.shouldEmitToolResult();
+  const redactedArgs = redactToolValue(args) as Record<string, unknown>;
+
   emitAgentEvent({
     runId: ctx.params.runId,
     stream: "tool",
@@ -76,7 +101,7 @@ export async function handleToolExecutionStart(
       phase: "start",
       name: toolName,
       toolCallId,
-      args: args as Record<string, unknown>,
+      args: redactedArgs,
     },
   });
   // Best-effort typing signal; do not block tool summaries on slow emitters.
@@ -125,6 +150,7 @@ export function handleToolExecutionUpdate(
   const toolCallId = String(evt.toolCallId);
   const partial = evt.partialResult;
   const sanitized = sanitizeToolResult(partial);
+  const redactedPartial = redactToolValue(sanitized);
   emitAgentEvent({
     runId: ctx.params.runId,
     stream: "tool",
@@ -132,7 +158,7 @@ export function handleToolExecutionUpdate(
       phase: "update",
       name: toolName,
       toolCallId,
-      partialResult: sanitized,
+      partialResult: redactedPartial,
     },
   });
   void ctx.params.onAgentEvent?.({
@@ -160,12 +186,13 @@ export function handleToolExecutionEnd(
   const result = evt.result;
   const isToolError = isError || isToolResultError(result);
   const sanitizedResult = sanitizeToolResult(result);
+  const redactedResult = redactToolValue(sanitizedResult);
   const meta = ctx.state.toolMetaById.get(toolCallId);
   ctx.state.toolMetas.push({ toolName, meta });
   ctx.state.toolMetaById.delete(toolCallId);
   ctx.state.toolSummaryById.delete(toolCallId);
   if (isToolError) {
-    const errorMessage = extractToolErrorMessage(sanitizedResult);
+    const errorMessage = redactSensitiveText(extractToolErrorMessage(sanitizedResult));
     ctx.state.lastToolError = {
       toolName,
       meta,
@@ -202,7 +229,7 @@ export function handleToolExecutionEnd(
       toolCallId,
       meta,
       isError: isToolError,
-      result: sanitizedResult,
+      result: redactedResult,
     },
   });
   void ctx.params.onAgentEvent?.({
