@@ -1,3 +1,4 @@
+import fs from "node:fs/promises";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import {
@@ -56,5 +57,45 @@ describe("resolveBootstrapContextForRun", () => {
     const extra = result.contextFiles.find((file) => file.path === "EXTRA.md");
 
     expect(extra?.content).toBe("extra");
+  });
+
+  it("injects project context files when session has active project", async () => {
+    const workspaceDir = await makeTempWorkspace("openclaw-bootstrap-");
+    await fs.mkdir(path.join(workspaceDir, "projects", "alpha"), { recursive: true });
+    await fs.writeFile(
+      path.join(workspaceDir, "projects", "alpha", "PROJECT.md"),
+      "# Alpha\nProject context",
+      "utf-8",
+    );
+
+    const storePath = path.join(workspaceDir, "sessions.json");
+    const sessionKey = "agent:main:main";
+    const store = {
+      [sessionKey]: {
+        sessionId: "test-session",
+        updatedAt: Date.now(),
+        projectId: "alpha",
+        projectMemoryMode: "project+global",
+      },
+    };
+    await fs.writeFile(storePath, JSON.stringify(store, null, 2), "utf-8");
+
+    const cfg = {
+      session: {
+        store: storePath,
+      },
+    };
+
+    const result = await resolveBootstrapContextForRun({
+      workspaceDir,
+      config: cfg as unknown as Parameters<typeof resolveBootstrapContextForRun>[0]["config"],
+      sessionKey,
+    });
+
+    const projectFile = result.contextFiles.find(
+      (file) => file.path === "projects/alpha/PROJECT.md",
+    );
+
+    expect(projectFile?.content).toContain("Project context");
   });
 });

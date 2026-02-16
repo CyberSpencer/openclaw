@@ -448,6 +448,9 @@ export function buildStatusMessage(args: StatusArgs): string {
     usagePair && costLine ? `${usagePair} · ${costLine}` : (usagePair ?? costLine);
   const mediaLine = formatMediaUnderstandingLine(args.mediaDecisions);
   const voiceLine = formatVoiceModeLine(args.config, args.sessionEntry);
+  const projectId = entry?.projectId?.trim();
+  const projectMode = entry?.projectMemoryMode ?? "project+global";
+  const projectLine = projectId ? `📦 Project: ${projectId} (memory: ${projectMode})` : null;
 
   return [
     versionLine,
@@ -458,6 +461,7 @@ export function buildStatusMessage(args: StatusArgs): string {
     mediaLine,
     args.usageLine,
     `🧵 ${sessionLine}`,
+    projectLine,
     args.subagentsLine,
     `⚙️ ${optionsLine}`,
     voiceLine,
@@ -523,6 +527,10 @@ export function buildHelpMessage(cfg?: OpenClawConfig): string {
 
   lines.push("Status");
   lines.push("  /status  |  /whoami  |  /context");
+  lines.push("");
+
+  lines.push("Management");
+  lines.push("  /project set <id>  |  /project clear  |  /project show");
   lines.push("");
 
   lines.push("Skills");
