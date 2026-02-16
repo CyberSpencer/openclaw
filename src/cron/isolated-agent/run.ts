@@ -212,46 +212,20 @@ export async function runCronIsolatedAgentTurn(params: {
   }
   const modelOverrideRaw =
     params.job.payload.kind === "agentTurn" ? params.job.payload.model : undefined;
-  if (modelOverrideRaw !== undefined) {
-    const clearOverride = () => {
-      if (params.job.payload.kind === "agentTurn") {
-        delete params.job.payload.model;
-      }
-    };
-
-    if (typeof modelOverrideRaw !== "string") {
-      // Self-heal: bad persisted payloads should not brick cron jobs.
-      clearOverride();
-      logWarn(
-        `[cron] job ${params.job.id} has invalid model override (non-string); cleared override and using default model`,
-      );
-    } else {
-      const trimmed = modelOverrideRaw.trim();
-      if (!trimmed) {
-        clearOverride();
-      } else {
-        const resolvedOverride = resolveAllowedModelRef({
-          cfg: cfgWithAgentDefaults,
-          catalog: await loadCatalog(),
-          raw: trimmed,
-          defaultProvider: resolvedDefault.provider,
-          defaultModel: resolvedDefault.model,
-        });
-        if ("error" in resolvedOverride) {
-          // Self-heal: stale/unsupported model ids are common after upgrades.
-          clearOverride();
-          logWarn(
-            `[cron] job ${params.job.id} model override "${trimmed}" rejected (${resolvedOverride.error}); cleared override and using default model`,
-          );
-        } else {
-          if (params.job.payload.kind === "agentTurn" && params.job.payload.model !== trimmed) {
-            params.job.payload.model = trimmed;
-          }
-          provider = resolvedOverride.ref.provider;
-          model = resolvedOverride.ref.model;
-        }
-      }
+  const modelOverride = typeof modelOverrideRaw === "string" ? modelOverrideRaw.trim() : undefined;
+  if (modelOverride !== undefined && modelOverride.length > 0) {
+    const resolvedOverride = resolveAllowedModelRef({
+      cfg: cfgWithAgentDefaults,
+      catalog: await loadCatalog(),
+      raw: modelOverride,
+      defaultProvider: resolvedDefault.provider,
+      defaultModel: resolvedDefault.model,
+    });
+    if ("error" in resolvedOverride) {
+      return { status: "error", error: resolvedOverride.error };
     }
+    provider = resolvedOverride.ref.provider;
+    model = resolvedOverride.ref.model;
   }
   const now = Date.now();
   const cronSession = resolveCronSession({
@@ -476,7 +450,6 @@ export async function runCronIsolatedAgentTurn(params: {
           lane: params.lane ?? "cron",
           provider: providerOverride,
           model: modelOverride,
-          disableModelRouter: providerOverride !== provider || modelOverride !== model,
           thinkLevel,
           verboseLevel: resolvedVerboseLevel,
           timeoutMs,

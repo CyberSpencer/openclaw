@@ -658,8 +658,8 @@ export function isRateLimitErrorMessage(raw: string): boolean {
   return matchesErrorPatterns(raw, ERROR_PATTERNS.rateLimit);
 }
 
-export function isTransientNetworkErrorMessage(raw: string): boolean {
-  return matchesErrorPatterns(raw, ERROR_PATTERNS.network);
+export function isTimeoutErrorMessage(raw: string): boolean {
+  return matchesErrorPatterns(raw, ERROR_PATTERNS.timeout);
 }
 
 export function isBillingErrorMessage(raw: string): boolean {
@@ -789,8 +789,8 @@ export function classifyFailoverReason(raw: string): FailoverReason | null {
   if (isBillingErrorMessage(raw)) {
     return "billing";
   }
-  if (isTransientNetworkErrorMessage(raw)) {
-    return "network";
+  if (isTimeoutErrorMessage(raw)) {
+    return "timeout";
   }
   if (isAuthErrorMessage(raw)) {
     return "auth";

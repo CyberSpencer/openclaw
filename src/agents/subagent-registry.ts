@@ -25,6 +25,14 @@ export type SubagentRunRecord = {
   cleanup: "delete" | "keep";
   label?: string;
   model?: string;
+  modelApplied?: boolean;
+  routing?: "explicit" | "simple-kimi" | "configured-default";
+  complexity?: "simple" | "complex";
+  rootConversationId?: string;
+  threadId?: string;
+  parentRunId?: string;
+  subagentGroupId?: string;
+  taskId?: string;
   runTimeoutSeconds?: number;
   createdAt: number;
   startedAt?: number;
@@ -537,6 +545,14 @@ export function registerSubagentRun(params: {
   cleanup: "delete" | "keep";
   label?: string;
   model?: string;
+  modelApplied?: boolean;
+  routing?: "explicit" | "simple-kimi" | "configured-default";
+  complexity?: "simple" | "complex";
+  rootConversationId?: string;
+  threadId?: string;
+  parentRunId?: string;
+  subagentGroupId?: string;
+  taskId?: string;
   runTimeoutSeconds?: number;
 }) {
   const now = Date.now();
@@ -556,6 +572,14 @@ export function registerSubagentRun(params: {
     cleanup: params.cleanup,
     label: params.label,
     model: params.model,
+    modelApplied: params.modelApplied,
+    routing: params.routing,
+    complexity: params.complexity,
+    rootConversationId: params.rootConversationId,
+    threadId: params.threadId,
+    parentRunId: params.parentRunId,
+    subagentGroupId: params.subagentGroupId,
+    taskId: params.taskId,
     runTimeoutSeconds,
     createdAt: now,
     startedAt: now,

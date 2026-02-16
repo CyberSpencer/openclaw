@@ -97,9 +97,6 @@ export async function handleToolExecutionStart(
   );
 
   const shouldEmitToolEvents = ctx.shouldEmitToolResult();
-  const redactOptions = resolveRedactSensitiveOptionsFromConfig();
-  const redactedArgs = redactToolValue(args, redactOptions) as Record<string, unknown>;
-
   emitAgentEvent({
     runId: ctx.params.runId,
     stream: "tool",
@@ -107,7 +104,7 @@ export async function handleToolExecutionStart(
       phase: "start",
       name: toolName,
       toolCallId,
-      args: redactedArgs,
+      args: args as Record<string, unknown>,
     },
   });
   // Best-effort typing signal; do not block tool summaries on slow emitters.
@@ -156,8 +153,6 @@ export function handleToolExecutionUpdate(
   const toolCallId = String(evt.toolCallId);
   const partial = evt.partialResult;
   const sanitized = sanitizeToolResult(partial);
-  const redactOptions = resolveRedactSensitiveOptionsFromConfig();
-  const redactedPartial = redactToolValue(sanitized, redactOptions);
   emitAgentEvent({
     runId: ctx.params.runId,
     stream: "tool",
@@ -165,7 +160,7 @@ export function handleToolExecutionUpdate(
       phase: "update",
       name: toolName,
       toolCallId,
-      partialResult: redactedPartial,
+      partialResult: sanitized,
     },
   });
   void ctx.params.onAgentEvent?.({
@@ -199,10 +194,7 @@ export async function handleToolExecutionEnd(
   ctx.state.toolMetaById.delete(toolCallId);
   ctx.state.toolSummaryById.delete(toolCallId);
   if (isToolError) {
-    const errorMessage = redactSensitiveText(
-      extractToolErrorMessage(sanitizedResult),
-      redactOptions,
-    );
+    const errorMessage = extractToolErrorMessage(sanitizedResult);
     ctx.state.lastToolError = {
       toolName,
       meta,
@@ -256,7 +248,7 @@ export async function handleToolExecutionEnd(
       toolCallId,
       meta,
       isError: isToolError,
-      result: redactedResult,
+      result: sanitizedResult,
     },
   });
   void ctx.params.onAgentEvent?.({

@@ -382,8 +382,6 @@ export type GatewaySessionRow = {
   kind: "direct" | "group" | "global" | "unknown";
   label?: string;
   displayName?: string;
-  derivedTitle?: string;
-  lastMessagePreview?: string;
   surface?: string;
   subject?: string;
   room?: string;
@@ -565,55 +563,4 @@ export type LogEntry = {
   subsystem?: string | null;
   message?: string | null;
   meta?: Record<string, unknown> | null;
-};
-
-export type RouterStatus = {
-  enabled: boolean;
-  healthy: boolean;
-  url: string;
-  checkedAt: number;
-  status?: number;
-  error?: string;
-};
-
-export type SparkGpuStatus = {
-  name?: string;
-  temperature_c?: number;
-  power_w?: number;
-  utilization_pct?: number;
-  memory_used_mib?: number;
-  memory_total_mib?: number;
-  unified_memory?: boolean;
-  processes?: Array<{ pid: number; memory_mib: number; process: string }>;
-};
-
-export type SparkContainer = {
-  name: string;
-  cpu?: string;
-  memory?: string;
-  mem_pct?: string;
-  net_io?: string;
-  block_io?: string;
-};
-
-export type SparkStatus = {
-  enabled: boolean;
-  active: boolean;
-  source?: "dgx-stats" | "fallback";
-  host: string | null;
-  checkedAt: number;
-  voiceAvailable?: boolean;
-  overall?: "healthy" | "degraded" | "down" | "unknown";
-  counts?: { healthy: number; degraded: number; down: number; total: number };
-  services?: Record<string, unknown>;
-  gpu?: SparkGpuStatus | null;
-  containers?: SparkContainer[] | null;
-};
-
-export type PersonaPlexStatus = {
-  enabled: boolean;
-  installed: boolean;
-  running: boolean;
-  hasToken: boolean;
-  port: number;
 };

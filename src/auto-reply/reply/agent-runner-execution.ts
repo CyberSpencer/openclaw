@@ -27,7 +27,6 @@ import {
 } from "../../config/sessions.js";
 import { logVerbose } from "../../globals.js";
 import { emitAgentEvent, registerAgentRunContext } from "../../infra/agent-events.js";
-import { deriveDefaultRootConversationId } from "../../orchestration/identity.js";
 import { defaultRuntime } from "../../runtime.js";
 import {
   isMarkdownCapableMessageChannel,
@@ -89,20 +88,8 @@ export async function runAgentTurnWithFallback(params: {
   const runId = params.opts?.runId ?? crypto.randomUUID();
   params.opts?.onAgentRunStart?.(runId);
   if (params.sessionKey) {
-    const activeEntry = params.getActiveSessionEntry();
-    const threadRaw = activeEntry?.threadId ?? activeEntry?.origin?.threadId;
-    const normalizedThreadId =
-      typeof threadRaw === "string"
-        ? threadRaw.trim() || undefined
-        : typeof threadRaw === "number" && Number.isFinite(threadRaw)
-          ? String(threadRaw)
-          : undefined;
     registerAgentRunContext(runId, {
       sessionKey: params.sessionKey,
-      rootConversationId:
-        activeEntry?.rootConversationId ?? deriveDefaultRootConversationId(params.sessionKey),
-      threadId: normalizedThreadId,
-      spawnedBySessionKey: activeEntry?.spawnedBy,
       verboseLevel: params.resolvedVerboseLevel,
       isHeartbeat: params.isHeartbeat,
     });
@@ -176,33 +163,10 @@ export async function runAgentTurnWithFallback(params: {
         run: (provider, model) => {
           // Notify that model selection is complete (including after fallback).
           // This allows responsePrefix template interpolation with the actual model.
-          const thinkLevel = params.followupRun.run.thinkLevel;
           params.opts?.onModelSelected?.({
             provider,
             model,
-            thinkLevel,
-          });
-          // Broadcast selection details to gateway clients (Control UI uses this for attribution).
-          emitAgentEvent({
-            runId,
-            stream: "model",
-            data: {
-              phase: "selected",
-              provider,
-              model,
-              thinkLevel,
-            },
-          });
-
-          // Emit a lifecycle event so UI clients can display the active model.
-          emitAgentEvent({
-            runId,
-            stream: "lifecycle",
-            data: {
-              phase: "model-selected",
-              provider,
-              model,
-            },
+            thinkLevel: params.followupRun.run.thinkLevel,
           });
 
           if (isCliProvider(provider, params.followupRun.run.config)) {
@@ -330,9 +294,6 @@ export async function runAgentTurnWithFallback(params: {
             enforceFinalTag: resolveEnforceFinalTag(params.followupRun.run, provider),
             provider,
             model,
-            disableModelRouter:
-              provider !== params.followupRun.run.provider ||
-              model !== params.followupRun.run.model,
             authProfileId,
             authProfileIdSource: authProfileId
               ? params.followupRun.run.authProfileIdSource

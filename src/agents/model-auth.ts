@@ -16,7 +16,7 @@ import {
   resolveAuthProfileOrder,
   resolveAuthStorePathForDisplay,
 } from "./auth-profiles.js";
-import { isLocalProviderUrl, normalizeProviderId } from "./model-selection.js";
+import { normalizeProviderId } from "./model-selection.js";
 
 export { ensureAuthProfileStore, resolveAuthProfileOrder } from "./auth-profiles.js";
 
@@ -65,19 +65,6 @@ function resolveProviderAuthOverride(
     return auth;
   }
   return undefined;
-}
-
-function isLikelyLocalProvider(cfg: OpenClawConfig | undefined, provider: string): boolean {
-  const normalized = normalizeProviderId(provider);
-  if (normalized === "ollama") {
-    return true;
-  }
-  const entry = resolveProviderConfig(cfg, provider);
-  const baseUrl = entry?.baseUrl?.trim();
-  if (!baseUrl) {
-    return false;
-  }
-  return isLocalProviderUrl(baseUrl);
 }
 
 function resolveEnvSourceLabel(params: {
@@ -220,16 +207,6 @@ export async function resolveApiKeyForProvider(params: {
     return { apiKey: customKey, source: "models.json", mode: "api-key" };
   }
 
-  if (authOverride === undefined && isLikelyLocalProvider(cfg, provider)) {
-    // Local providers often run without auth and ignore any Authorization header.
-    // Return a stable placeholder token so the downstream model runner can proceed.
-    return {
-      apiKey: "openclaw-local-provider",
-      source: "local provider (no auth)",
-      mode: "api-key",
-    };
-  }
-
   const normalized = normalizeProviderId(provider);
   if (authOverride === undefined && normalized === "amazon-bedrock") {
     return resolveAwsSdkAuthInfo();
@@ -322,7 +299,6 @@ export function resolveEnvApiKey(provider: string): EnvApiKeyResult | null {
     deepgram: "DEEPGRAM_API_KEY",
     cerebras: "CEREBRAS_API_KEY",
     xai: "XAI_API_KEY",
-    nvidia: "NVIDIA_API_KEY",
     openrouter: "OPENROUTER_API_KEY",
     litellm: "LITELLM_API_KEY",
     "vercel-ai-gateway": "AI_GATEWAY_API_KEY",

@@ -238,38 +238,9 @@ export async function runEmbeddedAttempt(
     : resolvedWorkspace;
   await fs.mkdir(effectiveWorkspace, { recursive: true });
 
-  let restoreProjectEnv: (() => void) | undefined;
   let restoreSkillEnv: (() => void) | undefined;
   process.chdir(effectiveWorkspace);
   try {
-    // Phase 2: apply project-scoped env vars (variables.env + secrets.env) if an active
-    // project is set on this session.
-    const resolvedAgentIdsEarly = resolveSessionAgentIds({
-      sessionKey: params.sessionKey,
-      config: params.config,
-    });
-    const projectScope = params.config
-      ? resolveProjectSessionScope({
-          cfg: params.config,
-          agentId: resolvedAgentIdsEarly.sessionAgentId,
-          sessionKey: params.sessionKey ?? params.sessionId,
-        })
-      : null;
-
-    if (projectScope) {
-      const applied = await applyProjectEnvOverrides({
-        // Use the real workspace root for project env (./projects/<id>/...) even when
-        // sandboxing is enabled.
-        workspaceDir: resolvedWorkspace,
-        projectId: projectScope.projectId,
-      });
-      restoreProjectEnv = applied.restore;
-      const keys = Object.keys(applied.loaded.merged);
-      log.debug(
-        `Applied project env overrides: project=${projectScope.projectId} keys=${keys.length}`,
-      );
-    }
-
     const shouldLoadSkillEntries = !params.skillsSnapshot || !params.skillsSnapshot.resolvedSkills;
     const skillEntries = shouldLoadSkillEntries
       ? loadWorkspaceSkillEntries(effectiveWorkspace)
@@ -294,9 +265,7 @@ export async function runEmbeddedAttempt(
     const sessionLabel = params.sessionKey ?? params.sessionId;
     const { bootstrapFiles: hookAdjustedBootstrapFiles, contextFiles } =
       await resolveBootstrapContextForRun({
-        // Use the real workspace for bootstrap/context reads, even when sandboxing is enabled.
-        // The sandbox workspace may not contain ./projects/<id>/ context files.
-        workspaceDir: resolvedWorkspace,
+        workspaceDir: effectiveWorkspace,
         config: params.config,
         sessionKey: params.sessionKey,
         sessionId: params.sessionId,
@@ -1227,7 +1196,6 @@ export async function runEmbeddedAttempt(
     }
   } finally {
     restoreSkillEnv?.();
-    restoreProjectEnv?.();
     process.chdir(prevCwd);
   }
 }

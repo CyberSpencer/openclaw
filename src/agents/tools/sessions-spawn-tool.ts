@@ -31,10 +31,6 @@ const SessionsSpawnToolSchema = Type.Object({
   // Back-compat: older callers used timeoutSeconds for this tool.
   timeoutSeconds: Type.Optional(Type.Number({ minimum: 0 })),
   cleanup: optionalStringEnum(["delete", "keep"] as const),
-  idempotencyKey: Type.Optional(Type.String()),
-  parentRunId: Type.Optional(Type.String()),
-  subagentGroupId: Type.Optional(Type.String()),
-  taskId: Type.Optional(Type.String()),
 });
 
 function splitModelRef(ref?: string) {
@@ -67,34 +63,6 @@ function normalizeModelSelection(value: unknown): string | undefined {
   return undefined;
 }
 
-async function resolveSessionModel(sessionKey: string): Promise<string | undefined> {
-  const key = sessionKey.trim();
-  if (!key) {
-    return undefined;
-  }
-  try {
-    const res = await callGateway<{
-      sessions?: Array<{ key?: string; model?: string }>;
-    }>({
-      method: "sessions.list",
-      params: {
-        search: key,
-        includeGlobal: false,
-        includeUnknown: false,
-        includeDerivedTitles: false,
-        includeLastMessage: false,
-        limit: 10,
-      },
-      timeoutMs: 10_000,
-    });
-    const exact = res?.sessions?.find((row) => row?.key === key);
-    const model = typeof exact?.model === "string" ? exact.model.trim() : "";
-    return model || undefined;
-  } catch {
-    return undefined;
-  }
-}
-
 export function createSessionsSpawnTool(opts?: {
   agentSessionKey?: string;
   agentChannel?: GatewayMessageChannel;
@@ -121,12 +89,8 @@ export function createSessionsSpawnTool(opts?: {
       const requestedAgentId = readStringParam(params, "agentId");
       const modelOverride = readStringParam(params, "model");
       const thinkingOverrideRaw = readStringParam(params, "thinking");
-      const idempotencyKey = readStringParam(params, "idempotencyKey");
-      const parentRunId = readStringParam(params, "parentRunId");
-      const subagentGroupId = readStringParam(params, "subagentGroupId");
-      const taskId = readStringParam(params, "taskId");
       const cleanup =
-        params.cleanup === "keep" || params.cleanup === "delete" ? params.cleanup : "delete";
+        params.cleanup === "keep" || params.cleanup === "delete" ? params.cleanup : "keep";
       const requesterOrigin = normalizeDeliveryContext({
         channel: opts?.agentChannel,
         accountId: opts?.agentAccountId,
@@ -219,7 +183,6 @@ export function createSessionsSpawnTool(opts?: {
       });
       const resolvedModel =
         normalizeModelSelection(modelOverride) ??
-        inheritedModel ??
         normalizeModelSelection(targetAgentConfig?.subagents?.model) ??
         normalizeModelSelection(cfg.agents?.defaults?.subagents?.model) ??
         normalizeModelSelection(cfg.agents?.defaults?.model?.primary) ??
@@ -312,7 +275,7 @@ export function createSessionsSpawnTool(opts?: {
         maxSpawnDepth,
       });
 
-      const childIdem = idempotencyKey ?? crypto.randomUUID();
+      const childIdem = crypto.randomUUID();
       let childRunId: string = childIdem;
       try {
         const response = await callGateway<{ runId: string }>({
@@ -323,11 +286,8 @@ export function createSessionsSpawnTool(opts?: {
             channel: requesterOrigin?.channel,
             to: requesterOrigin?.to ?? undefined,
             accountId: requesterOrigin?.accountId ?? undefined,
-            threadId: requesterThreadId,
-            rootConversationId: requesterRootConversationId,
-            parentRunId,
-            subagentGroupId,
-            taskId,
+            threadId:
+              requesterOrigin?.threadId != null ? String(requesterOrigin.threadId) : undefined,
             idempotencyKey: childIdem,
             deliver: false,
             lane: AGENT_LANE_SUBAGENT,

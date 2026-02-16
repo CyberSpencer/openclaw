@@ -52,12 +52,9 @@ export function subscribeEmbeddedPiSession(params: SubscribeEmbeddedPiSessionPar
     partialBlockState: { thinking: false, final: false, inlineCode: createInlineCodeState() },
     lastStreamedAssistant: undefined,
     lastStreamedAssistantCleaned: undefined,
-    lastStreamedAssistantRedacted: undefined,
-    assistantRedactor: createStreamingSensitiveRedactor(),
     emittedAssistantUpdate: false,
     lastStreamedReasoning: undefined,
     lastBlockReplyText: undefined,
-    blockReplyRedactor: createStreamingSensitiveRedactor(),
     assistantMessageIndex: 0,
     lastAssistantTextMessageIndex: -1,
     lastAssistantTextNormalized: undefined,
@@ -112,9 +109,6 @@ export function subscribeEmbeddedPiSession(params: SubscribeEmbeddedPiSessionPar
     state.partialBlockState.inlineCode = createInlineCodeState();
     state.lastStreamedAssistant = undefined;
     state.lastStreamedAssistantCleaned = undefined;
-    state.lastStreamedAssistantRedacted = undefined;
-    state.assistantRedactor.reset();
-    state.blockReplyRedactor.reset();
     state.emittedAssistantUpdate = false;
     state.lastBlockReplyText = undefined;
     state.lastStreamedReasoning = undefined;
@@ -319,13 +313,12 @@ export function subscribeEmbeddedPiSession(params: SubscribeEmbeddedPiSessionPar
       markdown: useMarkdown,
     });
     const { text: cleanedText, mediaUrls } = parseReplyDirectives(agg);
-    const redactedText = cleanedText ? redactSensitiveText(cleanedText) : cleanedText;
-    if (!redactedText && (!mediaUrls || mediaUrls.length === 0)) {
+    if (!cleanedText && (!mediaUrls || mediaUrls.length === 0)) {
       return;
     }
     try {
       void params.onToolResult({
-        text: redactedText,
+        text: cleanedText,
         mediaUrls: mediaUrls?.length ? mediaUrls : undefined,
       });
     } catch {
@@ -339,16 +332,14 @@ export function subscribeEmbeddedPiSession(params: SubscribeEmbeddedPiSessionPar
     const agg = formatToolAggregate(toolName, meta ? [meta] : undefined, {
       markdown: useMarkdown,
     });
-    const safeOutput = redactSensitiveText(output);
-    const message = `${agg}\n${formatToolOutputBlock(safeOutput)}`;
+    const message = `${agg}\n${formatToolOutputBlock(output)}`;
     const { text: cleanedText, mediaUrls } = parseReplyDirectives(message);
-    const redactedText = cleanedText ? redactSensitiveText(cleanedText) : cleanedText;
-    if (!redactedText && (!mediaUrls || mediaUrls.length === 0)) {
+    if (!cleanedText && (!mediaUrls || mediaUrls.length === 0)) {
       return;
     }
     try {
       void params.onToolResult({
-        text: redactedText,
+        text: cleanedText,
         mediaUrls: mediaUrls?.length ? mediaUrls : undefined,
       });
     } catch {
@@ -510,14 +501,12 @@ export function subscribeEmbeddedPiSession(params: SubscribeEmbeddedPiSessionPar
       replyToTag,
       replyToCurrent,
     } = splitResult;
-    const redactedText = cleanedText ? state.blockReplyRedactor.process(cleanedText) : cleanedText;
-
     // Skip empty payloads, but always emit if audioAsVoice is set (to propagate the flag)
-    if (!redactedText && (!mediaUrls || mediaUrls.length === 0) && !audioAsVoice) {
+    if (!cleanedText && (!mediaUrls || mediaUrls.length === 0) && !audioAsVoice) {
       return;
     }
     void params.onBlockReply({
-      text: redactedText,
+      text: cleanedText,
       mediaUrls: mediaUrls?.length ? mediaUrls : undefined,
       audioAsVoice,
       replyToId,

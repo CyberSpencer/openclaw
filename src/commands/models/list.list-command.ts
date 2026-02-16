@@ -75,7 +75,7 @@ export async function modelsListCommand(
       if (providerFilter && model.provider.toLowerCase() !== providerFilter) {
         continue;
       }
-      if (opts.local && !isLocalProviderUrl(model.baseUrl)) {
+      if (opts.local && !isLocalBaseUrl(model.baseUrl)) {
         continue;
       }
       const key = modelKey(model.provider, model.id);

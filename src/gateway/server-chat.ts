@@ -243,11 +243,6 @@ export function createAgentEventHandler({
       runId: clientRunId,
       sessionKey,
       seq,
-      rootConversationId: envelope?.rootConversationId,
-      threadId: envelope?.threadId,
-      parentRunId: envelope?.parentRunId,
-      subagentGroupId: envelope?.subagentGroupId,
-      taskId: envelope?.taskId,
       state: "delta" as const,
       message: {
         role: "assistant",
@@ -268,10 +263,6 @@ export function createAgentEventHandler({
     seq: number,
     jobState: "done" | "error",
     error?: unknown,
-    envelope?: Pick<
-      AgentEventPayload,
-      "rootConversationId" | "threadId" | "parentRunId" | "subagentGroupId" | "taskId"
-    >,
   ) => {
     const text = chatRunState.buffers.get(clientRunId)?.trim() ?? "";
     const shouldSuppressSilent = isSilentReplyText(text, SILENT_REPLY_TOKEN);
@@ -282,11 +273,6 @@ export function createAgentEventHandler({
         runId: clientRunId,
         sessionKey,
         seq,
-        rootConversationId: envelope?.rootConversationId,
-        threadId: envelope?.threadId,
-        parentRunId: envelope?.parentRunId,
-        subagentGroupId: envelope?.subagentGroupId,
-        taskId: envelope?.taskId,
         state: "final" as const,
         message:
           text && !shouldSuppressSilent
@@ -308,11 +294,6 @@ export function createAgentEventHandler({
       runId: clientRunId,
       sessionKey,
       seq,
-      rootConversationId: envelope?.rootConversationId,
-      threadId: envelope?.threadId,
-      parentRunId: envelope?.parentRunId,
-      subagentGroupId: envelope?.subagentGroupId,
-      taskId: envelope?.taskId,
       state: "error" as const,
       errorMessage: error ? formatForLog(error) : undefined,
     };
@@ -400,7 +381,7 @@ export function createAgentEventHandler({
         nodeSendToSession(sessionKey, "agent", isToolEvent ? toolPayload : agentPayload);
       }
       if (!isAborted && evt.stream === "assistant" && typeof evt.data?.text === "string") {
-        emitChatDelta(sessionKey, clientRunId, evt.seq, evt.data.text, evt);
+        emitChatDelta(sessionKey, clientRunId, evt.seq, evt.data.text);
       } else if (!isAborted && (lifecyclePhase === "end" || lifecyclePhase === "error")) {
         if (chatLink) {
           const finished = chatRunState.registry.shift(evt.runId);
@@ -414,7 +395,6 @@ export function createAgentEventHandler({
             evt.seq,
             lifecyclePhase === "error" ? "error" : "done",
             evt.data?.error,
-            evt,
           );
         } else {
           emitChatFinal(
@@ -423,7 +403,6 @@ export function createAgentEventHandler({
             evt.seq,
             lifecyclePhase === "error" ? "error" : "done",
             evt.data?.error,
-            evt,
           );
         }
       } else if (isAborted && (lifecyclePhase === "end" || lifecyclePhase === "error")) {

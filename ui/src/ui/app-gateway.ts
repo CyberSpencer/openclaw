@@ -4,14 +4,8 @@ import type { ExecApprovalRequest } from "./controllers/exec-approval.ts";
 import type { GatewayEventFrame, GatewayHelloOk } from "./gateway.ts";
 import type { Tab } from "./navigation.ts";
 import type { UiSettings } from "./storage.ts";
-import type {
-  AgentsListResult,
-  PresenceEntry,
-  HealthSnapshot,
-  SessionsListResult,
-  StatusSummary,
-} from "./types.ts";
-import { flushChatQueueForEvent } from "./app-chat.ts";
+import type { AgentsListResult, PresenceEntry, HealthSnapshot, StatusSummary } from "./types.ts";
+import { CHAT_SESSIONS_ACTIVE_MINUTES, flushChatQueueForEvent } from "./app-chat.ts";
 import {
   applySettings,
   loadCron,
@@ -21,9 +15,8 @@ import {
 import { handleAgentEvent, resetToolStream, type AgentEventPayload } from "./app-tool-stream.ts";
 import { loadAgents } from "./controllers/agents.ts";
 import { loadAssistantIdentity } from "./controllers/assistant-identity.ts";
-import { loadChatThreads } from "./controllers/chat-threads.ts";
 import { loadChatHistory } from "./controllers/chat.ts";
-import { handleChatEvent } from "./controllers/chat.ts";
+import { handleChatEvent, type ChatEventPayload } from "./controllers/chat.ts";
 import { loadDevices } from "./controllers/devices.ts";
 import {
   addExecApproval,
@@ -32,7 +25,7 @@ import {
   removeExecApproval,
 } from "./controllers/exec-approval.ts";
 import { loadNodes } from "./controllers/nodes.ts";
-import { loadSubagentMonitor } from "./controllers/subagent-monitor.ts";
+import { loadSessions } from "./controllers/sessions.ts";
 import { GatewayBrowserClient } from "./gateway.ts";
 
 type GatewayHost = {
@@ -58,21 +51,9 @@ type GatewayHost = {
   assistantAgentId: string | null;
   sessionKey: string;
   chatRunId: string | null;
-  chatThreadsQuery: string;
-  chatThreadsLoading: boolean;
-  chatThreadsResult: SessionsListResult | null;
-  chatThreadsError: string | null;
-  subagentMonitorLoading?: boolean;
-  subagentMonitorResult?: SessionsListResult | null;
-  subagentMonitorError?: string | null;
+  refreshSessionsAfterChat: Set<string>;
   execApprovalQueue: ExecApprovalRequest[];
   execApprovalError: string | null;
-  refreshTopbarControls?: () => Promise<void> | void;
-  handleOrchestratorAgentEvent?: (payload: AgentEventPayload) => void;
-  handleOrchestratorStoreEvent?: (payload: unknown) => void;
-  handleChatThreadFinalEvent?: (sessionKey: string) => void;
-  loadOrchestratorFromGateway?: (opts?: { seedIfMissing?: boolean }) => Promise<void> | void;
-  reconcileInFlightOrchestratorRuns?: () => Promise<void> | void;
 };
 
 type SessionDefaultsSnapshot = {
@@ -161,17 +142,12 @@ export function connectGateway(host: GatewayHost) {
       host.chatRunId = null;
       (host as unknown as { chatStream: string | null }).chatStream = null;
       (host as unknown as { chatStreamStartedAt: number | null }).chatStreamStartedAt = null;
-      (host as unknown as { chatModelProvider: string | null }).chatModelProvider = null;
-      (host as unknown as { chatModelId: string | null }).chatModelId = null;
       resetToolStream(host as unknown as Parameters<typeof resetToolStream>[0]);
       void loadAssistantIdentity(host as unknown as OpenClawApp);
-      void host.loadOrchestratorFromGateway?.({ seedIfMissing: true });
-      void host.reconcileInFlightOrchestratorRuns?.();
       void loadAgents(host as unknown as OpenClawApp);
       void loadNodes(host as unknown as OpenClawApp, { quiet: true });
       void loadDevices(host as unknown as OpenClawApp, { quiet: true });
       void refreshActiveTab(host as unknown as Parameters<typeof refreshActiveTab>[0]);
-      void host.refreshTopbarControls?.();
     },
     onClose: ({ code, reason }) => {
       if (host.client !== client) {
@@ -222,21 +198,15 @@ function handleGatewayEventUnsafe(host: GatewayHost, evt: GatewayEventFrame) {
     if (host.onboarding) {
       return;
     }
-    const payload = evt.payload as AgentEventPayload | undefined;
-    if (payload) {
-      host.handleOrchestratorAgentEvent?.(payload);
-    }
-    handleAgentEvent(host as unknown as Parameters<typeof handleAgentEvent>[0], payload);
-    return;
-  }
-
-  if (evt.event === "orchestrator") {
-    host.handleOrchestratorStoreEvent?.(evt.payload);
+    handleAgentEvent(
+      host as unknown as Parameters<typeof handleAgentEvent>[0],
+      evt.payload as AgentEventPayload | undefined,
+    );
     return;
   }
 
   if (evt.event === "chat") {
-    const payload = evt.payload as import("./controllers/chat.ts").ChatEventPayload | undefined;
+    const payload = evt.payload as ChatEventPayload | undefined;
     if (payload?.sessionKey) {
       setLastActiveSessionKey(
         host as unknown as Parameters<typeof setLastActiveSessionKey>[0],
@@ -247,19 +217,18 @@ function handleGatewayEventUnsafe(host: GatewayHost, evt: GatewayEventFrame) {
     if (state === "final" || state === "error" || state === "aborted") {
       resetToolStream(host as unknown as Parameters<typeof resetToolStream>[0]);
       void flushChatQueueForEvent(host as unknown as Parameters<typeof flushChatQueueForEvent>[0]);
+      const runId = payload?.runId;
+      if (runId && host.refreshSessionsAfterChat.has(runId)) {
+        host.refreshSessionsAfterChat.delete(runId);
+        if (state === "final") {
+          void loadSessions(host as unknown as OpenClawApp, {
+            activeMinutes: CHAT_SESSIONS_ACTIVE_MINUTES,
+          });
+        }
+      }
     }
     if (state === "final") {
-      const sessionKey = typeof payload?.sessionKey === "string" ? payload.sessionKey : "";
-      if (sessionKey) {
-        host.handleChatThreadFinalEvent?.(sessionKey);
-      }
       void loadChatHistory(host as unknown as OpenClawApp);
-      void loadChatThreads(host as unknown as Parameters<typeof loadChatThreads>[0], {
-        search: host.chatThreadsQuery,
-      });
-      void loadSubagentMonitor(host as unknown as Parameters<typeof loadSubagentMonitor>[0], {
-        quiet: true,
-      });
     }
     return;
   }

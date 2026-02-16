@@ -7,6 +7,7 @@ import type { OpenClawConfig } from "../config/config.js";
 import type {
   MemoryEmbeddingProbeResult,
   MemoryProviderStatus,
+  MemorySearchManager,
   MemorySearchResult,
   MemorySource,
   MemorySyncProgressUpdate,
@@ -45,13 +46,6 @@ export class MemoryIndexManager implements MemorySearchManager {
   private readonly agentId: string;
   private readonly workspaceDir: string;
   private readonly settings: ResolvedMemorySearchConfig;
-  private readonly storeDriver!: "sqlite" | "qdrant";
-  private readonly qdrant?: QdrantConfig;
-  private lastSuccessfulQdrantEndpoint: {
-    url: string;
-    apiKey?: string;
-    timeoutMs?: number;
-  } | null = null;
   private provider: EmbeddingProvider;
   private readonly requestedProvider: "openai" | "local" | "gemini" | "voyage" | "auto";
   private fallbackFrom?: "openai" | "local" | "gemini" | "voyage";
@@ -103,14 +97,6 @@ export class MemoryIndexManager implements MemorySearchManager {
   >();
   private sessionWarm = new Set<string>();
   private syncing: Promise<void> | null = null;
-  private sqliteFallbackWarned = false;
-  private degradedActiveCode?: string;
-  private degradedActiveReason?: string;
-  private embeddingFailureStreak = 0;
-  private emergencyLocalActivatedAt = 0;
-  private recoveryProbeSuccessStreak = 0;
-  private lastRecoveryProbeAt = 0;
-  private lastRecoveryError?: string;
 
   static async get(params: {
     cfg: OpenClawConfig;
@@ -122,9 +108,8 @@ export class MemoryIndexManager implements MemorySearchManager {
     if (!settings) {
       return null;
     }
-    const resolvedSettings = await resolveStoreSettings(settings);
     const workspaceDir = resolveAgentWorkspaceDir(cfg, agentId);
-    const key = `${agentId}:${workspaceDir}:${JSON.stringify(resolvedSettings)}`;
+    const key = `${agentId}:${workspaceDir}:${JSON.stringify(settings)}`;
     const existing = INDEX_CACHE.get(key);
     if (existing) {
       return existing;
@@ -132,18 +117,18 @@ export class MemoryIndexManager implements MemorySearchManager {
     const providerResult = await createEmbeddingProvider({
       config: cfg,
       agentDir: resolveAgentDir(cfg, agentId),
-      provider: resolvedSettings.provider,
-      remote: resolvedSettings.remote,
-      model: resolvedSettings.model,
-      fallback: resolvedSettings.fallback,
-      local: resolvedSettings.local,
+      provider: settings.provider,
+      remote: settings.remote,
+      model: settings.model,
+      fallback: settings.fallback,
+      local: settings.local,
     });
     const manager = new MemoryIndexManager({
       cacheKey: key,
       cfg,
       agentId,
       workspaceDir,
-      settings: resolvedSettings,
+      settings,
       providerResult,
       purpose: params.purpose,
     });
@@ -165,10 +150,6 @@ export class MemoryIndexManager implements MemorySearchManager {
     this.agentId = params.agentId;
     this.workspaceDir = params.workspaceDir;
     this.settings = params.settings;
-    this.storeDriver =
-      params.settings.store.driver === "auto" ? "sqlite" : params.settings.store.driver;
-    this.qdrant =
-      params.settings.store.driver === "qdrant" ? params.settings.store.qdrant : undefined;
     this.provider = params.providerResult.provider;
     this.requestedProvider = params.providerResult.requestedProvider;
     this.fallbackFrom = params.providerResult.fallbackFrom;
@@ -190,9 +171,6 @@ export class MemoryIndexManager implements MemorySearchManager {
       available: null,
       extensionPath: params.settings.store.vector.extensionPath,
     };
-    if (this.storeDriver === "qdrant" && this.vector.enabled) {
-      this.vector.extensionPath = undefined;
-    }
     const meta = this.readMeta();
     if (meta?.vectorDims) {
       this.vector.dims = meta.vectorDims;
@@ -229,7 +207,6 @@ export class MemoryIndexManager implements MemorySearchManager {
       sessionKey?: string;
     },
   ): Promise<MemorySearchResult[]> {
-    await this.maybeRecoverPrimaryProvider();
     void this.warmSession(opts?.sessionKey);
     if (this.settings.sync.onSearch && (this.dirty || this.sessionsDirty)) {
       void this.sync({ reason: "search" }).catch((err) => {
@@ -248,60 +225,9 @@ export class MemoryIndexManager implements MemorySearchManager {
       Math.max(1, Math.floor(maxResults * hybrid.candidateMultiplier)),
     );
 
-    const keywordResults =
-      hybrid.enabled || this.settings.degraded.mode === "keyword-only"
-        ? await this.searchKeyword(cleaned, candidates).catch(() => [])
-        : [];
-
-    let queryVec: number[] = [];
-    try {
-      queryVec = await this.embedQueryWithTimeout(cleaned);
-      this.embeddingFailureStreak = 0;
-      if (
-        !(this.provider.id === "local" && this.emergencyLocalActivatedAt > 0 && this.fallbackFrom)
-      ) {
-        this.degradedActiveCode = undefined;
-        this.degradedActiveReason = undefined;
-      }
-    } catch (err) {
-      const message = err instanceof Error ? err.message : String(err);
-      this.embeddingFailureStreak += 1;
-      const activated = await this.maybeActivateAutomaticLocalFallback(message);
-      if (activated) {
-        try {
-          queryVec = await this.embedQueryWithTimeout(cleaned);
-          this.embeddingFailureStreak = 0;
-          if (
-            !(
-              this.provider.id === "local" &&
-              this.emergencyLocalActivatedAt > 0 &&
-              this.fallbackFrom
-            )
-          ) {
-            this.degradedActiveCode = undefined;
-            this.degradedActiveReason = undefined;
-          }
-        } catch (retryErr) {
-          const retryMessage = retryErr instanceof Error ? retryErr.message : String(retryErr);
-          if (this.settings.degraded.mode === "keyword-only") {
-            if (this.settings.degraded.reasonCodes) {
-              this.degradedActiveCode = "embedding_unavailable_keyword_only";
-            }
-            this.degradedActiveReason = `keyword-only: embedding unavailable (${retryMessage})`;
-            return this.keywordOnlyResults(keywordResults, minScore, maxResults);
-          }
-          throw retryErr;
-        }
-      } else if (this.settings.degraded.mode === "keyword-only") {
-        if (this.settings.degraded.reasonCodes) {
-          this.degradedActiveCode = "embedding_unavailable_keyword_only";
-        }
-        this.degradedActiveReason = `keyword-only: embedding unavailable (${message})`;
-        return this.keywordOnlyResults(keywordResults, minScore, maxResults);
-      } else {
-        throw err;
-      }
-    }
+    const keywordResults = hybrid.enabled
+      ? await this.searchKeyword(cleaned, candidates).catch(() => [])
+      : [];
 
     const queryVec = (await this.embedQueryWithTimeout(cleaned)) as number[];
     const hasVector = queryVec.some((v) => v !== 0);
@@ -323,41 +249,10 @@ export class MemoryIndexManager implements MemorySearchManager {
     return merged.filter((entry) => entry.score >= minScore).slice(0, maxResults);
   }
 
-  private keywordOnlyResults(
-    results: Array<MemorySearchResult & { id: string; textScore: number }>,
-    minScore: number,
-    maxResults: number,
-  ): MemorySearchResult[] {
-    const degradedLimit = Math.max(1, Math.min(maxResults, this.settings.degraded.maxResults));
-    return results.filter((entry) => entry.score >= minScore).slice(0, degradedLimit);
-  }
-
   private async searchVector(
     queryVec: number[],
     limit: number,
   ): Promise<Array<MemorySearchResult & { id: string }>> {
-    if (this.storeDriver === "qdrant") {
-      try {
-        return await this.qdrantSearch(queryVec, limit);
-      } catch (err) {
-        const message = err instanceof Error ? err.message : String(err);
-        this.vector.available = false;
-        this.vector.loadError = message;
-        this.warnSqliteFallback(message);
-        log.warn(`qdrant search failed, falling back to local embeddings: ${message}`);
-        return (await searchVector({
-          db: this.db,
-          vectorTable: VECTOR_TABLE,
-          providerModel: this.provider.model,
-          queryVec,
-          limit,
-          snippetMaxChars: SNIPPET_MAX_CHARS,
-          ensureVectorReady: async () => false,
-          sourceFilterVec: this.buildSourceFilter("c"),
-          sourceFilterChunks: this.buildSourceFilter(),
-        })) as (MemorySearchResult & { id: string })[];
-      }
-    }
     const results = await searchVector({
       db: this.db,
       vectorTable: VECTOR_TABLE,
@@ -549,42 +444,15 @@ export class MemoryIndexManager implements MemorySearchManager {
         entry.chunks = row.c ?? 0;
         bySource.set(row.source, entry);
       }
-      return sources.map((source) => ({ source, ...bySource.get(source)! }));
+      return sources.map((source) => Object.assign({ source }, bySource.get(source)!));
     })();
-    const custom: Record<string, unknown> = {
-      mode: this.provider.id === "local" && this.fallbackFrom ? "emergency_local" : "normal",
-      degradedMode: this.settings.degraded.mode,
-      degradedReasonCode:
-        this.settings.degraded.reasonCodes && this.degradedActiveCode
-          ? this.degradedActiveCode
-          : undefined,
-      degradedActiveReason: this.degradedActiveReason,
-      embeddingFailureStreak: this.embeddingFailureStreak,
-      recoveryProbeSuccessStreak: this.recoveryProbeSuccessStreak,
-      emergencyLocalActivatedAt:
-        this.emergencyLocalActivatedAt > 0
-          ? new Date(this.emergencyLocalActivatedAt).toISOString()
-          : undefined,
-      lastRecoveryProbeAt:
-        this.lastRecoveryProbeAt > 0 ? new Date(this.lastRecoveryProbeAt).toISOString() : undefined,
-      lastRecoveryError: this.lastRecoveryError,
-    };
-    if (this.openAi?.activeEndpoint) {
-      custom.remoteEndpoint = this.openAi.activeEndpoint;
-    }
-    if (this.openAi?.lastEndpointErrors && this.openAi.lastEndpointErrors.length > 0) {
-      custom.remoteEndpointErrors = this.openAi.lastEndpointErrors;
-    }
     return {
       backend: "builtin",
       files: files?.c ?? 0,
       chunks: chunks?.c ?? 0,
       dirty: this.dirty || this.sessionsDirty,
       workspaceDir: this.workspaceDir,
-      dbPath:
-        this.storeDriver === "qdrant"
-          ? `qdrant:${this.lastSuccessfulQdrantEndpoint?.url ?? this.qdrant?.url ?? "unknown"}/collections/${this.qdrant?.collection ?? "unknown"}`
-          : this.settings.store.path,
+      dbPath: this.settings.store.path,
       provider: this.provider.id,
       model: this.provider.model,
       requestedProvider: this.requestedProvider,
@@ -629,7 +497,6 @@ export class MemoryIndexManager implements MemorySearchManager {
         lastError: this.batchFailureLastError,
         lastProvider: this.batchFailureLastProvider,
       },
-      custom: Object.values(custom).some((value) => value !== undefined) ? custom : undefined,
     };
   }
 

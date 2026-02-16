@@ -1,5 +1,5 @@
 import type { GatewayBrowserClient } from "../gateway.ts";
-import type { ChatAttachment, TaskPlan } from "../ui-types.ts";
+import type { ChatAttachment } from "../ui-types.ts";
 import { extractText } from "../chat/message-extract.ts";
 import { generateUUID } from "../uuid.ts";
 
@@ -16,7 +16,6 @@ export type ChatState = {
   chatRunId: string | null;
   chatStream: string | null;
   chatStreamStartedAt: number | null;
-  chatTaskPlan: TaskPlan | null;
   lastError: string | null;
 };
 
@@ -28,19 +27,6 @@ export type ChatEventPayload = {
   errorMessage?: string;
 };
 
-export type ChatSteerStatus =
-  | "steered"
-  | "compacting"
-  | "not_streaming"
-  | "no_active_run"
-  | "session_not_found";
-
-export type ChatSteerResult = {
-  ok: true;
-  status: ChatSteerStatus;
-  cached?: boolean;
-};
-
 export async function loadChatHistory(state: ChatState) {
   if (!state.client || !state.connected) {
     return;
@@ -48,17 +34,15 @@ export async function loadChatHistory(state: ChatState) {
   state.chatLoading = true;
   state.lastError = null;
   try {
-    const res = await state.client.request<{
-      messages?: unknown[];
-      thinkingLevel?: string | null;
-      taskPlan?: TaskPlan | null;
-    }>("chat.history", {
-      sessionKey: state.sessionKey,
-      limit: 200,
-    });
-    state.chatMessages = Array.isArray(res?.messages) ? res.messages : [];
-    state.chatThinkingLevel = res?.thinkingLevel ?? null;
-    state.chatTaskPlan = res?.taskPlan ?? null;
+    const res = await state.client.request<{ messages?: Array<unknown>; thinkingLevel?: string }>(
+      "chat.history",
+      {
+        sessionKey: state.sessionKey,
+        limit: 200,
+      },
+    );
+    state.chatMessages = Array.isArray(res.messages) ? res.messages : [];
+    state.chatThinkingLevel = res.thinkingLevel ?? null;
   } catch (err) {
     state.lastError = String(err);
   } finally {
@@ -103,7 +87,6 @@ export async function sendChatMessage(
   }
 
   const now = Date.now();
-  state.chatTaskPlan = null;
 
   // Build user message content blocks
   const contentBlocks: Array<{ type: string; text?: string; source?: unknown }> = [];
@@ -182,58 +165,6 @@ export async function sendChatMessage(
   }
 }
 
-export async function steerChatMessage(
-  state: ChatState,
-  message: string,
-): Promise<ChatSteerResult | null> {
-  if (!state.client || !state.connected) {
-    return null;
-  }
-  const msg = message.trim();
-  if (!msg) {
-    return null;
-  }
-
-  const now = Date.now();
-  const steerId = generateUUID();
-
-  // Optimistic append so the terminal/log reflects the steer immediately.
-  state.chatMessages = [
-    ...state.chatMessages,
-    {
-      role: "user",
-      id: steerId,
-      content: [{ type: "text", text: msg }],
-      timestamp: now,
-    },
-  ];
-
-  state.chatSending = true;
-  state.lastError = null;
-  try {
-    const res = await state.client.request<ChatSteerResult>("chat.steer", {
-      sessionKey: state.sessionKey,
-      message: msg,
-      idempotencyKey: steerId,
-    });
-    return res ?? null;
-  } catch (err) {
-    const error = String(err);
-    state.lastError = error;
-    state.chatMessages = [
-      ...state.chatMessages,
-      {
-        role: "assistant",
-        content: [{ type: "text", text: "Error: " + error }],
-        timestamp: Date.now(),
-      },
-    ];
-    return null;
-  } finally {
-    state.chatSending = false;
-  }
-}
-
 export async function abortChatRun(state: ChatState): Promise<boolean> {
   if (!state.client || !state.connected) {
     return false;
@@ -269,16 +200,6 @@ export function handleChatEvent(state: ChatState, payload?: ChatEventPayload) {
   }
 
   if (payload.state === "delta") {
-    // Runs can be started by non-chat UI entrypoints (e.g., voice mode).
-    // When we see deltas for the active session and no run is tracked yet, bind to it
-    // so tool streaming + Stop controls can attach.
-    if (!state.chatRunId) {
-      state.chatRunId = payload.runId;
-      state.chatStreamStartedAt = Date.now();
-      if (state.chatStream === null) {
-        state.chatStream = "";
-      }
-    }
     const next = extractText(payload.message);
     if (typeof next === "string") {
       const current = state.chatStream ?? "";
@@ -290,7 +211,6 @@ export function handleChatEvent(state: ChatState, payload?: ChatEventPayload) {
     state.chatStream = null;
     state.chatRunId = null;
     state.chatStreamStartedAt = null;
-    state.lastError = null;
   } else if (payload.state === "aborted") {
     const normalizedMessage = normalizeAbortedAssistantMessage(payload.message);
     if (normalizedMessage) {
@@ -311,7 +231,6 @@ export function handleChatEvent(state: ChatState, payload?: ChatEventPayload) {
     state.chatStream = null;
     state.chatRunId = null;
     state.chatStreamStartedAt = null;
-    state.lastError = "Run was stopped.";
   } else if (payload.state === "error") {
     state.chatStream = null;
     state.chatRunId = null;

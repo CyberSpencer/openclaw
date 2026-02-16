@@ -118,6 +118,10 @@ export type SessionEntry = {
   lastTo?: string;
   lastAccountId?: string;
   lastThreadId?: string | number;
+  /** Canonical orchestration root id used for multi-run lineage grouping. */
+  rootConversationId?: string;
+  /** Canonical thread id for session routing/announcement continuity. */
+  threadId?: string;
   skillsSnapshot?: SessionSkillSnapshot;
   systemPromptReport?: SessionSystemPromptReport;
   taskPlan?: TaskPlan;
