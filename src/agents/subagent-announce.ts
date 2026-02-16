@@ -449,6 +449,7 @@ export async function runSubagentAnnounceFlow(params: {
       return typeof entry?.sessionId === "string" && entry.sessionId.trim()
         ? entry.sessionId.trim()
         : undefined;
+    })();
     const settleTimeoutMs = Math.min(Math.max(params.timeoutMs, 1), 120_000);
     let reply = params.roundOneReply;
     let outcome: SubagentRunOutcome | undefined = params.outcome;
