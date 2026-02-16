@@ -14,25 +14,6 @@ import { callGatewayTool } from "./gateway.js";
 
 const DEFAULT_UPDATE_TIMEOUT_MS = 20 * 60_000;
 
-const SENSITIVE_KEY_RE = /(key|token|secret|password)/i;
-
-function redactSensitive(value: unknown, parentKey?: string): unknown {
-  if (parentKey && SENSITIVE_KEY_RE.test(parentKey)) {
-    return "***";
-  }
-  if (Array.isArray(value)) {
-    return value.map((entry) => redactSensitive(entry, parentKey));
-  }
-  if (value && typeof value === "object") {
-    const output: Record<string, unknown> = {};
-    for (const [key, entry] of Object.entries(value)) {
-      output[key] = redactSensitive(entry, key);
-    }
-    return output;
-  }
-  return value;
-}
-
 function resolveBaseHashFromSnapshot(snapshot: unknown): string | undefined {
   if (!snapshot || typeof snapshot !== "object") {
     return undefined;

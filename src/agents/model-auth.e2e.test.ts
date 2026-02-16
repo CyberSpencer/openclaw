@@ -367,58 +367,32 @@ describe("getApiKeyForModel", () => {
     }
   });
 
-  it("allows local ollama provider without API key", async () => {
-    const previous = process.env.OLLAMA_API_KEY;
-    delete process.env.OLLAMA_API_KEY;
+  it("accepts VOYAGE_API_KEY for voyage", async () => {
+    const previous = process.env.VOYAGE_API_KEY;
+
     try {
       process.env.VOYAGE_API_KEY = "voyage-test-key";
 
       const resolved = await resolveApiKeyForProvider({
-        provider: "ollama",
+        provider: "voyage",
         store: { version: 1, profiles: {} },
-        cfg: {
-          models: {
-            providers: {
-              ollama: {
-                baseUrl: "http://127.0.0.1:11434/v1",
-                api: "openai-completions",
-                models: [],
-              },
-            },
-          },
-        } as never,
       });
-
-      expect(resolved.apiKey).toBe("openclaw-local-provider");
-      expect(resolved.source).toBe("local provider (no auth)");
+      expect(resolved.apiKey).toBe("voyage-test-key");
+      expect(resolved.source).toContain("VOYAGE_API_KEY");
     } finally {
       if (previous === undefined) {
-        delete process.env.OLLAMA_API_KEY;
+        delete process.env.VOYAGE_API_KEY;
       } else {
-        process.env.OLLAMA_API_KEY = previous;
+        process.env.VOYAGE_API_KEY = previous;
       }
     }
   });
 
-  it("allows loopback custom provider without API key", async () => {
-    vi.resetModules();
-    const { resolveApiKeyForProvider } = await import("./model-auth.js");
+  it("strips embedded CR/LF from ANTHROPIC_API_KEY", async () => {
+    const previous = process.env.ANTHROPIC_API_KEY;
 
-    const resolved = await resolveApiKeyForProvider({
-      provider: "custom-openai",
-      store: { version: 1, profiles: {} },
-      cfg: {
-        models: {
-          providers: {
-            "custom-openai": {
-              baseUrl: "http://localhost:9999/v1",
-              api: "openai-completions",
-              models: [],
-            },
-          },
-        },
-      } as never,
-    });
+    try {
+      process.env.ANTHROPIC_API_KEY = "sk-ant-test-\r\nkey";
 
       const resolved = resolveEnvApiKey("anthropic");
       expect(resolved?.apiKey).toBe("sk-ant-test-key");

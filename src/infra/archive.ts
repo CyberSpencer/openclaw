@@ -56,19 +56,6 @@ export function resolveArchiveKind(filePath: string): ArchiveKind | null {
   return null;
 }
 
-function isSafeTarEntry(entryPath: string, destDir: string): boolean {
-  const normalized = entryPath.replaceAll("\\", "/");
-  if (!normalized || normalized.startsWith("/")) {
-    return false;
-  }
-  if (normalized === ".." || normalized.startsWith("../") || normalized.includes("/../")) {
-    return false;
-  }
-  const resolved = path.resolve(destDir, normalized);
-  const root = path.resolve(destDir);
-  return resolved === root || resolved.startsWith(root + path.sep);
-}
-
 export async function resolvePackedRootDir(extractDir: string): Promise<string> {
   const direct = path.join(extractDir, "package");
   try {

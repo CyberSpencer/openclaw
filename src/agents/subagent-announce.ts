@@ -238,53 +238,6 @@ function loadSessionEntryByKey(sessionKey: string) {
   return store[sessionKey];
 }
 
-function normalizeLineageValue(value: unknown): string {
-  return typeof value === "string" ? value.trim() : "";
-}
-
-function warnAnnounceLineageMismatch(params: {
-  requesterSessionKey: string;
-  childSessionKey: string;
-  requesterRootConversationId?: string;
-  requesterThreadId?: string;
-  childRootConversationId?: string;
-  childThreadId?: string;
-}) {
-  const requesterRootConversationId = normalizeLineageValue(params.requesterRootConversationId);
-  const requesterThreadId = normalizeLineageValue(params.requesterThreadId);
-  const childRootConversationId = normalizeLineageValue(params.childRootConversationId);
-  const childThreadId = normalizeLineageValue(params.childThreadId);
-
-  const rootMismatch =
-    requesterRootConversationId &&
-    childRootConversationId &&
-    requesterRootConversationId !== childRootConversationId;
-  const threadMismatch = requesterThreadId && childThreadId && requesterThreadId !== childThreadId;
-  if (!rootMismatch && !threadMismatch) {
-    return;
-  }
-
-  const warning = `[subagent-announce] lineage warning ${JSON.stringify({
-    type: "announce_target_lineage_mismatch",
-    requesterSessionKey: params.requesterSessionKey,
-    childSessionKey: params.childSessionKey,
-    requesterRootConversationId: requesterRootConversationId || undefined,
-    requesterThreadId: requesterThreadId || undefined,
-    childRootConversationId: childRootConversationId || undefined,
-    childThreadId: childThreadId || undefined,
-    rootMismatch,
-    threadMismatch,
-  })}`;
-
-  const runtimeWithWarn = defaultRuntime as { warn?: (message: string) => void };
-  if (typeof runtimeWithWarn.warn === "function") {
-    runtimeWithWarn.warn(warning);
-    return;
-  }
-
-  defaultRuntime.log(warning);
-}
-
 async function readLatestAssistantReplyWithRetry(params: {
   sessionKey: string;
   initialReply?: string;
