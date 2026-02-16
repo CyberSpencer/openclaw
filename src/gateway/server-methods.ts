@@ -67,6 +67,7 @@ const READ_METHODS = new Set([
   "skills.status",
   "voicewake.get",
   "sessions.list",
+  "sessions.subagents",
   "sessions.preview",
   "cron.list",
   "cron.status",
@@ -94,6 +95,7 @@ const WRITE_METHODS = new Set([
   "chat.send",
   "chat.abort",
   "browser.request",
+  "sessions.spawn",
 ]);
 
 function authorizeGatewayMethod(method: string, client: GatewayRequestOptions["client"]) {
