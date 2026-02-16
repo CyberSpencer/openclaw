@@ -53,6 +53,7 @@ pnpm gateway:watch
   ```bash
   ssh -N -L 32555:127.0.0.1:32555 user@host
   ```
+
 - Clients then connect to `ws://127.0.0.1:32555` through the tunnel.
 - If a token is configured, clients must include it in `connect.params.auth.token` even over the tunnel.
 

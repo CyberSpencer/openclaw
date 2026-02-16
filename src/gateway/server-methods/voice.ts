@@ -26,7 +26,7 @@ import {
   type ResponsePrefixContext,
 } from "../../auto-reply/reply/response-prefix-template.js";
 import { loadConfig } from "../../config/config.js";
-import { updateSessionStore } from "../../config/sessions.js";
+import { updateSessionStore, type SessionEntry } from "../../config/sessions.js";
 import { INTERNAL_MESSAGE_CHANNEL } from "../../utils/message-channel.js";
 import { transcribeWithWhisper, resolveWhisperConfig } from "../../voice/local-stt.js";
 import { synthesizeWithLocalTts, resolveLocalTtsConfig } from "../../voice/local-tts.js";
@@ -221,13 +221,14 @@ async function withTemporaryVoiceModelOverride<T>(params: {
 
   try {
     await updateSessionStore(storePath, async (store) => {
-      const rawCurrent = (store[canonicalKey] as Record<string, unknown> | undefined) ?? {};
+      const rawCurrent = (store[canonicalKey] as Partial<SessionEntry> | undefined) ?? {};
       const current = rawCurrent && typeof rawCurrent === "object" ? rawCurrent : {};
       store[canonicalKey] = {
         ...current,
+        sessionId: current.sessionId ?? entry?.sessionId ?? canonicalKey,
         modelOverride: requestedModel,
         updatedAt: Date.now(),
-      };
+      } satisfies SessionEntry;
     });
   } catch (err) {
     params.onWarn?.(`voice model override set failed: ${formatForLog(err)}`);
@@ -239,7 +240,7 @@ async function withTemporaryVoiceModelOverride<T>(params: {
   } finally {
     try {
       await updateSessionStore(storePath, async (store) => {
-        const rawCurrent = (store[canonicalKey] as Record<string, unknown> | undefined) ?? {};
+        const rawCurrent = (store[canonicalKey] as Partial<SessionEntry> | undefined) ?? {};
         const current = rawCurrent && typeof rawCurrent === "object" ? rawCurrent : {};
         const currentModel =
           typeof current.modelOverride === "string" ? current.modelOverride.trim() : "";
@@ -249,8 +250,9 @@ async function withTemporaryVoiceModelOverride<T>(params: {
           return;
         }
 
-        const next: Record<string, unknown> = {
-          ...current,
+        const next: SessionEntry = {
+          ...(current as SessionEntry),
+          sessionId: current.sessionId ?? entry?.sessionId ?? canonicalKey,
           updatedAt: Date.now(),
         };
         if (previousModel) {

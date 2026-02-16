@@ -35,9 +35,7 @@ export function hydrateTemplatePrompt(prompt: string, now = new Date()): string 
   yesterdayDate.setDate(now.getDate() - 1);
   const yesterday = formatIsoDate(yesterdayDate);
 
-  return prompt
-    .replaceAll("{{TODAY}}", today)
-    .replaceAll("{{YESTERDAY}}", yesterday);
+  return prompt.replaceAll("{{TODAY}}", today).replaceAll("{{YESTERDAY}}", yesterday);
 }
 
 export const ORCHESTRATOR_TEMPLATES: OrchestratorTemplate[] = [
@@ -93,7 +91,8 @@ export const ORCHESTRATOR_TEMPLATES: OrchestratorTemplate[] = [
   {
     id: "skills-audit",
     title: "Skills Audit",
-    description: "Verify skills are safe and consistent, then propose upgrades to the weakest ones.",
+    description:
+      "Verify skills are safe and consistent, then propose upgrades to the weakest ones.",
     tags: ["skills", "security", "quality"],
     icon: "scrollText",
     prompt: [
@@ -249,4 +248,3 @@ export const ORCHESTRATOR_TEMPLATES: OrchestratorTemplate[] = [
     timeoutSeconds: 600,
   },
 ];
-

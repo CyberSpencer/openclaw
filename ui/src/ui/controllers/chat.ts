@@ -48,13 +48,17 @@ export async function loadChatHistory(state: ChatState) {
   state.chatLoading = true;
   state.lastError = null;
   try {
-    const res = await state.client.request("chat.history", {
+    const res = await state.client.request<{
+      messages?: unknown[];
+      thinkingLevel?: string | null;
+      taskPlan?: TaskPlan | null;
+    }>("chat.history", {
       sessionKey: state.sessionKey,
       limit: 200,
     });
-    state.chatMessages = Array.isArray(res.messages) ? res.messages : [];
-    state.chatThinkingLevel = res.thinkingLevel ?? null;
-    state.chatTaskPlan = res.taskPlan ?? null;
+    state.chatMessages = Array.isArray(res?.messages) ? res.messages : [];
+    state.chatThinkingLevel = res?.thinkingLevel ?? null;
+    state.chatTaskPlan = res?.taskPlan ?? null;
   } catch (err) {
     state.lastError = String(err);
   } finally {
@@ -193,7 +197,7 @@ export async function steerChatMessage(
   state.chatSending = true;
   state.lastError = null;
   try {
-    const res = await state.client.request("chat.steer", {
+    const res = await state.client.request<ChatSteerResult>("chat.steer", {
       sessionKey: state.sessionKey,
       message: msg,
       idempotencyKey: steerId,

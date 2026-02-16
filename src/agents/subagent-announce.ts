@@ -310,19 +310,25 @@ function warnAnnounceLineageMismatch(params: {
     return;
   }
 
-  defaultRuntime.log(
-    `[subagent-announce] lineage warning ${JSON.stringify({
-      type: "announce_target_lineage_mismatch",
-      requesterSessionKey: params.requesterSessionKey,
-      childSessionKey: params.childSessionKey,
-      requesterRootConversationId: requesterRootConversationId || undefined,
-      requesterThreadId: requesterThreadId || undefined,
-      childRootConversationId: childRootConversationId || undefined,
-      childThreadId: childThreadId || undefined,
-      rootMismatch,
-      threadMismatch,
-    })}`,
-  );
+  const warning = `[subagent-announce] lineage warning ${JSON.stringify({
+    type: "announce_target_lineage_mismatch",
+    requesterSessionKey: params.requesterSessionKey,
+    childSessionKey: params.childSessionKey,
+    requesterRootConversationId: requesterRootConversationId || undefined,
+    requesterThreadId: requesterThreadId || undefined,
+    childRootConversationId: childRootConversationId || undefined,
+    childThreadId: childThreadId || undefined,
+    rootMismatch,
+    threadMismatch,
+  })}`;
+
+  const runtimeWithWarn = defaultRuntime as { warn?: (message: string) => void };
+  if (typeof runtimeWithWarn.warn === "function") {
+    runtimeWithWarn.warn(warning);
+    return;
+  }
+
+  defaultRuntime.log(warning);
 }
 
 async function readLatestAssistantReplyWithRetry(params: {

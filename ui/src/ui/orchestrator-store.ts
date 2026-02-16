@@ -172,16 +172,18 @@ function normalizeRun(value: unknown): OrchestrationCardRun | undefined {
       : "idle";
   const createdAt = readNumber(value.createdAt) ?? Date.now();
   const cleanup = isRecord(value.cleanup)
-    ? {
-        mode: normalizeCleanupMode(value.cleanup.mode),
-        status:
-          value.cleanup.status === "pending" ||
-          value.cleanup.status === "done" ||
-          value.cleanup.status === "error"
-            ? value.cleanup.status
-            : undefined,
-        error: typeof value.cleanup.error === "string" ? value.cleanup.error : undefined,
-      }
+    ? (() => {
+        const statusRaw = readString(value.cleanup.status);
+        let status: "pending" | "done" | "error" | undefined;
+        if (statusRaw === "pending" || statusRaw === "done" || statusRaw === "error") {
+          status = statusRaw;
+        }
+        return {
+          mode: normalizeCleanupMode(value.cleanup.mode),
+          status,
+          error: typeof value.cleanup.error === "string" ? value.cleanup.error : undefined,
+        };
+      })()
     : undefined;
   return {
     runId,
@@ -260,9 +262,13 @@ function normalizeBoard(value: unknown): OrchestrationBoard | null {
             const laneId = normalizeLaneId(lane.id);
             const laneTitle = readString(lane.title).trim() || String(laneId);
             const desc = typeof lane.description === "string" ? lane.description : undefined;
-            return { id: laneId, title: laneTitle, description: desc } satisfies OrchestrationLane;
+            return {
+              id: laneId,
+              title: laneTitle,
+              ...(desc ? { description: desc } : {}),
+            } satisfies OrchestrationLane;
           })
-          .filter((lane): lane is OrchestrationLane => Boolean(lane))
+          .filter((lane): lane is OrchestrationLane => lane !== null)
       : DEFAULT_LANES.map((lane) => ({ ...lane }));
 
   const seenLaneIds = new Set<string>();

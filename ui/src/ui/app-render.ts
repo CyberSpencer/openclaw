@@ -3,6 +3,10 @@ import type { AppViewState } from "./app-view-state.ts";
 import { parseAgentSessionKey } from "../../../src/routing/session-key.js";
 import { refreshChatAvatar } from "./app-chat.ts";
 import { renderChatControls, renderTab, renderThemeToggle } from "./app-render.helpers.ts";
+import { loadAgentFileContent, loadAgentFiles, saveAgentFile } from "./controllers/agent-files.ts";
+import { loadAgentIdentities, loadAgentIdentity } from "./controllers/agent-identity.ts";
+import { loadAgentSkills } from "./controllers/agent-skills.ts";
+import { loadAgents } from "./controllers/agents.ts";
 import { loadChannels } from "./controllers/channels.ts";
 import { loadChatThreads } from "./controllers/chat-threads.ts";
 import { loadChatHistory } from "./controllers/chat.ts";
@@ -29,6 +33,12 @@ import {
   revokeDeviceToken,
   rotateDeviceToken,
 } from "./controllers/devices.ts";
+import {
+  loadExecApprovals,
+  removeExecApprovalsFormValue,
+  saveExecApprovals,
+  updateExecApprovalsFormValue,
+} from "./controllers/exec-approvals.ts";
 import { loadLogs } from "./controllers/logs.ts";
 import { loadNodes } from "./controllers/nodes.ts";
 import { loadPresence } from "./controllers/presence.ts";
@@ -41,8 +51,10 @@ import {
   updateSkillEnabled,
 } from "./controllers/skills.ts";
 import { loadSubagentMonitor } from "./controllers/subagent-monitor.ts";
+import { loadSessionLogs, loadSessionTimeSeries, loadUsage } from "./controllers/usage.ts";
 import { icons } from "./icons.ts";
 import { TAB_GROUPS, subtitleForTab, titleForTab } from "./navigation.ts";
+import { renderAgents } from "./views/agents.ts";
 import { renderChannels } from "./views/channels.ts";
 import { renderChatThreadsNav } from "./views/chat-threads-nav.ts";
 import { renderChat } from "./views/chat.ts";
@@ -61,10 +73,24 @@ import { renderOverview } from "./views/overview.ts";
 import { renderSessions } from "./views/sessions.ts";
 import { renderSettings } from "./views/settings.ts";
 import { renderSkills } from "./views/skills.ts";
+import { renderUsage } from "./views/usage.ts";
 import { renderVoiceBar } from "./views/voice-bar.ts";
 
 const AVATAR_DATA_RE = /^data:/i;
 const AVATAR_HTTP_RE = /^https?:\/\//i;
+
+let usageLoadDebounceTimer: number | null = null;
+
+function debouncedLoadUsage(state: AppViewState, delayMs = 350) {
+  if (usageLoadDebounceTimer != null) {
+    window.clearTimeout(usageLoadDebounceTimer);
+    usageLoadDebounceTimer = null;
+  }
+  usageLoadDebounceTimer = window.setTimeout(() => {
+    usageLoadDebounceTimer = null;
+    void loadUsage(state);
+  }, delayMs);
+}
 
 function resolveAssistantAvatarUrl(state: AppViewState): string | undefined {
   const list = state.agentsList?.agents ?? [];
@@ -185,6 +211,13 @@ export function renderApp(state: AppViewState) {
       : sparkActive
         ? `DGX Spark active${sparkHost ? ` (${sparkHost})` : ""}`
         : `DGX Spark fallback${sparkHost ? ` (${sparkHost})` : ""}`;
+
+  const configValue = state.configForm;
+  const resolvedAgentId =
+    state.agentsSelectedId ??
+    state.agentsList?.defaultId ??
+    state.agentsList?.agents?.[0]?.id ??
+    null;
 
   return html`
     <div class="shell ${isChat ? "shell--chat" : ""} ${chatFocus ? "shell--chat-focus" : ""} ${state.settings.navCollapsed ? "shell--nav-collapsed" : ""} ${state.onboarding ? "shell--onboarding" : ""}">

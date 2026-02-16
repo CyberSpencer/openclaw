@@ -64,7 +64,6 @@ export default defineConfig({
     : {
         // Vitest uses Vite's SSR pipeline for module loading, so mirror conditions here too.
         resolve: {
-          alias: LIT_ALIASES,
           conditions: ["node", "import", "module"],
         },
       },
