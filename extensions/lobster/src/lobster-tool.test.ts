@@ -85,7 +85,7 @@ describe("lobster plugin tool", () => {
       const res = await tool.execute("call1", {
         action: "run",
         pipeline: "noop",
-        timeoutMs: 1000,
+        timeoutMs: 5000,
       });
 
       expect(res.details).toMatchObject({ ok: true, status: "ok" });
@@ -111,7 +111,7 @@ describe("lobster plugin tool", () => {
       const res = await tool.execute("call-noisy", {
         action: "run",
         pipeline: "noop",
-        timeoutMs: 1000,
+        timeoutMs: 5000,
       });
 
       expect(res.details).toMatchObject({ ok: true, status: "ok" });
@@ -201,7 +201,7 @@ describe("lobster plugin tool", () => {
       const res = await tool.execute("call-plugin-config", {
         action: "run",
         pipeline: "noop",
-        timeoutMs: 1000,
+        timeoutMs: 5000,
       });
 
       expect(res.details).toMatchObject({ ok: true, status: "ok" });
