@@ -66,6 +66,9 @@ export const ModelProviderSchema = z
     headers: z.record(z.string(), z.string()).optional(),
     authHeader: z.boolean().optional(),
     models: z.array(ModelDefinitionSchema),
+    // Compatibility: allow multi-endpoint provider routing extensions used by custom deployments.
+    endpointStrategy: z.string().optional(),
+    endpoints: z.array(z.record(z.string(), z.unknown())).optional(),
   })
   .strict();
 

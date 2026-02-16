@@ -49,6 +49,10 @@ export type ModelProviderConfig = {
   headers?: Record<string, string>;
   authHeader?: boolean;
   models: ModelDefinitionConfig[];
+  /** Optional custom endpoint routing strategy (compat). */
+  endpointStrategy?: string;
+  /** Optional custom endpoint list for multi-endpoint provider routing (compat). */
+  endpoints?: Array<Record<string, unknown>>;
 };
 
 export type BedrockDiscoveryConfig = {

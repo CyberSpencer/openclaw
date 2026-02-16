@@ -441,7 +441,7 @@ export const MemorySearchSchema = z
       .optional(),
     store: z
       .object({
-        driver: z.literal("sqlite").optional(),
+        driver: z.union([z.literal("sqlite"), z.literal("qdrant")]).optional(),
         path: z.string().optional(),
         vector: z
           .object({
@@ -450,6 +450,8 @@ export const MemorySearchSchema = z
           })
           .strict()
           .optional(),
+        // Compatibility: allow custom qdrant store settings used by local deployments.
+        qdrant: z.record(z.string(), z.unknown()).optional(),
       })
       .strict()
       .optional(),

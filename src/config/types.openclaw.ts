@@ -95,6 +95,8 @@ export type OpenClawConfig = {
   discovery?: DiscoveryConfig;
   canvasHost?: CanvasHostConfig;
   talk?: TalkConfig;
+  /** Legacy/custom top-level voice settings kept for compatibility. */
+  voice?: Record<string, unknown>;
   gateway?: GatewayConfig;
   memory?: MemoryConfig;
 };

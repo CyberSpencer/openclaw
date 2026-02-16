@@ -287,7 +287,7 @@ export type MemorySearchConfig = {
   };
   /** Index storage configuration. */
   store?: {
-    driver?: "sqlite";
+    driver?: "sqlite" | "qdrant";
     path?: string;
     vector?: {
       /** Enable sqlite-vec extension for vector search (default: true). */
@@ -295,6 +295,8 @@ export type MemorySearchConfig = {
       /** Optional override path to sqlite-vec extension (.dylib/.so/.dll). */
       extensionPath?: string;
     };
+    /** Optional custom qdrant store settings (compat). */
+    qdrant?: Record<string, unknown>;
     cache?: {
       /** Enable embedding cache (default: true). */
       enabled?: boolean;

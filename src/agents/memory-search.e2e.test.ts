@@ -34,6 +34,7 @@ describe("memory search config", () => {
     const resolved = resolveMemorySearchConfig(cfg, "main");
     expect(resolved?.provider).toBe("auto");
     expect(resolved?.fallback).toBe("none");
+    expect(resolved?.store.driver).toBe("qdrant");
   });
 
   it("merges defaults and overrides", () => {

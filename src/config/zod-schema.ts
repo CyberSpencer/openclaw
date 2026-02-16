@@ -382,6 +382,8 @@ export const OpenClawSchema = z
       })
       .strict()
       .optional(),
+    // Compatibility: preserve legacy/custom top-level voice settings used by custom runtimes.
+    voice: z.record(z.string(), z.unknown()).optional(),
     gateway: z
       .object({
         port: z.number().int().positive().optional(),

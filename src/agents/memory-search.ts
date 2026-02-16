@@ -32,12 +32,13 @@ export type ResolvedMemorySearchConfig = {
     modelCacheDir?: string;
   };
   store: {
-    driver: "sqlite";
+    driver: "sqlite" | "qdrant";
     path: string;
     vector: {
       enabled: boolean;
       extensionPath?: string;
     };
+    qdrant?: Record<string, unknown>;
   };
   chunking: {
     tokens: number;
@@ -187,9 +188,12 @@ function mergeConfig(
       overrides?.store?.vector?.extensionPath ?? defaults?.store?.vector?.extensionPath,
   };
   const store = {
-    driver: overrides?.store?.driver ?? defaults?.store?.driver ?? "sqlite",
+    // Custom deployment default: prefer qdrant when driver is not explicitly set.
+    // Runtime code can still fall back to sqlite if qdrant is unavailable.
+    driver: overrides?.store?.driver ?? defaults?.store?.driver ?? "qdrant",
     path: resolveStorePath(agentId, overrides?.store?.path ?? defaults?.store?.path),
     vector,
+    qdrant: overrides?.store?.qdrant ?? defaults?.store?.qdrant,
   };
   const chunking = {
     tokens: overrides?.chunking?.tokens ?? defaults?.chunking?.tokens ?? DEFAULT_CHUNK_TOKENS,

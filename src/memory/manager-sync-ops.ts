@@ -168,6 +168,14 @@ class MemoryManagerSyncOps {
 
   private openDatabase(): DatabaseSync {
     const dbPath = resolveUserPath(this.settings.store.path);
+    const configuredDriver = this.settings.store.driver;
+    if (configuredDriver === "qdrant") {
+      // Current manager implementation is sqlite-backed; honor qdrant as preferred
+      // config intent, then degrade to sqlite as operational fallback.
+      log.warn(
+        "memorySearch.store.driver=qdrant requested, falling back to sqlite backend in this runtime",
+      );
+    }
     return this.openDatabaseAtPath(dbPath);
   }
 
