@@ -8,6 +8,7 @@ import { parseReplyDirectives } from "../auto-reply/reply/reply-directives.js";
 import { createStreamingDirectiveAccumulator } from "../auto-reply/reply/streaming-directives.js";
 import { formatToolAggregate } from "../auto-reply/tool-meta.js";
 import { createStreamingSensitiveRedactor } from "../logging/redact-streaming.js";
+import { redactSensitiveText } from "../logging/redact.js";
 import { createSubsystemLogger } from "../logging/subsystem.js";
 import { buildCodeSpanIndex, createInlineCodeState } from "../markdown/code-spans.js";
 import { EmbeddedBlockChunker } from "./pi-embedded-block-chunker.js";
@@ -307,12 +308,13 @@ export function subscribeEmbeddedPiSession(params: SubscribeEmbeddedPiSessionPar
       markdown: useMarkdown,
     });
     const { text: cleanedText, mediaUrls } = parseReplyDirectives(agg);
-    if (!cleanedText && (!mediaUrls || mediaUrls.length === 0)) {
+    const redactedText = cleanedText ? redactSensitiveText(cleanedText) : cleanedText;
+    if (!redactedText && (!mediaUrls || mediaUrls.length === 0)) {
       return;
     }
     try {
       void params.onToolResult({
-        text: cleanedText,
+        text: redactedText,
         mediaUrls: mediaUrls?.length ? mediaUrls : undefined,
       });
     } catch {
@@ -326,14 +328,16 @@ export function subscribeEmbeddedPiSession(params: SubscribeEmbeddedPiSessionPar
     const agg = formatToolAggregate(toolName, meta ? [meta] : undefined, {
       markdown: useMarkdown,
     });
-    const message = `${agg}\n${formatToolOutputBlock(output)}`;
+    const safeOutput = redactSensitiveText(output);
+    const message = `${agg}\n${formatToolOutputBlock(safeOutput)}`;
     const { text: cleanedText, mediaUrls } = parseReplyDirectives(message);
-    if (!cleanedText && (!mediaUrls || mediaUrls.length === 0)) {
+    const redactedText = cleanedText ? redactSensitiveText(cleanedText) : cleanedText;
+    if (!redactedText && (!mediaUrls || mediaUrls.length === 0)) {
       return;
     }
     try {
       void params.onToolResult({
-        text: cleanedText,
+        text: redactedText,
         mediaUrls: mediaUrls?.length ? mediaUrls : undefined,
       });
     } catch {
