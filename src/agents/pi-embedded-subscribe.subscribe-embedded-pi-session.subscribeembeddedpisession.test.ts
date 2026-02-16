@@ -185,6 +185,52 @@ describe("subscribeEmbeddedPiSession", () => {
     expect(payloads[1]?.delta).toBe(" world");
   });
 
+  it("redacts sensitive tokens across streaming assistant chunks", () => {
+    let handler: ((evt: unknown) => void) | undefined;
+    const session: StubSession = {
+      subscribe: (fn) => {
+        handler = fn;
+        return () => {};
+      },
+    };
+
+    const onAgentEvent = vi.fn();
+
+    subscribeEmbeddedPiSession({
+      session: session as unknown as Parameters<typeof subscribeEmbeddedPiSession>[0]["session"],
+      runId: "run",
+      onAgentEvent,
+    });
+
+    handler?.({ type: "message_start", message: { role: "assistant" } });
+    handler?.({
+      type: "message_update",
+      message: { role: "assistant" },
+      assistantMessageEvent: {
+        type: "text_delta",
+        delta: "Authorization: Bearer abcdef1234",
+      },
+    });
+    handler?.({
+      type: "message_update",
+      message: { role: "assistant" },
+      assistantMessageEvent: {
+        type: "text_delta",
+        delta: "567890ghij ok",
+      },
+    });
+
+    const payloads = onAgentEvent.mock.calls
+      .map((call) => call[0]?.data as Record<string, unknown> | undefined)
+      .filter((value): value is Record<string, unknown> => Boolean(value));
+
+    const joined = payloads.map((p) => (typeof p.text === "string" ? p.text : "")).join("\n");
+
+    expect(joined).not.toContain("abcdef1234567890ghij");
+    expect(joined).toContain("Authorization:");
+    expect(joined).toContain("Bearer abcdef…ghij");
+  });
+
   it("emits agent events on message_end for non-streaming assistant text", () => {
     let handler: ((evt: unknown) => void) | undefined;
     const session: StubSession = {

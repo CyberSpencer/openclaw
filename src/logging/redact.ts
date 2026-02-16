@@ -121,6 +121,17 @@ function resolveConfigRedaction(): RedactOptions {
   };
 }
 
+export function resolveRedactSensitiveOptionsFromConfig(): {
+  mode: RedactSensitiveMode;
+  patterns?: string[];
+} {
+  const resolved = resolveConfigRedaction();
+  return {
+    mode: normalizeMode(resolved.mode),
+    patterns: resolved.patterns,
+  };
+}
+
 export function redactSensitiveText(text: string, options?: RedactOptions): string {
   if (!text) {
     return text;

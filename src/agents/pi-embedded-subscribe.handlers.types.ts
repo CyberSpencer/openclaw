@@ -1,6 +1,7 @@
 import type { AgentEvent, AgentMessage } from "@mariozechner/pi-agent-core";
 import type { ReplyDirectiveParseResult } from "../auto-reply/reply/reply-directives.js";
 import type { ReasoningLevel } from "../auto-reply/thinking.js";
+import type { StreamingSensitiveRedactor } from "../logging/redact-streaming.js";
 import type { InlineCodeState } from "../markdown/code-spans.js";
 import type { EmbeddedBlockChunker } from "./pi-embedded-block-chunker.js";
 import type { MessagingToolSend } from "./pi-embedded-messaging.js";
@@ -40,9 +41,15 @@ export type EmbeddedPiSubscribeState = {
   partialBlockState: { thinking: boolean; final: boolean; inlineCode: InlineCodeState };
   lastStreamedAssistant?: string;
   lastStreamedAssistantCleaned?: string;
+  /** Redacted assistant streaming text (monotonic, chunk-safe). */
+  lastStreamedAssistantRedacted?: string;
+  /** Stateful redactor for assistant streaming (agent events + partial replies). */
+  assistantRedactor: StreamingSensitiveRedactor;
   emittedAssistantUpdate: boolean;
   lastStreamedReasoning?: string;
   lastBlockReplyText?: string;
+  /** Stateful redactor for block replies (user-facing). */
+  blockReplyRedactor: StreamingSensitiveRedactor;
   assistantMessageIndex: number;
   lastAssistantTextMessageIndex: number;
   lastAssistantTextNormalized?: string;
