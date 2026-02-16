@@ -31,18 +31,22 @@ const PEM_END_LOOKBACK_CHARS = 256;
 // We anchor to end-of-string so we only hold suffixes.
 const HOLD_SUFFIX_RULES: RegExp[] = [
   // Authorization / Bearer tokens.
-  /\bBearer\s+[A-Za-z0-9._\-+=]{0,}$/i,
+  // Important: include the bare `Bearer` prefix so we can hold when the stream
+  // splits between "Bearer" and the trailing whitespace / token payload.
+  /\bBearer(?:\s+[A-Za-z0-9._\-+=]{0,})?$/i,
 
   // Common token prefixes.
-  /\bsk-[A-Za-z0-9_-]{0,}$/,
-  /\bghp_[A-Za-z0-9]{0,}$/i,
-  /\bgithub_pat_[A-Za-z0-9_]{0,}$/i,
-  /\bxox[baprs]-[A-Za-z0-9-]{0,}$/i,
-  /\bxapp-[A-Za-z0-9-]{0,}$/i,
-  /\bgsk_[A-Za-z0-9_-]{0,}$/i,
-  /\bAIza[0-9A-Za-z\-_]{0,}$/,
-  /\bpplx-[A-Za-z0-9_-]{0,}$/i,
-  /\bnpm_[A-Za-z0-9]{0,}$/i,
+  // Important: include the bare prefix (e.g. `sk`) so we can hold when the stream
+  // splits between the prefix and the separator (e.g. "sk" + "-" + ...).
+  /\bsk(?:-[A-Za-z0-9_-]{0,})?$/,
+  /\bghp(?:_[A-Za-z0-9]{0,})?$/i,
+  /\bgithub_pat(?:_[A-Za-z0-9_]{0,})?$/i,
+  /\bxox[baprs](?:-[A-Za-z0-9-]{0,})?$/i,
+  /\bxapp(?:-[A-Za-z0-9-]{0,})?$/i,
+  /\bgsk(?:_[A-Za-z0-9_-]{0,})?$/i,
+  /\bAIza(?:[0-9A-Za-z\-_]{0,})?$/,
+  /\bpplx(?:-[A-Za-z0-9_-]{0,})?$/i,
+  /\bnpm(?:_[A-Za-z0-9]{0,})?$/i,
 
   // Telegram-style tokens.
   /\b\d{6,}:[A-Za-z0-9_-]{0,}$/,
