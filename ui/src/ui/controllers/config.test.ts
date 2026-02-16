@@ -48,11 +48,11 @@ describe("applyConfigSnapshot", () => {
       config: { gateway: { mode: "remote", port: 9999 } },
       valid: true,
       issues: [],
-      raw: "{\n  \"gateway\": { \"mode\": \"remote\", \"port\": 9999 }\n}\n",
+      raw: '{\n  "gateway": { "mode": "remote", "port": 9999 }\n}\n',
     });
 
     expect(state.configRaw).toBe(
-      "{\n  \"gateway\": {\n    \"mode\": \"local\",\n    \"port\": 32555\n  }\n}\n",
+      '{\n  "gateway": {\n    "mode": "local",\n    "port": 32555\n  }\n}\n',
     );
   });
 
@@ -131,7 +131,7 @@ describe("updateConfigFormValue", () => {
     updateConfigFormValue(state, ["gateway", "port"], 32555);
 
     expect(state.configRaw).toBe(
-      "{\n  \"gateway\": {\n    \"mode\": \"local\",\n    \"port\": 32555\n  }\n}\n",
+      '{\n  "gateway": {\n    "mode": "local",\n    "port": 32555\n  }\n}\n',
     );
   });
 });
@@ -144,7 +144,7 @@ describe("applyConfig", () => {
     state.client = { request } as unknown as ConfigState["client"];
     state.applySessionKey = "agent:main:whatsapp:dm:+15555550123";
     state.configFormMode = "raw";
-    state.configRaw = "{\n  agent: { workspace: \"~/openclaw\" }\n}\n";
+    state.configRaw = '{\n  agent: { workspace: "~/openclaw" }\n}\n';
     state.configSnapshot = {
       hash: "hash-123",
     };
@@ -152,7 +152,7 @@ describe("applyConfig", () => {
     await applyConfig(state);
 
     expect(request).toHaveBeenCalledWith("config.apply", {
-      raw: "{\n  agent: { workspace: \"~/openclaw\" }\n}\n",
+      raw: '{\n  agent: { workspace: "~/openclaw" }\n}\n',
       baseHash: "hash-123",
       sessionKey: "agent:main:whatsapp:dm:+15555550123",
     });

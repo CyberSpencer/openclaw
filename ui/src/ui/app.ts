@@ -5,6 +5,7 @@ import type { AppViewState } from "./app-view-state.ts";
 import type { DevicePairingList } from "./controllers/devices.ts";
 import type { ExecApprovalRequest } from "./controllers/exec-approval.ts";
 import type { ExecApprovalsFile, ExecApprovalsSnapshot } from "./controllers/exec-approvals.ts";
+import type { SkillMessage } from "./controllers/skills.ts";
 import type { GatewayBrowserClient, GatewayHelloOk } from "./gateway.ts";
 import type { Tab } from "./navigation.ts";
 import type { ResolvedTheme, ThemeMode } from "./theme.ts";
@@ -26,6 +27,8 @@ import type {
   SkillStatusReport,
   StatusSummary,
   NostrProfile,
+  RouterStatus,
+  SparkStatus,
 } from "./types.ts";
 import type { NostrProfileFormState } from "./views/channels.nostr-profile-form.ts";
 import {
@@ -60,6 +63,7 @@ import {
   handleChatScroll as handleChatScrollInternal,
   handleLogsScroll as handleLogsScrollInternal,
   resetChatScroll as resetChatScrollInternal,
+  scheduleChatScroll as scheduleChatScrollInternal,
 } from "./app-scroll.ts";
 import {
   applySettings as applySettingsInternal,
@@ -360,7 +364,7 @@ export class OpenClawApp extends LitElement {
   @state() hello: GatewayHelloOk | null = null;
   @state() lastError: string | null = null;
   @state() eventLog: EventLogEntry[] = [];
-  private eventLogBuffer: EventLogEntry[] = [];
+  eventLogBuffer: EventLogEntry[] = [];
   private toolStreamSyncTimer: number | null = null;
   private sidebarCloseTimer: number | null = null;
 
@@ -371,6 +375,7 @@ export class OpenClawApp extends LitElement {
   @state() sessionKey = this.settings.sessionKey;
   @state() chatLoading = false;
   @state() chatSending = false;
+  @state() chatManualRefreshInFlight = false;
   @state() chatMessage = "";
   @state() chatMessages: unknown[] = [];
   @state() chatToolMessages: unknown[] = [];
@@ -378,6 +383,8 @@ export class OpenClawApp extends LitElement {
   @state() chatStreamStartedAt: number | null = null;
   @state() chatRunId: string | null = null;
   @state() chatModelSelection: ModelSelectionInfo | null = null;
+  @state() chatModelProvider: string | null = null;
+  @state() chatModelId: string | null = null;
   @state() chatTaskPlan: TaskPlan | null = null;
   @state() compactionStatus: import("./app-tool-stream.ts").CompactionStatus | null = null;
   @state() chatAvatarUrl: string | null = null;
@@ -638,10 +645,13 @@ export class OpenClawApp extends LitElement {
   @state() memorySearchEnabled: boolean | null = null;
   @state() memorySearchBusy = false;
   @state() memoryStoreLabel: string | null = null;
+  @state() systemStatusLoading = false;
+  @state() systemStatusError: string | null = null;
+  @state() routerStatus: RouterStatus | null = null;
   @state() nvidiaRouterEnabled: boolean | null = null;
   @state() nvidiaRouterHealthy: boolean | null = null;
   @state() nvidiaRouterBusy = false;
-  @state() sparkStatus: SparkStatusResult | null = null;
+  @state() sparkStatus: SparkStatus | null = null;
   @state() sparkBusy = false;
   @state() sparkMicRecording = false;
   private sparkMicMediaRecorder: MediaRecorder | null = null;
@@ -684,23 +694,23 @@ export class OpenClawApp extends LitElement {
   @state() logsAtBottom = true;
 
   client: GatewayBrowserClient | null = null;
-  private chatScrollFrame: number | null = null;
-  private chatScrollTimeout: number | null = null;
-  private chatHasAutoScrolled = false;
-  private chatUserNearBottom = true;
+  chatScrollFrame: number | null = null;
+  chatScrollTimeout: number | null = null;
+  chatHasAutoScrolled = false;
+  chatUserNearBottom = true;
   @state() chatNewMessagesBelow = false;
   private nodesPollInterval: number | null = null;
   private logsPollInterval: number | null = null;
   private debugPollInterval: number | null = null;
-  private logsScrollFrame: number | null = null;
+  logsScrollFrame: number | null = null;
   private toolStreamById = new Map<string, ToolStreamEntry>();
   private toolStreamOrder: string[] = [];
   basePath = "";
   private popStateHandler = () =>
     onPopStateInternal(this as unknown as Parameters<typeof onPopStateInternal>[0]);
-  private themeMedia: MediaQueryList | null = null;
-  private themeMediaHandler: ((event: MediaQueryListEvent) => void) | null = null;
-  private topbarObserver: ResizeObserver | null = null;
+  themeMedia: MediaQueryList | null = null;
+  themeMediaHandler: ((event: MediaQueryListEvent) => void) | null = null;
+  topbarObserver: ResizeObserver | null = null;
   private globalKeydownHandler = (event: KeyboardEvent) => this.handleGlobalKeydown(event);
 
   createRenderRoot() {
@@ -963,7 +973,12 @@ export class OpenClawApp extends LitElement {
     }
     const sessionKey = (this.sessionKey ?? "").trim();
     try {
-      const res = await this.client.request("orchestrator.get", sessionKey ? { sessionKey } : {});
+      const res = await this.client.request<{
+        exists?: boolean;
+        hash?: string;
+        scopeKey?: string;
+        state?: unknown;
+      }>("orchestrator.get", sessionKey ? { sessionKey } : {});
       const exists = Boolean(res?.exists);
       const hash = typeof res?.hash === "string" ? res.hash : "";
       const scopeKeyRaw = typeof res?.scopeKey === "string" ? res.scopeKey.trim() : "";
@@ -1100,11 +1115,14 @@ export class OpenClawApp extends LitElement {
     }
     this.orchServerSyncing = true;
     try {
-      const res = await this.client.request("orchestrator.set", {
-        ...(sessionKey ? { sessionKey } : {}),
-        state,
-        baseHash: this.orchServerHash ?? undefined,
-      });
+      const res = await this.client.request<{ hash?: string; scopeKey?: string }>(
+        "orchestrator.set",
+        {
+          ...(sessionKey ? { sessionKey } : {}),
+          state,
+          baseHash: this.orchServerHash ?? undefined,
+        },
+      );
       const nextHash = typeof res?.hash === "string" ? res.hash : "";
       const nextScopeKey = typeof res?.scopeKey === "string" ? res.scopeKey.trim() : "";
       if (nextHash) {
@@ -1118,7 +1136,7 @@ export class OpenClawApp extends LitElement {
         err instanceof Error ? err.message : typeof err === "string" ? err : "unknown error";
       if (message.includes("baseHash") && message.includes("mismatch")) {
         try {
-          const latest = await this.client.request(
+          const latest = await this.client.request<{ hash?: string; scopeKey?: string }>(
             "orchestrator.get",
             sessionKey ? { sessionKey } : {},
           );
@@ -1130,10 +1148,13 @@ export class OpenClawApp extends LitElement {
           if (nextScopeKey) {
             this.orchScopeKey = nextScopeKey;
           }
-          const retry = await this.client.request("orchestrator.set", {
-            ...(sessionKey ? { sessionKey } : {}),
-            state,
-          });
+          const retry = await this.client.request<{ hash?: string; scopeKey?: string }>(
+            "orchestrator.set",
+            {
+              ...(sessionKey ? { sessionKey } : {}),
+              state,
+            },
+          );
           const retryHash = typeof retry?.hash === "string" ? retry.hash : "";
           const retryScopeKey = typeof retry?.scopeKey === "string" ? retry.scopeKey.trim() : "";
           if (retryHash) {
@@ -1574,15 +1595,18 @@ export class OpenClawApp extends LitElement {
         this.orchBoards = nextBoards;
         this.rebuildOrchRunIndex();
 
-        const accepted = await this.client.request("codex-team.run", {
-          cardId: card.id,
-          title: card.title?.trim() || undefined,
-          task: card.task,
-          agentId: normalizedAgentId,
-          mode,
-          timeoutSeconds: timeoutSeconds > 0 ? timeoutSeconds : undefined,
-          shellAllowlist,
-        });
+        const accepted = await this.client.request<{ runId?: string; sessionKey?: string }>(
+          "codex-team.run",
+          {
+            cardId: card.id,
+            title: card.title?.trim() || undefined,
+            task: card.task,
+            agentId: normalizedAgentId,
+            mode,
+            timeoutSeconds: timeoutSeconds > 0 ? timeoutSeconds : undefined,
+            shellAllowlist,
+          },
+        );
 
         const runId =
           accepted && typeof accepted.runId === "string" && accepted.runId.trim()
@@ -1629,7 +1653,13 @@ export class OpenClawApp extends LitElement {
       const thinking = (card.thinking ?? "").trim() || undefined;
       const idem = generateUUID();
 
-      const result = await this.client.request("sessions.spawn", {
+      const result = await this.client.request<{
+        status?: string;
+        error?: string;
+        childSessionKey?: string;
+        runId?: string;
+        warning?: string;
+      }>("sessions.spawn", {
         requesterSessionKey,
         task: card.task,
         label: card.title?.trim() || undefined,
@@ -1894,12 +1924,12 @@ export class OpenClawApp extends LitElement {
     }> = [];
 
     try {
-      const res = await this.client.request("sessions.subagents", {
+      const res = await this.client.request<{ tasks?: unknown[] }>("sessions.subagents", {
         requesterSessionKey,
         includeCompleted: true,
         limit: 200,
       });
-      tasks = Array.isArray(res?.tasks) ? res.tasks : [];
+      tasks = Array.isArray(res?.tasks) ? (res.tasks as typeof tasks) : [];
     } catch {
       tasks = [];
     }
@@ -1954,7 +1984,12 @@ export class OpenClawApp extends LitElement {
 
       if (runId) {
         try {
-          const snapshot = await this.client.request("agent.wait", { runId, timeoutMs: 1 });
+          const snapshot = await this.client.request<{
+            status?: string;
+            startedAt?: number;
+            endedAt?: number;
+            error?: string;
+          }>("agent.wait", { runId, timeoutMs: 1 });
           const status = typeof snapshot?.status === "string" ? snapshot.status : "";
           const startedAt =
             typeof snapshot?.startedAt === "number" ? snapshot.startedAt : undefined;
@@ -2626,7 +2661,7 @@ export class OpenClawApp extends LitElement {
     this.cronBusy = true;
     this.cronError = null;
     try {
-      const snapshot = await this.client.request("config.get", {});
+      const snapshot = await this.client.request<{ hash?: string }>("config.get", {});
       const baseHash = typeof snapshot.hash === "string" ? snapshot.hash.trim() : "";
       if (!baseHash) {
         this.cronError = "Config hash missing, reload and retry.";
@@ -2664,7 +2699,15 @@ export class OpenClawApp extends LitElement {
     this.doctorError = null;
     this.doctorResult = null;
     try {
-      const res = await this.client.request("doctor.run", {
+      const res = await this.client.request<{
+        ok?: boolean;
+        exitCode?: number;
+        signal?: string;
+        durationMs?: number;
+        timedOut?: boolean;
+        stdout?: string;
+        stderr?: string;
+      }>("doctor.run", {
         timeoutMs: 120_000,
         deep: opts?.deep === true,
       });
@@ -2709,12 +2752,54 @@ export class OpenClawApp extends LitElement {
     }
     this.nvidiaRouterBusy = true;
     try {
-      const status = await this.client.request("router.status", {});
-      this.nvidiaRouterEnabled = status.enabled !== false;
-      this.nvidiaRouterHealthy = status.enabled === false ? false : Boolean(status.healthy);
+      const status = await this.client.request<{ enabled?: boolean; healthy?: boolean }>(
+        "router.status",
+        {},
+      );
+      const enabled = status.enabled !== false;
+      const healthy = status.enabled === false ? false : Boolean(status.healthy);
+      this.nvidiaRouterEnabled = enabled;
+      this.nvidiaRouterHealthy = healthy;
+      this.routerStatus = {
+        enabled,
+        healthy,
+        url: "",
+        checkedAt: Date.now(),
+      };
     } catch {
       this.nvidiaRouterEnabled = null;
       this.nvidiaRouterHealthy = null;
+      this.routerStatus = null;
+    } finally {
+      this.nvidiaRouterBusy = false;
+    }
+  }
+
+  async handleRouterSetEnabled(enabled: boolean) {
+    if (!this.client || !this.connected || this.nvidiaRouterBusy) {
+      return;
+    }
+    this.nvidiaRouterBusy = true;
+    this.lastError = null;
+    try {
+      const result = await this.client.request<{ enabled?: boolean; healthy?: boolean }>(
+        "router.setEnabled",
+        {
+          enabled,
+        },
+      );
+      const resolvedEnabled = result.enabled !== false;
+      const resolvedHealthy = result.enabled === false ? false : Boolean(result.healthy);
+      this.nvidiaRouterEnabled = resolvedEnabled;
+      this.nvidiaRouterHealthy = resolvedHealthy;
+      this.routerStatus = {
+        enabled: resolvedEnabled,
+        healthy: resolvedHealthy,
+        url: "",
+        checkedAt: Date.now(),
+      };
+    } catch (err) {
+      this.lastError = String(err);
     } finally {
       this.nvidiaRouterBusy = false;
     }
@@ -2729,11 +2814,22 @@ export class OpenClawApp extends LitElement {
     try {
       const currentEnabled = this.nvidiaRouterEnabled !== false;
       const nextEnabled = !currentEnabled;
-      const result = await this.client.request("router.setEnabled", {
-        enabled: nextEnabled,
-      });
-      this.nvidiaRouterEnabled = result.enabled !== false;
-      this.nvidiaRouterHealthy = result.enabled === false ? false : Boolean(result.healthy);
+      const result = await this.client.request<{ enabled?: boolean; healthy?: boolean }>(
+        "router.setEnabled",
+        {
+          enabled: nextEnabled,
+        },
+      );
+      const enabled = result.enabled !== false;
+      const healthy = result.enabled === false ? false : Boolean(result.healthy);
+      this.nvidiaRouterEnabled = enabled;
+      this.nvidiaRouterHealthy = healthy;
+      this.routerStatus = {
+        enabled,
+        healthy,
+        url: "",
+        checkedAt: Date.now(),
+      };
     } catch (err) {
       this.lastError = String(err);
     } finally {
@@ -2748,8 +2844,20 @@ export class OpenClawApp extends LitElement {
     this.sparkBusy = true;
     let pollSucceeded = false;
     try {
-      const status = await this.client.request("spark.status", {});
-      this.sparkStatus = status;
+      const status = await this.client.request<SparkStatusResult>("spark.status", {});
+      this.sparkStatus = {
+        enabled: status.enabled !== false,
+        active: Boolean(status.active),
+        source: status.source,
+        host: status.host ?? null,
+        checkedAt: typeof status.checkedAt === "number" ? status.checkedAt : Date.now(),
+        voiceAvailable: status.voiceAvailable,
+        overall: status.overall,
+        counts: status.counts,
+        services: status.services,
+        gpu: status.gpu ?? null,
+        containers: status.containers ?? null,
+      };
       this.sparkStatusConsecutivePollFailures = 0;
       pollSucceeded = true;
     } catch {
@@ -3237,10 +3345,13 @@ export class OpenClawApp extends LitElement {
       });
 
       const fetchChunkForWorklet = async (idx: number): Promise<Float32Array> => {
-        const result = await this.client!.request("spark.voice.tts", {
-          text: chunks[idx],
-          ...this.getTtsRequestParams(),
-        });
+        const result = await this.client!.request<{ audio_base64?: string; format?: string }>(
+          "spark.voice.tts",
+          {
+            text: chunks[idx],
+            ...this.getTtsRequestParams(),
+          },
+        );
         const b64 = result?.audio_base64;
         if (typeof b64 !== "string" || !b64) {
           throw new Error(`Chunk ${idx + 1}: no audio`);
@@ -3327,15 +3438,18 @@ export class OpenClawApp extends LitElement {
     }
 
     const fetchChunkAudio = async (idx: number): Promise<HTMLAudioElement> => {
-      const result = await this.client!.request("spark.voice.tts", {
-        text: chunks[idx],
-        ...this.getTtsRequestParams(),
-      });
+      const result = await this.client!.request<{ audio_base64?: string; format?: string }>(
+        "spark.voice.tts",
+        {
+          text: chunks[idx],
+          ...this.getTtsRequestParams(),
+        },
+      );
       const b64 = result?.audio_base64;
       if (typeof b64 !== "string" || !b64) {
         throw new Error(`Chunk ${idx + 1}: no audio`);
       }
-      const fmt = (result?.format as string) ?? "webm";
+      const fmt = result?.format ?? "webm";
       const mime = fmt === "webm" ? "audio/webm" : `audio/${fmt}`;
       return new Audio(`data:${mime};base64,${b64}`);
     };
@@ -3403,11 +3517,19 @@ export class OpenClawApp extends LitElement {
     if (!this.client || !this.connected) {
       return;
     }
-    await Promise.all([
-      this.refreshMemoryToggleState(),
-      this.refreshNvidiaRouterStatus(),
-      this.refreshSparkStatus(),
-    ]);
+    this.systemStatusLoading = true;
+    this.systemStatusError = null;
+    try {
+      await Promise.all([
+        this.refreshMemoryToggleState(),
+        this.refreshNvidiaRouterStatus(),
+        this.refreshSparkStatus(),
+      ]);
+    } catch (err) {
+      this.systemStatusError = String(err);
+    } finally {
+      this.systemStatusLoading = false;
+    }
   }
 
   render() {

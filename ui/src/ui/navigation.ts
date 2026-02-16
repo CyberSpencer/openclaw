@@ -7,12 +7,13 @@ export const TAB_GROUPS = [
     label: "Control",
     tabs: ["overview", "channels", "instances", "sessions", "usage", "cron"],
   },
-  { label: "Agent", tabs: ["orchestrator", "skills", "nodes"] },
+  { label: "Agent", tabs: ["orchestrator", "agents", "skills", "nodes"] },
   { label: "Settings", tabs: ["settings", "config", "debug", "logs"] },
 ] as const;
 
 export type Tab =
   | "orchestrator"
+  | "agents"
   | "overview"
   | "channels"
   | "instances"
@@ -30,6 +31,7 @@ export type Tab =
 
 const TAB_PATHS: Record<Tab, string> = {
   orchestrator: "/orchestrator",
+  agents: "/agents",
   overview: "/overview",
   channels: "/channels",
   instances: "/instances",
@@ -170,6 +172,8 @@ export function titleForTab(tab: Tab) {
   switch (tab) {
     case "orchestrator":
       return "Orchestrator";
+    case "agents":
+      return "Agents";
     case "overview":
       return "Overview";
     case "channels":
@@ -207,6 +211,8 @@ export function subtitleForTab(tab: Tab) {
   switch (tab) {
     case "orchestrator":
       return "Spawn sub-agents, track runs, and move work across lanes.";
+    case "agents":
+      return "Inspect agents, config, files, skills, channels, and cron.";
     case "overview":
       return "Gateway status, entry points, and a fast health read.";
     case "channels":

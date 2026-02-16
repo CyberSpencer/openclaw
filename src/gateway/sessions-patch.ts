@@ -341,9 +341,15 @@ export async function applySessionsPatchToStore(params: {
       delete next.taskPlan;
     } else if (raw !== undefined) {
       // Best-effort normalization: ensure tasks array is capped.
-      const plan = raw as { tasks?: unknown } & Record<string, unknown>;
+      const plan = raw as { id?: unknown; tasks?: unknown } & Record<string, unknown>;
       const tasks = Array.isArray(plan.tasks) ? plan.tasks.slice(0, 50) : [];
-      next.taskPlan = { ...plan, tasks };
+      const id =
+        typeof plan.id === "string" && plan.id.trim()
+          ? plan.id.trim()
+          : typeof next.taskPlan?.id === "string"
+            ? next.taskPlan.id
+            : "default";
+      next.taskPlan = { ...plan, id, tasks };
     }
   }
 

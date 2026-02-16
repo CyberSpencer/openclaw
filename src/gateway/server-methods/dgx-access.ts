@@ -394,7 +394,7 @@ export async function resolveDgxAccess(
           mode: "lan",
           host: lanHost,
           lanHost,
-          wanBaseUrl,
+          wanBaseUrl: wanBaseUrl ?? null,
           requestHeaders: {},
         },
       };

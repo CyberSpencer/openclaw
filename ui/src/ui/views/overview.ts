@@ -25,6 +25,24 @@ function readControlUiBuildMeta(): ControlUiBuildMeta | null {
   return value as ControlUiBuildMeta;
 }
 
+function formatDurationMs(ms: number): string {
+  if (!Number.isFinite(ms) || ms <= 0) {
+    return "0s";
+  }
+  const totalSeconds = Math.floor(ms / 1000);
+  const seconds = totalSeconds % 60;
+  const totalMinutes = Math.floor(totalSeconds / 60);
+  const minutes = totalMinutes % 60;
+  const hours = Math.floor(totalMinutes / 60);
+  if (hours > 0) {
+    return `${hours}h ${minutes}m`;
+  }
+  if (minutes > 0) {
+    return `${minutes}m ${seconds}s`;
+  }
+  return `${seconds}s`;
+}
+
 export type OverviewProps = {
   connected: boolean;
   hello: GatewayHelloOk | null;
@@ -247,7 +265,7 @@ export function renderOverview(props: OverviewProps) {
           <div class="stat">
             <div class="stat-label">Last Channels Refresh</div>
             <div class="stat-value">
-              ${props.lastChannelsRefresh ? formatAgo(props.lastChannelsRefresh) : "n/a"}
+              ${props.lastChannelsRefresh ? formatRelativeTimestamp(props.lastChannelsRefresh) : "n/a"}
             </div>
           </div>
           <div class="stat">

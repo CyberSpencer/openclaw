@@ -30,7 +30,13 @@ function mountApp(pathname: string): OpenClawApp {
 
 function setSparkAvailable(app: OpenClawApp) {
   app.connected = true;
-  app.sparkStatus = { enabled: true, voiceAvailable: true };
+  app.sparkStatus = {
+    enabled: true,
+    active: true,
+    host: null,
+    checkedAt: Date.now(),
+    voiceAvailable: true,
+  };
 }
 
 beforeEach(() => {

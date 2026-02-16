@@ -206,7 +206,7 @@ function handleGatewayEventUnsafe(host: GatewayHost, evt: GatewayEventFrame) {
     if (host.onboarding) {
       return;
     }
-    const payload = evt.payload;
+    const payload = evt.payload as AgentEventPayload | undefined;
     if (payload) {
       host.handleOrchestratorAgentEvent?.(payload);
     }
@@ -220,7 +220,7 @@ function handleGatewayEventUnsafe(host: GatewayHost, evt: GatewayEventFrame) {
   }
 
   if (evt.event === "chat") {
-    const payload = evt.payload;
+    const payload = evt.payload as import("./controllers/chat.ts").ChatEventPayload | undefined;
     if (payload?.sessionKey) {
       setLastActiveSessionKey(
         host as unknown as Parameters<typeof setLastActiveSessionKey>[0],

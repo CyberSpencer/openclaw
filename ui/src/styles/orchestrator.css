@@ -31,7 +31,11 @@
     radial-gradient(540px 360px at 92% -8%, var(--accent-2-subtle), transparent 60%),
     linear-gradient(var(--grid-line) 1px, transparent 1px),
     linear-gradient(90deg, var(--grid-line) 1px, transparent 1px);
-  background-size: auto, auto, 36px 36px, 36px 36px;
+  background-size:
+    auto,
+    auto,
+    36px 36px,
+    36px 36px;
 }
 
 .orch-board > * {
@@ -144,7 +148,9 @@
   background: var(--card);
   padding: 12px;
   margin-top: 10px;
-  box-shadow: var(--shadow-sm), inset 0 1px 0 var(--card-highlight);
+  box-shadow:
+    var(--shadow-sm),
+    inset 0 1px 0 var(--card-highlight);
   cursor: pointer;
   transition:
     transform var(--duration-fast) var(--ease-out),
@@ -155,7 +161,9 @@
 .orch-card:hover {
   transform: translateY(-1px);
   border-color: var(--border-strong);
-  box-shadow: var(--shadow-md), inset 0 1px 0 var(--card-highlight);
+  box-shadow:
+    var(--shadow-md),
+    inset 0 1px 0 var(--card-highlight);
 }
 
 .orch-card[aria-selected="true"] {
@@ -169,12 +177,7 @@
   inset: 0;
   border-radius: inherit;
   pointer-events: none;
-  background: linear-gradient(
-    120deg,
-    transparent,
-    var(--accent-subtle),
-    transparent
-  );
+  background: linear-gradient(120deg, transparent, var(--accent-subtle), transparent);
   opacity: 0;
   transition: opacity var(--duration-normal) var(--ease-out);
 }
@@ -365,7 +368,9 @@
   border-radius: var(--radius-lg);
   border: 1px solid var(--border);
   background: var(--card);
-  box-shadow: var(--shadow-sm), inset 0 1px 0 var(--card-highlight);
+  box-shadow:
+    var(--shadow-sm),
+    inset 0 1px 0 var(--card-highlight);
   padding: 12px;
   cursor: pointer;
   transition:
@@ -377,7 +382,9 @@
 .orch-template:hover {
   transform: translateY(-1px);
   border-color: var(--border-strong);
-  box-shadow: var(--shadow-md), inset 0 1px 0 var(--card-highlight);
+  box-shadow:
+    var(--shadow-md),
+    inset 0 1px 0 var(--card-highlight);
 }
 
 .orch-template:focus-visible {
