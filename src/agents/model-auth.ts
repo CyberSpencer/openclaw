@@ -16,7 +16,7 @@ import {
   resolveAuthProfileOrder,
   resolveAuthStorePathForDisplay,
 } from "./auth-profiles.js";
-import { isLocalProviderUrl, normalizeProviderId } from "./model-selection.js";
+import { normalizeProviderId } from "./model-selection.js";
 
 export { ensureAuthProfileStore, resolveAuthProfileOrder } from "./auth-profiles.js";
 
@@ -65,19 +65,6 @@ function resolveProviderAuthOverride(
     return auth;
   }
   return undefined;
-}
-
-function isLikelyLocalProvider(cfg: OpenClawConfig | undefined, provider: string): boolean {
-  const normalized = normalizeProviderId(provider);
-  if (normalized === "ollama") {
-    return true;
-  }
-  const entry = resolveProviderConfig(cfg, provider);
-  const baseUrl = entry?.baseUrl?.trim();
-  if (!baseUrl) {
-    return false;
-  }
-  return isLocalProviderUrl(baseUrl);
 }
 
 function resolveEnvSourceLabel(params: {
@@ -220,16 +207,6 @@ export async function resolveApiKeyForProvider(params: {
     return { apiKey: customKey, source: "models.json", mode: "api-key" };
   }
 
-  if (authOverride === undefined && isLikelyLocalProvider(cfg, provider)) {
-    // Local providers often run without auth and ignore any Authorization header.
-    // Return a stable placeholder token so the downstream model runner can proceed.
-    return {
-      apiKey: "openclaw-local-provider",
-      source: "local provider (no auth)",
-      mode: "api-key",
-    };
-  }
-
   const normalized = normalizeProviderId(provider);
   if (authOverride === undefined && normalized === "amazon-bedrock") {
     return resolveAwsSdkAuthInfo();
@@ -310,6 +287,10 @@ export function resolveEnvApiKey(provider: string): EnvApiKeyResult | null {
     return pick("KIMI_API_KEY") ?? pick("KIMICODE_API_KEY");
   }
 
+  if (normalized === "huggingface") {
+    return pick("HUGGINGFACE_HUB_TOKEN") ?? pick("HF_TOKEN");
+  }
+
   const envMap: Record<string, string> = {
     openai: "OPENAI_API_KEY",
     google: "GEMINI_API_KEY",
@@ -318,19 +299,22 @@ export function resolveEnvApiKey(provider: string): EnvApiKeyResult | null {
     deepgram: "DEEPGRAM_API_KEY",
     cerebras: "CEREBRAS_API_KEY",
     xai: "XAI_API_KEY",
-    nvidia: "NVIDIA_API_KEY",
     openrouter: "OPENROUTER_API_KEY",
+    litellm: "LITELLM_API_KEY",
     "vercel-ai-gateway": "AI_GATEWAY_API_KEY",
     "cloudflare-ai-gateway": "CLOUDFLARE_AI_GATEWAY_API_KEY",
     moonshot: "MOONSHOT_API_KEY",
     minimax: "MINIMAX_API_KEY",
+    nvidia: "NVIDIA_API_KEY",
     xiaomi: "XIAOMI_API_KEY",
     synthetic: "SYNTHETIC_API_KEY",
     venice: "VENICE_API_KEY",
     mistral: "MISTRAL_API_KEY",
     opencode: "OPENCODE_API_KEY",
+    together: "TOGETHER_API_KEY",
     qianfan: "QIANFAN_API_KEY",
     ollama: "OLLAMA_API_KEY",
+    vllm: "VLLM_API_KEY",
   };
   const envVar = envMap[normalized];
   if (!envVar) {

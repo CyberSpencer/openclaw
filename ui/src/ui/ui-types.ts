@@ -12,25 +12,6 @@ export type ChatQueueItem = {
   refreshSessions?: boolean;
 };
 
-export type TaskPlanStatus = "todo" | "running" | "done" | "blocked" | "skipped";
-
-export type TaskPlanTask = {
-  id: string;
-  title: string;
-  detail?: string;
-  status?: TaskPlanStatus;
-  assignedSessionKey?: string;
-  assignedRunId?: string;
-  failureReason?: "error" | "timeout" | "unknown";
-  resultSummary?: string;
-};
-
-export type TaskPlan = {
-  id: string;
-  goal?: string;
-  tasks: TaskPlanTask[];
-};
-
 export const CRON_CHANNEL_LAST = "last";
 
 export type CronFormState = {
@@ -48,7 +29,7 @@ export type CronFormState = {
   wakeMode: "next-heartbeat" | "now";
   payloadKind: "systemEvent" | "agentTurn";
   payloadText: string;
-  deliveryMode: "none" | "announce";
+  deliveryMode: "none" | "announce" | "webhook";
   deliveryChannel: string;
   deliveryTo: string;
   timeoutSeconds: string;

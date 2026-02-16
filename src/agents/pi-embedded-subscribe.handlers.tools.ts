@@ -1,43 +1,35 @@
 import type { AgentEvent } from "@mariozechner/pi-agent-core";
-import type { EmbeddedPiSubscribeContext } from "./pi-embedded-subscribe.handlers.types.js";
+import type { PluginHookAfterToolCallEvent } from "../plugins/types.js";
+import type {
+  EmbeddedPiSubscribeContext,
+  ToolCallSummary,
+} from "./pi-embedded-subscribe.handlers.types.js";
 import { emitAgentEvent } from "../infra/agent-events.js";
-import { redactSensitiveText, resolveRedactSensitiveOptionsFromConfig } from "../logging/redact.js";
+import { getGlobalHookRunner } from "../plugins/hook-runner-global.js";
 import { normalizeTextForComparison } from "./pi-embedded-helpers.js";
 import { isMessagingTool, isMessagingToolSendAction } from "./pi-embedded-messaging.js";
 import {
   extractToolErrorMessage,
+  extractToolResultMediaPaths,
   extractToolResultText,
   extractMessagingToolSend,
   isToolResultError,
   sanitizeToolResult,
 } from "./pi-embedded-subscribe.tools.js";
 import { inferToolMetaFromArgs } from "./pi-embedded-utils.js";
+import { buildToolMutationState, isSameToolMutationAction } from "./tool-mutation.js";
 import { normalizeToolName } from "./tool-policy.js";
 
-function redactToolValue(
-  value: unknown,
-  options: ReturnType<typeof resolveRedactSensitiveOptionsFromConfig>,
-  depth = 0,
-): unknown {
-  if (typeof value === "string") {
-    return redactSensitiveText(value, options);
-  }
-  if (depth > 8) {
-    return value;
-  }
-  if (Array.isArray(value)) {
-    return value.map((entry) => redactToolValue(entry, options, depth + 1));
-  }
-  if (!value || typeof value !== "object") {
-    return value;
-  }
-  // Best-effort plain-object walk.
-  const rec = value as Record<string, unknown>;
-  const out: Record<string, unknown> = {};
-  for (const [k, v] of Object.entries(rec)) {
-    out[k] = redactToolValue(v, options, depth + 1);
-  }
-  return out;
+/** Track tool execution start times and args for after_tool_call hook */
+const toolStartData = new Map<string, { startTime: number; args: unknown }>();
+
+function buildToolCallSummary(toolName: string, args: unknown, meta?: string): ToolCallSummary {
+  const mutation = buildToolMutationState(toolName, args, meta);
+  return {
+    meta,
+    mutatingAction: mutation.mutatingAction,
+    actionFingerprint: mutation.actionFingerprint,
+  };
 }
 
 function extendExecMeta(toolName: string, args: unknown, meta?: string): string | undefined {
@@ -78,9 +70,18 @@ export async function handleToolExecutionStart(
   const toolCallId = String(evt.toolCallId);
   const args = evt.args;
 
+  // Track start time and args for after_tool_call hook
+  toolStartData.set(toolCallId, { startTime: Date.now(), args });
+
   if (toolName === "read") {
     const record = args && typeof args === "object" ? (args as Record<string, unknown>) : {};
-    const filePath = typeof record.path === "string" ? record.path.trim() : "";
+    const filePathValue =
+      typeof record.path === "string"
+        ? record.path
+        : typeof record.file_path === "string"
+          ? record.file_path
+          : "";
+    const filePath = filePathValue.trim();
     if (!filePath) {
       const argsPreview = typeof args === "string" ? args.slice(0, 200) : undefined;
       ctx.log.warn(
@@ -90,15 +91,12 @@ export async function handleToolExecutionStart(
   }
 
   const meta = extendExecMeta(toolName, args, inferToolMetaFromArgs(toolName, args));
-  ctx.state.toolMetaById.set(toolCallId, meta);
+  ctx.state.toolMetaById.set(toolCallId, buildToolCallSummary(toolName, args, meta));
   ctx.log.debug(
     `embedded run tool start: runId=${ctx.params.runId} tool=${toolName} toolCallId=${toolCallId}`,
   );
 
   const shouldEmitToolEvents = ctx.shouldEmitToolResult();
-  const redactOptions = resolveRedactSensitiveOptionsFromConfig();
-  const redactedArgs = redactToolValue(args, redactOptions) as Record<string, unknown>;
-
   emitAgentEvent({
     runId: ctx.params.runId,
     stream: "tool",
@@ -106,7 +104,7 @@ export async function handleToolExecutionStart(
       phase: "start",
       name: toolName,
       toolCallId,
-      args: redactedArgs,
+      args: args as Record<string, unknown>,
     },
   });
   // Best-effort typing signal; do not block tool summaries on slow emitters.
@@ -155,8 +153,6 @@ export function handleToolExecutionUpdate(
   const toolCallId = String(evt.toolCallId);
   const partial = evt.partialResult;
   const sanitized = sanitizeToolResult(partial);
-  const redactOptions = resolveRedactSensitiveOptionsFromConfig();
-  const redactedPartial = redactToolValue(sanitized, redactOptions);
   emitAgentEvent({
     runId: ctx.params.runId,
     stream: "tool",
@@ -164,7 +160,7 @@ export function handleToolExecutionUpdate(
       phase: "update",
       name: toolName,
       toolCallId,
-      partialResult: redactedPartial,
+      partialResult: sanitized,
     },
   });
   void ctx.params.onAgentEvent?.({
@@ -177,7 +173,7 @@ export function handleToolExecutionUpdate(
   });
 }
 
-export function handleToolExecutionEnd(
+export async function handleToolExecutionEnd(
   ctx: EmbeddedPiSubscribeContext,
   evt: AgentEvent & {
     toolName: string;
@@ -192,22 +188,35 @@ export function handleToolExecutionEnd(
   const result = evt.result;
   const isToolError = isError || isToolResultError(result);
   const sanitizedResult = sanitizeToolResult(result);
-  const redactOptions = resolveRedactSensitiveOptionsFromConfig();
-  const redactedResult = redactToolValue(sanitizedResult, redactOptions);
-  const meta = ctx.state.toolMetaById.get(toolCallId);
+  const callSummary = ctx.state.toolMetaById.get(toolCallId);
+  const meta = callSummary?.meta;
   ctx.state.toolMetas.push({ toolName, meta });
   ctx.state.toolMetaById.delete(toolCallId);
   ctx.state.toolSummaryById.delete(toolCallId);
   if (isToolError) {
-    const errorMessage = redactSensitiveText(
-      extractToolErrorMessage(sanitizedResult),
-      redactOptions,
-    );
+    const errorMessage = extractToolErrorMessage(sanitizedResult);
     ctx.state.lastToolError = {
       toolName,
       meta,
       error: errorMessage,
+      mutatingAction: callSummary?.mutatingAction,
+      actionFingerprint: callSummary?.actionFingerprint,
     };
+  } else if (ctx.state.lastToolError) {
+    // Keep unresolved mutating failures until the same action succeeds.
+    if (ctx.state.lastToolError.mutatingAction) {
+      if (
+        isSameToolMutationAction(ctx.state.lastToolError, {
+          toolName,
+          meta,
+          actionFingerprint: callSummary?.actionFingerprint,
+        })
+      ) {
+        ctx.state.lastToolError = undefined;
+      }
+    } else {
+      ctx.state.lastToolError = undefined;
+    }
   }
 
   // Commit messaging tool text on success, discard on error.
@@ -239,7 +248,7 @@ export function handleToolExecutionEnd(
       toolCallId,
       meta,
       isError: isToolError,
-      result: redactedResult,
+      result: sanitizedResult,
     },
   });
   void ctx.params.onAgentEvent?.({
@@ -262,5 +271,46 @@ export function handleToolExecutionEnd(
     if (outputText) {
       ctx.emitToolOutput(toolName, meta, outputText);
     }
+  }
+
+  // Deliver media from tool results when the verbose emitToolOutput path is off.
+  // When shouldEmitToolOutput() is true, emitToolOutput already delivers media
+  // via parseReplyDirectives (MEDIA: text extraction), so skip to avoid duplicates.
+  if (ctx.params.onToolResult && !isToolError && !ctx.shouldEmitToolOutput()) {
+    const mediaPaths = extractToolResultMediaPaths(result);
+    if (mediaPaths.length > 0) {
+      try {
+        void ctx.params.onToolResult({ mediaUrls: mediaPaths });
+      } catch {
+        // ignore delivery failures
+      }
+    }
+  }
+
+  // Run after_tool_call plugin hook (fire-and-forget)
+  const hookRunnerAfter = ctx.hookRunner ?? getGlobalHookRunner();
+  if (hookRunnerAfter?.hasHooks("after_tool_call")) {
+    const startData = toolStartData.get(toolCallId);
+    toolStartData.delete(toolCallId);
+    const durationMs = startData?.startTime != null ? Date.now() - startData.startTime : undefined;
+    const toolArgs = startData?.args;
+    const hookEvent: PluginHookAfterToolCallEvent = {
+      toolName,
+      params: (toolArgs && typeof toolArgs === "object" ? toolArgs : {}) as Record<string, unknown>,
+      result: sanitizedResult,
+      error: isToolError ? extractToolErrorMessage(sanitizedResult) : undefined,
+      durationMs,
+    };
+    void hookRunnerAfter
+      .runAfterToolCall(hookEvent, {
+        toolName,
+        agentId: undefined,
+        sessionKey: undefined,
+      })
+      .catch((err) => {
+        ctx.log.warn(`after_tool_call hook failed: tool=${toolName} error=${String(err)}`);
+      });
+  } else {
+    toolStartData.delete(toolCallId);
   }
 }

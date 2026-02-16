@@ -46,7 +46,7 @@ export function resolveFailoverStatus(reason: FailoverReason): number | undefine
       return 429;
     case "auth":
       return 401;
-    case "network":
+    case "timeout":
       return 408;
     case "format":
       return 400;
@@ -158,31 +158,18 @@ export function resolveFailoverReasonFromError(err: unknown): FailoverReason | n
     return "auth";
   }
   if (status === 408) {
-    return "network";
+    return "timeout";
   }
   if (status === 400) {
     return "format";
   }
 
   const code = (getErrorCode(err) ?? "").toUpperCase();
-  if (
-    [
-      "ETIMEDOUT",
-      "ESOCKETTIMEDOUT",
-      "ECONNRESET",
-      "ECONNABORTED",
-      "ECONNREFUSED",
-      "ENOTFOUND",
-      "EAI_AGAIN",
-      "ENETUNREACH",
-      "EHOSTUNREACH",
-      "ERR_NETWORK",
-    ].includes(code)
-  ) {
-    return "network";
+  if (["ETIMEDOUT", "ESOCKETTIMEDOUT", "ECONNRESET", "ECONNABORTED"].includes(code)) {
+    return "timeout";
   }
   if (isTimeoutError(err)) {
-    return "network";
+    return "timeout";
   }
 
   const message = getErrorMessage(err);

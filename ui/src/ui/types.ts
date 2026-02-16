@@ -382,8 +382,6 @@ export type GatewaySessionRow = {
   kind: "direct" | "group" | "global" | "unknown";
   label?: string;
   displayName?: string;
-  derivedTitle?: string;
-  lastMessagePreview?: string;
   surface?: string;
   subject?: string;
   room?: string;
@@ -426,222 +424,15 @@ export type SessionsPatchResult = {
   };
 };
 
-export type SessionsUsageEntry = {
-  key: string;
-  label?: string;
-  sessionId?: string;
-  updatedAt?: number;
-  agentId?: string;
-  channel?: string;
-  chatType?: string;
-  origin?: {
-    label?: string;
-    provider?: string;
-    surface?: string;
-    chatType?: string;
-    from?: string;
-    to?: string;
-    accountId?: string;
-    threadId?: string | number;
-  };
-  modelOverride?: string;
-  providerOverride?: string;
-  modelProvider?: string;
-  model?: string;
-  usage: {
-    input: number;
-    output: number;
-    cacheRead: number;
-    cacheWrite: number;
-    totalTokens: number;
-    totalCost: number;
-    inputCost?: number;
-    outputCost?: number;
-    cacheReadCost?: number;
-    cacheWriteCost?: number;
-    missingCostEntries: number;
-    firstActivity?: number;
-    lastActivity?: number;
-    durationMs?: number;
-    activityDates?: string[]; // YYYY-MM-DD dates when session had activity
-    dailyBreakdown?: Array<{ date: string; tokens: number; cost: number }>;
-    dailyMessageCounts?: Array<{
-      date: string;
-      total: number;
-      user: number;
-      assistant: number;
-      toolCalls: number;
-      toolResults: number;
-      errors: number;
-    }>;
-    dailyLatency?: Array<{
-      date: string;
-      count: number;
-      avgMs: number;
-      p95Ms: number;
-      minMs: number;
-      maxMs: number;
-    }>;
-    dailyModelUsage?: Array<{
-      date: string;
-      provider?: string;
-      model?: string;
-      tokens: number;
-      cost: number;
-      count: number;
-    }>;
-    messageCounts?: {
-      total: number;
-      user: number;
-      assistant: number;
-      toolCalls: number;
-      toolResults: number;
-      errors: number;
-    };
-    toolUsage?: {
-      totalCalls: number;
-      uniqueTools: number;
-      tools: Array<{ name: string; count: number }>;
-    };
-    modelUsage?: Array<{
-      provider?: string;
-      model?: string;
-      count: number;
-      totals: SessionsUsageTotals;
-    }>;
-    latency?: {
-      count: number;
-      avgMs: number;
-      p95Ms: number;
-      minMs: number;
-      maxMs: number;
-    };
-  } | null;
-  contextWeight?: {
-    systemPrompt: { chars: number; projectContextChars: number; nonProjectContextChars: number };
-    skills: { promptChars: number; entries: Array<{ name: string; blockChars: number }> };
-    tools: {
-      listChars: number;
-      schemaChars: number;
-      entries: Array<{ name: string; summaryChars: number; schemaChars: number }>;
-    };
-    injectedWorkspaceFiles: Array<{
-      name: string;
-      path: string;
-      rawChars: number;
-      injectedChars: number;
-      truncated: boolean;
-    }>;
-  } | null;
-};
-
-export type SessionsUsageTotals = {
-  input: number;
-  output: number;
-  cacheRead: number;
-  cacheWrite: number;
-  totalTokens: number;
-  totalCost: number;
-  inputCost: number;
-  outputCost: number;
-  cacheReadCost: number;
-  cacheWriteCost: number;
-  missingCostEntries: number;
-};
-
-export type SessionsUsageResult = {
-  updatedAt: number;
-  startDate: string;
-  endDate: string;
-  sessions: SessionsUsageEntry[];
-  totals: SessionsUsageTotals;
-  aggregates: {
-    messages: {
-      total: number;
-      user: number;
-      assistant: number;
-      toolCalls: number;
-      toolResults: number;
-      errors: number;
-    };
-    tools: {
-      totalCalls: number;
-      uniqueTools: number;
-      tools: Array<{ name: string; count: number }>;
-    };
-    byModel: Array<{
-      provider?: string;
-      model?: string;
-      count: number;
-      totals: SessionsUsageTotals;
-    }>;
-    byProvider: Array<{
-      provider?: string;
-      model?: string;
-      count: number;
-      totals: SessionsUsageTotals;
-    }>;
-    byAgent: Array<{ agentId: string; totals: SessionsUsageTotals }>;
-    byChannel: Array<{ channel: string; totals: SessionsUsageTotals }>;
-    latency?: {
-      count: number;
-      avgMs: number;
-      p95Ms: number;
-      minMs: number;
-      maxMs: number;
-    };
-    dailyLatency?: Array<{
-      date: string;
-      count: number;
-      avgMs: number;
-      p95Ms: number;
-      minMs: number;
-      maxMs: number;
-    }>;
-    modelDaily?: Array<{
-      date: string;
-      provider?: string;
-      model?: string;
-      tokens: number;
-      cost: number;
-      count: number;
-    }>;
-    daily: Array<{
-      date: string;
-      tokens: number;
-      cost: number;
-      messages: number;
-      toolCalls: number;
-      errors: number;
-    }>;
-  };
-};
-
-export type CostUsageDailyEntry = SessionsUsageTotals & { date: string };
-
-export type CostUsageSummary = {
-  updatedAt: number;
-  days: number;
-  daily: CostUsageDailyEntry[];
-  totals: SessionsUsageTotals;
-};
-
-export type SessionUsageTimePoint = {
-  timestamp: number;
-  input: number;
-  output: number;
-  cacheRead: number;
-  cacheWrite: number;
-  totalTokens: number;
-  cost: number;
-  cumulativeTokens: number;
-  cumulativeCost: number;
-};
-
-export type SessionUsageTimeSeries = {
-  sessionId?: string;
-  points: SessionUsageTimePoint[];
-};
+export type {
+  CostUsageDailyEntry,
+  CostUsageSummary,
+  SessionsUsageEntry,
+  SessionsUsageResult,
+  SessionsUsageTotals,
+  SessionUsageTimePoint,
+  SessionUsageTimeSeries,
+} from "./usage-types.ts";
 
 export type CronSchedule =
   | { kind: "at"; at: string }
@@ -661,7 +452,7 @@ export type CronPayload =
     };
 
 export type CronDelivery = {
-  mode: "none" | "announce";
+  mode: "none" | "announce" | "webhook";
   channel?: string;
   to?: string;
   bestEffort?: boolean;
@@ -712,7 +503,6 @@ export type CronRunLogEntry = {
 
 export type SkillsStatusConfigCheck = {
   path: string;
-  value: unknown;
   satisfied: boolean;
 };
 
@@ -773,55 +563,4 @@ export type LogEntry = {
   subsystem?: string | null;
   message?: string | null;
   meta?: Record<string, unknown> | null;
-};
-
-export type RouterStatus = {
-  enabled: boolean;
-  healthy: boolean;
-  url: string;
-  checkedAt: number;
-  status?: number;
-  error?: string;
-};
-
-export type SparkGpuStatus = {
-  name?: string;
-  temperature_c?: number;
-  power_w?: number;
-  utilization_pct?: number;
-  memory_used_mib?: number;
-  memory_total_mib?: number;
-  unified_memory?: boolean;
-  processes?: Array<{ pid: number; memory_mib: number; process: string }>;
-};
-
-export type SparkContainer = {
-  name: string;
-  cpu?: string;
-  memory?: string;
-  mem_pct?: string;
-  net_io?: string;
-  block_io?: string;
-};
-
-export type SparkStatus = {
-  enabled: boolean;
-  active: boolean;
-  source?: "dgx-stats" | "fallback";
-  host: string | null;
-  checkedAt: number;
-  voiceAvailable?: boolean;
-  overall?: "healthy" | "degraded" | "down" | "unknown";
-  counts?: { healthy: number; degraded: number; down: number; total: number };
-  services?: Record<string, unknown>;
-  gpu?: SparkGpuStatus | null;
-  containers?: SparkContainer[] | null;
-};
-
-export type PersonaPlexStatus = {
-  enabled: boolean;
-  installed: boolean;
-  running: boolean;
-  hasToken: boolean;
-  port: number;
 };

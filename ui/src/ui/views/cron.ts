@@ -20,7 +20,6 @@ export type CronProps = {
   runs: CronRunLogEntry[];
   onFormChange: (patch: Partial<CronFormState>) => void;
   onRefresh: () => void;
-  onToggleSchedulerEnabled: (enabled: boolean) => void;
   onAdd: () => void;
   onToggle: (job: CronJob, enabled: boolean) => void;
   onRun: (job: CronJob) => void;
@@ -61,6 +60,10 @@ export function renderCron(props: CronProps) {
     props.runsJobId == null ? undefined : props.jobs.find((job) => job.id === props.runsJobId);
   const selectedRunTitle = selectedJob?.name ?? props.runsJobId ?? "(select a job)";
   const orderedRuns = props.runs.toSorted((a, b) => b.ts - a.ts);
+  const supportsAnnounce =
+    props.form.sessionTarget === "isolated" && props.form.payloadKind === "agentTurn";
+  const selectedDeliveryMode =
+    props.form.deliveryMode === "announce" && !supportsAnnounce ? "none" : props.form.deliveryMode;
   return html`
     <section class="grid grid-cols-2">
       <div class="card">
@@ -86,35 +89,7 @@ export function renderCron(props: CronProps) {
           <button class="btn" ?disabled=${props.loading} @click=${props.onRefresh}>
             ${props.loading ? "Refreshing…" : "Refresh"}
           </button>
-          ${
-            props.status
-              ? html`
-                <button
-                  class=${`btn${props.status.enabled ? "" : " primary"}`}
-                  ?disabled=${props.busy}
-                  @click=${() => {
-                    const nextEnabled = !props.status?.enabled;
-                    if (
-                      props.status?.enabled &&
-                      typeof window !== "undefined" &&
-                      !window.confirm(
-                        "Disable the cron scheduler? Jobs will not run automatically.",
-                      )
-                    ) {
-                      return;
-                    }
-                    props.onToggleSchedulerEnabled(nextEnabled);
-                  }}
-                >
-                  ${props.status.enabled ? "Disable scheduler" : "Enable scheduler"}
-                </button>
-              `
-              : nothing
-          }
           ${props.error ? html`<span class="muted">${props.error}</span>` : nothing}
-        </div>
-        <div class="muted" style="margin-top: 10px;">
-          This edits <code>cron.enabled</code> and restarts the Gateway.
         </div>
       </div>
 
@@ -227,24 +202,31 @@ export function renderCron(props: CronProps) {
             rows="4"
           ></textarea>
         </label>
-        ${
-          props.form.payloadKind === "agentTurn"
-            ? html`
-                <div class="form-grid" style="margin-top: 12px;">
-                  <label class="field">
-                    <span>Delivery</span>
-                    <select
-                      .value=${props.form.deliveryMode}
-                      @change=${(e: Event) =>
-                        props.onFormChange({
-                          deliveryMode: (e.target as HTMLSelectElement)
-                            .value as CronFormState["deliveryMode"],
-                        })}
-                    >
+        <div class="form-grid" style="margin-top: 12px;">
+          <label class="field">
+            <span>Delivery</span>
+            <select
+              .value=${selectedDeliveryMode}
+              @change=${(e: Event) =>
+                props.onFormChange({
+                  deliveryMode: (e.target as HTMLSelectElement)
+                    .value as CronFormState["deliveryMode"],
+                })}
+            >
+              ${
+                supportsAnnounce
+                  ? html`
                       <option value="announce">Announce summary (default)</option>
-                      <option value="none">None (internal)</option>
-                    </select>
-                  </label>
+                    `
+                  : nothing
+              }
+              <option value="webhook">Webhook POST</option>
+              <option value="none">None (internal)</option>
+            </select>
+          </label>
+          ${
+            props.form.payloadKind === "agentTurn"
+              ? html`
                   <label class="field">
                     <span>Timeout (seconds)</span>
                     <input
@@ -255,11 +237,27 @@ export function renderCron(props: CronProps) {
                         })}
                     />
                   </label>
-                  ${
-                    props.form.deliveryMode === "announce"
-                      ? html`
-                          <label class="field">
-                            <span>Channel</span>
+                `
+              : nothing
+          }
+          ${
+            selectedDeliveryMode !== "none"
+              ? html`
+                  <label class="field">
+                    <span>${selectedDeliveryMode === "webhook" ? "Webhook URL" : "Channel"}</span>
+                    ${
+                      selectedDeliveryMode === "webhook"
+                        ? html`
+                            <input
+                              .value=${props.form.deliveryTo}
+                              @input=${(e: Event) =>
+                                props.onFormChange({
+                                  deliveryTo: (e.target as HTMLInputElement).value,
+                                })}
+                              placeholder="https://example.invalid/cron"
+                            />
+                          `
+                        : html`
                             <select
                               .value=${props.form.deliveryChannel || "last"}
                               @change=${(e: Event) =>
@@ -274,7 +272,12 @@ export function renderCron(props: CronProps) {
                                   </option>`,
                               )}
                             </select>
-                          </label>
+                          `
+                    }
+                  </label>
+                  ${
+                    selectedDeliveryMode === "announce"
+                      ? html`
                           <label class="field">
                             <span>To</span>
                             <input
@@ -289,10 +292,10 @@ export function renderCron(props: CronProps) {
                         `
                       : nothing
                   }
-                </div>
-              `
-            : nothing
-        }
+                `
+              : nothing
+          }
+        </div>
         <div class="row" style="margin-top: 14px;">
           <button class="btn primary" ?disabled=${props.busy} @click=${props.onAdd}>
             ${props.busy ? "Saving…" : "Add job"}
@@ -412,22 +415,7 @@ function renderJob(job: CronJob, props: CronProps) {
   const isSelected = props.runsJobId === job.id;
   const itemClass = `list-item list-item-clickable cron-job${isSelected ? " list-item-selected" : ""}`;
   return html`
-    <div
-      class=${itemClass}
-      role="button"
-      tabindex="0"
-      aria-label=${`View run history for ${job.name}`}
-      @click=${() => props.onLoadRuns(job.id)}
-      @keydown=${(event: KeyboardEvent) => {
-        if (event.target !== event.currentTarget) {
-          return;
-        }
-        if (event.key === "Enter" || event.key === " ") {
-          event.preventDefault();
-          props.onLoadRuns(job.id);
-        }
-      }}
-    >
+    <div class=${itemClass} @click=${() => props.onLoadRuns(job.id)}>
       <div class="list-main">
         <div class="list-title">${job.name}</div>
         <div class="list-sub">${formatCronSchedule(job)}</div>
@@ -502,9 +490,13 @@ function renderJobPayload(job: CronJob) {
 
   const delivery = job.delivery;
   const deliveryTarget =
-    delivery?.channel || delivery?.to
-      ? ` (${delivery.channel ?? "last"}${delivery.to ? ` -> ${delivery.to}` : ""})`
-      : "";
+    delivery?.mode === "webhook"
+      ? delivery.to
+        ? ` (${delivery.to})`
+        : ""
+      : delivery?.channel || delivery?.to
+        ? ` (${delivery.channel ?? "last"}${delivery.to ? ` -> ${delivery.to}` : ""})`
+        : "";
 
   return html`
     <div class="cron-job-detail">

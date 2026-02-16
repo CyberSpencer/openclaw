@@ -30,13 +30,16 @@ export function parseDiscoverTimeoutMs(raw: unknown, fallbackMs: number): number
 }
 
 export function pickBeaconHost(beacon: GatewayBonjourBeacon): string | null {
-  const host = beacon.tailnetDns || beacon.lanHost || beacon.host;
+  // Security: TXT records are unauthenticated. Prefer the resolved service endpoint (SRV/A/AAAA)
+  // over TXT-provided routing hints.
+  const host = beacon.host || beacon.tailnetDns || beacon.lanHost;
   return host?.trim() ? host.trim() : null;
 }
 
 export function pickGatewayPort(beacon: GatewayBonjourBeacon): number {
-  const port = beacon.gatewayPort ?? beacon.port ?? 32555;
-  return port > 0 ? port : 32555;
+  // Security: TXT records are unauthenticated. Prefer the resolved service port over TXT gatewayPort.
+  const port = beacon.port ?? beacon.gatewayPort ?? 18789;
+  return port > 0 ? port : 18789;
 }
 
 export function dedupeBeacons(beacons: GatewayBonjourBeacon[]): GatewayBonjourBeacon[] {
