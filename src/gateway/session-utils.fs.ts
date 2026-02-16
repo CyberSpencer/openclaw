@@ -228,6 +228,7 @@ const MAX_LINES_TO_SCAN = 10;
 type TranscriptMessage = {
   role?: string;
   content?: string | Array<{ type: string; text?: string }>;
+  text?: string;
   provenance?: unknown;
 };
 
@@ -417,7 +418,9 @@ function readLastMessagePreviewFromOpenTranscript(params: {
       if (msg?.role !== "user" && msg?.role !== "assistant") {
         continue;
       }
-      const text = extractTextFromContent(msg.content);
+      const text =
+        extractTextFromContent(msg.content) ??
+        (typeof msg.text === "string" ? msg.text.trim() || null : null);
       if (text) {
         return text;
       }

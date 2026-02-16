@@ -133,16 +133,15 @@ export function resolveEffectiveEnv(): Record<string, string> {
 }
 
 export function resolveDgxEnabled(env: Record<string, string>): boolean {
-  return Boolean(parseBooleanLike(env.DGX_ENABLED) ?? parseBooleanLike(process.env.DGX_ENABLED));
+  return Boolean(parseBooleanLike(env.DGX_ENABLED));
 }
 
 export function resolveDgxHost(env: Record<string, string>): string | undefined {
-  return parseStringLike(env.DGX_HOST) ?? parseStringLike(process.env.DGX_HOST);
+  return parseStringLike(env.DGX_HOST);
 }
 
 export function resolveDgxAccessMode(env: Record<string, string>): DgxAccessMode {
-  const raw =
-    parseStringLike(env.DGX_ACCESS_MODE) ?? parseStringLike(process.env.DGX_ACCESS_MODE) ?? "auto";
+  const raw = parseStringLike(env.DGX_ACCESS_MODE) ?? "auto";
   const normalized = raw.toLowerCase();
   if (normalized === "lan" || normalized === "wan") {
     return normalized;
@@ -151,11 +150,7 @@ export function resolveDgxAccessMode(env: Record<string, string>): DgxAccessMode
 }
 
 export function resolveWanBaseUrlFromEnv(env: Record<string, string>): string | undefined {
-  const candidate =
-    parseStringLike(env.DGX_WAN_BASE_URL) ??
-    parseStringLike(process.env.DGX_WAN_BASE_URL) ??
-    parseStringLike(env.OPENCLAW_WAN_BASE_URL) ??
-    parseStringLike(process.env.OPENCLAW_WAN_BASE_URL);
+  const candidate = parseStringLike(env.DGX_WAN_BASE_URL) ?? parseStringLike(env.OPENCLAW_WAN_BASE_URL);
   if (!candidate) {
     return undefined;
   }
@@ -171,25 +166,19 @@ export function resolveWanBaseUrlFromEnv(env: Record<string, string>): string | 
 }
 
 export function resolveWanSkipBrowserWarningHeader(env: Record<string, string>): boolean {
-  const fromEnv =
-    parseBooleanLike(env.DGX_WAN_SKIP_BROWSER_WARNING) ??
-    parseBooleanLike(process.env.DGX_WAN_SKIP_BROWSER_WARNING);
+  const fromEnv = parseBooleanLike(env.DGX_WAN_SKIP_BROWSER_WARNING);
   // Default enabled so free-tier ngrok interstitial does not break JSON APIs.
   return fromEnv ?? true;
 }
 
 function resolveLanProbeTimeoutMs(env: Record<string, string>): number {
-  const raw =
-    parseStringLike(env.DGX_LAN_PROBE_TIMEOUT_MS) ??
-    parseStringLike(process.env.DGX_LAN_PROBE_TIMEOUT_MS);
+  const raw = parseStringLike(env.DGX_LAN_PROBE_TIMEOUT_MS);
   const parsed = raw ? Number(raw) : DEFAULT_LAN_PROBE_TIMEOUT_MS;
   return Number.isFinite(parsed) && parsed > 0 ? parsed : DEFAULT_LAN_PROBE_TIMEOUT_MS;
 }
 
 function resolveAccessCacheTtlMs(env: Record<string, string>): number {
-  const raw =
-    parseStringLike(env.DGX_ACCESS_CACHE_TTL_MS) ??
-    parseStringLike(process.env.DGX_ACCESS_CACHE_TTL_MS);
+  const raw = parseStringLike(env.DGX_ACCESS_CACHE_TTL_MS);
   const parsed = raw ? Number(raw) : DEFAULT_ACCESS_CACHE_TTL_MS;
   return Number.isFinite(parsed) && parsed >= 0 ? parsed : DEFAULT_ACCESS_CACHE_TTL_MS;
 }
@@ -197,9 +186,7 @@ function resolveAccessCacheTtlMs(env: Record<string, string>): number {
 function resolveRouterPortForLanProbe(env: Record<string, string>): number {
   const explicitRouterUrl =
     parseStringLike(env.DGX_ROUTER_URL) ??
-    parseStringLike(process.env.DGX_ROUTER_URL) ??
-    parseStringLike(env.OPENCLAW_NVIDIA_ROUTER_URL) ??
-    parseStringLike(process.env.OPENCLAW_NVIDIA_ROUTER_URL);
+    parseStringLike(env.OPENCLAW_NVIDIA_ROUTER_URL);
   if (explicitRouterUrl) {
     try {
       const parsed = new URL(explicitRouterUrl);

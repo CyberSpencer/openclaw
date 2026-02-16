@@ -91,7 +91,7 @@ describe("dashboardCommand bind selection", () => {
     await dashboardCommand(runtime, { noOpen: true });
 
     expect(mocks.resolveControlUiLinks).toHaveBeenCalledWith({
-      port: 18789,
+      port: 32555,
       bind: "loopback",
       customBindHost: undefined,
       basePath: undefined,
@@ -104,7 +104,7 @@ describe("dashboardCommand bind selection", () => {
     await dashboardCommand(runtime, { noOpen: true });
 
     expect(mocks.resolveControlUiLinks).toHaveBeenCalledWith({
-      port: 18789,
+      port: 32555,
       bind: "custom",
       customBindHost: "10.0.0.5",
       basePath: undefined,
@@ -117,7 +117,7 @@ describe("dashboardCommand bind selection", () => {
     await dashboardCommand(runtime, { noOpen: true });
 
     expect(mocks.resolveControlUiLinks).toHaveBeenCalledWith({
-      port: 18789,
+      port: 32555,
       bind: "tailnet",
       customBindHost: undefined,
       basePath: undefined,

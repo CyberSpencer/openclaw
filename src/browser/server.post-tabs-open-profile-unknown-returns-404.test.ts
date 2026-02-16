@@ -49,7 +49,13 @@ describe("profile CRUD endpoints", () => {
     state.testPort = await getFreePort();
     state.cdpBaseUrl = `http://127.0.0.1:${state.testPort + 1}`;
     state.prevGatewayPort = process.env.OPENCLAW_GATEWAY_PORT;
+    state.prevGatewayToken = process.env.OPENCLAW_GATEWAY_TOKEN;
+    state.prevGatewayPassword = process.env.OPENCLAW_GATEWAY_PASSWORD;
+    state.prevVitestEnv = process.env.VITEST;
     process.env.OPENCLAW_GATEWAY_PORT = String(state.testPort - 2);
+    delete process.env.OPENCLAW_GATEWAY_TOKEN;
+    delete process.env.OPENCLAW_GATEWAY_PASSWORD;
+    process.env.VITEST = "1";
 
     vi.stubGlobal(
       "fetch",
@@ -70,6 +76,21 @@ describe("profile CRUD endpoints", () => {
       delete process.env.OPENCLAW_GATEWAY_PORT;
     } else {
       process.env.OPENCLAW_GATEWAY_PORT = state.prevGatewayPort;
+    }
+    if (state.prevGatewayToken === undefined) {
+      delete process.env.OPENCLAW_GATEWAY_TOKEN;
+    } else {
+      process.env.OPENCLAW_GATEWAY_TOKEN = state.prevGatewayToken;
+    }
+    if (state.prevGatewayPassword === undefined) {
+      delete process.env.OPENCLAW_GATEWAY_PASSWORD;
+    } else {
+      process.env.OPENCLAW_GATEWAY_PASSWORD = state.prevGatewayPassword;
+    }
+    if (state.prevVitestEnv === undefined) {
+      delete process.env.VITEST;
+    } else {
+      process.env.VITEST = state.prevVitestEnv;
     }
     await stopBrowserControlServer();
   });

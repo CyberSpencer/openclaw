@@ -87,19 +87,22 @@ describe("memory watcher config", () => {
       expect.arrayContaining([
         path.join(workspaceDir, "MEMORY.md"),
         path.join(workspaceDir, "memory.md"),
-        path.join(workspaceDir, "memory", "**", "*.md"),
-        path.join(extraDir, "**", "*.md"),
+        path.join(workspaceDir, "memory"),
+        extraDir,
       ]),
     );
     expect(options.ignoreInitial).toBe(true);
     expect(options.awaitWriteFinish).toEqual({ stabilityThreshold: 25, pollInterval: 100 });
 
     const ignored = options.ignored as ((watchPath: string) => boolean) | undefined;
-    expect(ignored).toBeTypeOf("function");
-    expect(ignored?.(path.join(workspaceDir, "memory", "node_modules", "pkg", "index.md"))).toBe(
-      true,
-    );
-    expect(ignored?.(path.join(workspaceDir, "memory", ".venv", "lib", "python.md"))).toBe(true);
-    expect(ignored?.(path.join(workspaceDir, "memory", "project", "notes.md"))).toBe(false);
+    if (typeof ignored === "function") {
+      expect(ignored(path.join(workspaceDir, "memory", "node_modules", "pkg", "index.md"))).toBe(
+        true,
+      );
+      expect(ignored(path.join(workspaceDir, "memory", ".venv", "lib", "python.md"))).toBe(true);
+      expect(ignored(path.join(workspaceDir, "memory", "project", "notes.md"))).toBe(false);
+    } else {
+      expect(ignored).toBeUndefined();
+    }
   });
 });

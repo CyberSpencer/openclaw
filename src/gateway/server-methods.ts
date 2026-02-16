@@ -14,14 +14,19 @@ import { healthHandlers } from "./server-methods/health.js";
 import { logsHandlers } from "./server-methods/logs.js";
 import { modelsHandlers } from "./server-methods/models.js";
 import { nodeHandlers } from "./server-methods/nodes.js";
+import { orchestratorHandlers } from "./server-methods/orchestrator.js";
+import { routerStatusHandlers } from "./server-methods/router-status.js";
 import { sendHandlers } from "./server-methods/send.js";
 import { sessionsHandlers } from "./server-methods/sessions.js";
 import { skillsHandlers } from "./server-methods/skills.js";
+import { sparkStatusHandlers } from "./server-methods/spark-status.js";
+import { sparkVoiceHandlers } from "./server-methods/spark-voice.js";
 import { systemHandlers } from "./server-methods/system.js";
 import { talkHandlers } from "./server-methods/talk.js";
 import { ttsHandlers } from "./server-methods/tts.js";
 import { updateHandlers } from "./server-methods/update.js";
 import { usageHandlers } from "./server-methods/usage.js";
+import { voiceHandlers } from "./server-methods/voice.js";
 import { voicewakeHandlers } from "./server-methods/voicewake.js";
 import { webHandlers } from "./server-methods/web.js";
 import { wizardHandlers } from "./server-methods/wizard.js";
@@ -32,11 +37,7 @@ const WRITE_SCOPE = "operator.write";
 const APPROVALS_SCOPE = "operator.approvals";
 const PAIRING_SCOPE = "operator.pairing";
 
-const APPROVAL_METHODS = new Set([
-  "exec.approval.request",
-  "exec.approval.waitDecision",
-  "exec.approval.resolve",
-]);
+const APPROVAL_METHODS = new Set(["exec.approval.request", "exec.approval.resolve"]);
 const NODE_ROLE_METHODS = new Set(["node.invoke.result", "node.event", "skills.bins"]);
 const PAIRING_METHODS = new Set([
   "node.pair.request",
@@ -61,6 +62,8 @@ const READ_METHODS = new Set([
   "usage.cost",
   "tts.status",
   "tts.providers",
+  "voice.status",
+  "voice.config",
   "models.list",
   "agents.list",
   "agent.identity.get",
@@ -69,6 +72,10 @@ const READ_METHODS = new Set([
   "sessions.list",
   "sessions.subagents",
   "sessions.preview",
+  "orchestrator.get",
+  "router.status",
+  "spark.status",
+  "spark.voice.voices",
   "cron.list",
   "cron.status",
   "cron.runs",
@@ -77,8 +84,6 @@ const READ_METHODS = new Set([
   "node.list",
   "node.describe",
   "chat.history",
-  "config.get",
-  "talk.config",
 ]);
 const WRITE_METHODS = new Set([
   "send",
@@ -95,6 +100,15 @@ const WRITE_METHODS = new Set([
   "chat.send",
   "chat.abort",
   "browser.request",
+  "voice.process",
+  "voice.processText",
+  "voice.transcribe",
+  "voice.synthesize",
+  "orchestrator.set",
+  "orchestrator.reset",
+  "router.setEnabled",
+  "spark.voice.stt",
+  "spark.voice.tts",
   "sessions.spawn",
 ]);
 
@@ -174,6 +188,7 @@ export const coreGatewayHandlers: GatewayRequestHandlers = {
   ...connectHandlers,
   ...logsHandlers,
   ...voicewakeHandlers,
+  ...voiceHandlers,
   ...healthHandlers,
   ...channelsHandlers,
   ...chatHandlers,
@@ -187,7 +202,11 @@ export const coreGatewayHandlers: GatewayRequestHandlers = {
   ...talkHandlers,
   ...ttsHandlers,
   ...skillsHandlers,
+  ...sparkStatusHandlers,
+  ...sparkVoiceHandlers,
   ...sessionsHandlers,
+  ...orchestratorHandlers,
+  ...routerStatusHandlers,
   ...systemHandlers,
   ...updateHandlers,
   ...nodeHandlers,

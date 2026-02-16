@@ -21,7 +21,10 @@ describe("loadModelCatalog", () => {
     const second = await loadModelCatalog({ config: cfg });
     expect(second).toEqual([{ id: "gpt-4.1", name: "GPT-4.1", provider: "openai" }]);
     expect(getCallCount()).toBe(2);
-    expect(warnSpy).toHaveBeenCalledTimes(1);
+    const catalogWarnings = warnSpy.mock.calls.filter((call) =>
+      String(call[0] ?? "").includes("[model-catalog]"),
+    );
+    expect(catalogWarnings).toHaveLength(1);
   });
 
   it("returns partial results on discovery errors", async () => {
@@ -50,7 +53,10 @@ describe("loadModelCatalog", () => {
 
     const result = await loadModelCatalog({ config: {} as OpenClawConfig });
     expect(result).toEqual([{ id: "gpt-4.1", name: "GPT-4.1", provider: "openai" }]);
-    expect(warnSpy).toHaveBeenCalledTimes(1);
+    const catalogWarnings = warnSpy.mock.calls.filter((call) =>
+      String(call[0] ?? "").includes("[model-catalog]"),
+    );
+    expect(catalogWarnings).toHaveLength(1);
   });
 
   it("adds openai-codex/gpt-5.3-codex-spark when base gpt-5.3-codex exists", async () => {
