@@ -1,5 +1,5 @@
 import type { OpenClawConfig } from "../config/config.js";
-import { loadSessionStore } from "../config/sessions.js";
+import { loadSessionStore, updateSessionStore } from "../config/sessions.js";
 import { parseSessionLabel } from "../sessions/session-label.js";
 import {
   ErrorCodes,
@@ -10,53 +10,16 @@ import {
 import {
   listSessionsFromStore,
   loadCombinedSessionStoreForGateway,
+  pruneLegacyStoreKeys,
   resolveGatewaySessionStoreTarget,
 } from "./session-utils.js";
 
 export type SessionsResolveResult = { ok: true; key: string } | { ok: false; error: ErrorShape };
 
-function normalizeIdentityValue(value: unknown): string | undefined {
-  if (typeof value !== "string") {
-    return undefined;
-  }
-  const trimmed = value.trim();
-  return trimmed || undefined;
-}
-
-function normalizeThreadId(value: unknown): string | undefined {
-  if (typeof value === "string") {
-    const trimmed = value.trim();
-    return trimmed || undefined;
-  }
-  if (typeof value === "number" && Number.isFinite(value)) {
-    return String(value);
-  }
-  return undefined;
-}
-
-function matchesStrictIdentity(
-  entry: { rootConversationId?: unknown; threadId?: unknown } | undefined,
-  strictRootConversationId: string | undefined,
-  strictThreadId: string | undefined,
-): boolean {
-  if (!strictRootConversationId && !strictThreadId) {
-    return true;
-  }
-  const entryRootConversationId = normalizeIdentityValue(entry?.rootConversationId);
-  const entryThreadId = normalizeThreadId(entry?.threadId);
-  if (strictRootConversationId && entryRootConversationId !== strictRootConversationId) {
-    return false;
-  }
-  if (strictThreadId && entryThreadId !== strictThreadId) {
-    return false;
-  }
-  return true;
-}
-
-export function resolveSessionKeyFromResolveParams(params: {
+export async function resolveSessionKeyFromResolveParams(params: {
   cfg: OpenClawConfig;
   p: SessionsResolveParams;
-}): SessionsResolveResult {
+}): Promise<SessionsResolveResult> {
   const { cfg, p } = params;
 
   const key = typeof p.key === "string" ? p.key.trim() : "";
@@ -87,25 +50,25 @@ export function resolveSessionKeyFromResolveParams(params: {
   if (hasKey) {
     const target = resolveGatewaySessionStoreTarget({ cfg, key });
     const store = loadSessionStore(target.storePath);
-    const existingKey = target.storeKeys.find((candidate) => store[candidate]);
-    if (!existingKey) {
+    if (store[target.canonicalKey]) {
+      return { ok: true, key: target.canonicalKey };
+    }
+    const legacyKey = target.storeKeys.find((candidate) => store[candidate]);
+    if (!legacyKey) {
       return {
         ok: false,
         error: errorShape(ErrorCodes.INVALID_REQUEST, `No session found: ${key}`),
       };
     }
-    if (
-      strictIdentity &&
-      !matchesStrictIdentity(store[existingKey], strictRootConversationId, strictThreadId)
-    ) {
-      return {
-        ok: false,
-        error: errorShape(
-          ErrorCodes.INVALID_REQUEST,
-          `Session identity mismatch for key: ${target.canonicalKey}`,
-        ),
-      };
-    }
+    await updateSessionStore(target.storePath, (s) => {
+      const liveTarget = resolveGatewaySessionStoreTarget({ cfg, key, store: s });
+      const canonicalKey = liveTarget.canonicalKey;
+      // Migrate the first legacy entry to the canonical key.
+      if (!s[canonicalKey] && s[legacyKey]) {
+        s[canonicalKey] = s[legacyKey];
+      }
+      pruneLegacyStoreKeys({ store: s, canonicalKey, candidates: liveTarget.storeKeys });
+    });
     return { ok: true, key: target.canonicalKey };
   }
 

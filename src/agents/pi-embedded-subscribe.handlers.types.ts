@@ -3,6 +3,7 @@ import type { ReplyDirectiveParseResult } from "../auto-reply/reply/reply-direct
 import type { ReasoningLevel } from "../auto-reply/thinking.js";
 import type { StreamingSensitiveRedactor } from "../logging/redact-streaming.js";
 import type { InlineCodeState } from "../markdown/code-spans.js";
+import type { HookRunner } from "../plugins/hooks.js";
 import type { EmbeddedBlockChunker } from "./pi-embedded-block-chunker.js";
 import type { MessagingToolSend } from "./pi-embedded-messaging.js";
 import type {
@@ -20,12 +21,20 @@ export type ToolErrorSummary = {
   toolName: string;
   meta?: string;
   error?: string;
+  mutatingAction?: boolean;
+  actionFingerprint?: string;
+};
+
+export type ToolCallSummary = {
+  meta?: string;
+  mutatingAction: boolean;
+  actionFingerprint?: string;
 };
 
 export type EmbeddedPiSubscribeState = {
   assistantTexts: string[];
   toolMetas: Array<{ toolName?: string; meta?: string }>;
-  toolMetaById: Map<string, string | undefined>;
+  toolMetaById: Map<string, ToolCallSummary>;
   toolSummaryById: Set<string>;
   lastToolError?: ToolErrorSummary;
 
@@ -61,13 +70,16 @@ export type EmbeddedPiSubscribeState = {
   compactionInFlight: boolean;
   pendingCompactionRetry: number;
   compactionRetryResolve?: () => void;
+  compactionRetryReject?: (reason?: unknown) => void;
   compactionRetryPromise: Promise<void> | null;
+  unsubscribed: boolean;
 
   messagingToolSentTexts: string[];
   messagingToolSentTextsNormalized: string[];
   messagingToolSentTargets: MessagingToolSend[];
   pendingMessagingTexts: Map<string, string>;
   pendingMessagingTargets: Map<string, MessagingToolSend>;
+  lastAssistant?: AgentMessage;
 };
 
 export type EmbeddedPiSubscribeContext = {
@@ -76,6 +88,8 @@ export type EmbeddedPiSubscribeContext = {
   log: EmbeddedSubscribeLogger;
   blockChunking?: BlockReplyChunking;
   blockChunker: EmbeddedBlockChunker | null;
+  hookRunner?: HookRunner;
+  noteLastAssistant: (msg: AgentMessage) => void;
 
   shouldEmitToolResult: () => boolean;
   shouldEmitToolOutput: () => boolean;

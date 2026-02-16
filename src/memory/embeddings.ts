@@ -28,14 +28,21 @@ export type { VoyageEmbeddingClient } from "./embeddings-voyage.js";
 export type EmbeddingProvider = {
   id: string;
   model: string;
+  maxInputTokens?: number;
   embedQuery: (text: string) => Promise<number[]>;
   embedBatch: (texts: string[]) => Promise<number[][]>;
 };
 
+export type EmbeddingProviderId = "openai" | "local" | "gemini" | "voyage";
+export type EmbeddingProviderRequest = EmbeddingProviderId | "auto";
+export type EmbeddingProviderFallback = EmbeddingProviderId | "none";
+
+const REMOTE_EMBEDDING_PROVIDER_IDS = ["openai", "gemini", "voyage"] as const;
+
 export type EmbeddingProviderResult = {
   provider: EmbeddingProvider;
-  requestedProvider: "openai" | "local" | "gemini" | "voyage" | "auto";
-  fallbackFrom?: "openai" | "local" | "gemini" | "voyage";
+  requestedProvider: EmbeddingProviderRequest;
+  fallbackFrom?: EmbeddingProviderId;
   fallbackReason?: string;
   openAi?: OpenAiEmbeddingClient;
   gemini?: GeminiEmbeddingClient;
@@ -45,7 +52,7 @@ export type EmbeddingProviderResult = {
 export type EmbeddingProviderOptions = {
   config: OpenClawConfig;
   agentDir?: string;
-  provider: "openai" | "local" | "gemini" | "voyage" | "auto";
+  provider: EmbeddingProviderRequest;
   remote?: {
     baseUrl?: string;
     endpoints?: Array<{
@@ -63,43 +70,15 @@ export type EmbeddingProviderOptions = {
     headers?: Record<string, string>;
   };
   model: string;
-  fallback: "openai" | "gemini" | "local" | "voyage" | "none";
+  fallback: EmbeddingProviderFallback;
   local?: {
     modelPath?: string;
     modelCacheDir?: string;
   };
 };
 
-const DEFAULT_LOCAL_MODEL = "hf:ggml-org/embeddinggemma-300M-GGUF/embeddinggemma-300M-Q8_0.gguf";
-const EMBEDDING_WORKER_ENV = "OPENCLAW_EMBEDDINGS_WORKER";
-const EMBEDDING_WORKER_IDLE_ENV = "OPENCLAW_EMBEDDINGS_WORKER_IDLE_MS";
-const WORKER_QUERY_TIMEOUT_MS = 5 * 60_000;
-const WORKER_BATCH_TIMEOUT_MS = 10 * 60_000;
-const DEFAULT_WORKER_IDLE_MS = 10 * 60_000;
-
-const log = createSubsystemLogger("memory/embeddings");
-
-let llamaSingleton: Promise<Llama> | null = null;
-const modelCache = new Map<string, Promise<LlamaModel>>();
-const contextCache = new Map<string, Promise<LlamaEmbeddingContext>>();
-const contextLocks = new Map<string, Promise<void>>();
-
-type WorkerRequest =
-  | { id: string; type: "embedQuery"; text: string }
-  | { id: string; type: "embedBatch"; texts: string[] };
-
-type WorkerResponse =
-  | { id: string; ok: true; embeddings: number[][] }
-  | { id: string; ok: false; error: string };
-
-type EmbeddingWorkerState = {
-  client: EmbeddingWorkerClient | null;
-  modelKey?: string;
-};
-
-const workerState: EmbeddingWorkerState = {
-  client: null,
-};
+export const DEFAULT_LOCAL_MODEL =
+  "hf:ggml-org/embeddinggemma-300m-qat-q8_0-GGUF/embeddinggemma-300m-qat-Q8_0.gguf";
 
 function canAutoSelectLocal(options: EmbeddingProviderOptions): boolean {
   const modelPath = options.local?.modelPath?.trim();
@@ -458,7 +437,7 @@ export async function createEmbeddingProvider(
   const requestedProvider = options.provider;
   const fallback = options.fallback;
 
-  const createProvider = async (id: "openai" | "local" | "gemini" | "voyage") => {
+  const createProvider = async (id: EmbeddingProviderId) => {
     if (id === "local") {
       const provider = await createLocalEmbeddingProvider(options);
       return { provider };
@@ -475,7 +454,7 @@ export async function createEmbeddingProvider(
     return { provider, openAi: client };
   };
 
-  const formatPrimaryError = (err: unknown, provider: "openai" | "local" | "gemini" | "voyage") =>
+  const formatPrimaryError = (err: unknown, provider: EmbeddingProviderId) =>
     provider === "local" ? formatLocalSetupError(err) : formatErrorMessage(err);
 
   if (requestedProvider === "auto") {
@@ -491,7 +470,7 @@ export async function createEmbeddingProvider(
       }
     }
 
-    for (const provider of ["openai", "gemini", "voyage"] as const) {
+    for (const provider of REMOTE_EMBEDDING_PROVIDER_IDS) {
       try {
         const result = await createProvider(provider);
         return { ...result, requestedProvider };
@@ -566,8 +545,9 @@ function formatLocalSetupError(err: unknown): string {
       ? "2) Reinstall OpenClaw (this should install node-llama-cpp): npm i -g openclaw@latest"
       : null,
     "3) If you use pnpm: pnpm approve-builds (select node-llama-cpp), then pnpm rebuild node-llama-cpp",
-    'Or set agents.defaults.memorySearch.provider = "openai" (remote).',
-    'Or set agents.defaults.memorySearch.provider = "voyage" (remote).',
+    ...REMOTE_EMBEDDING_PROVIDER_IDS.map(
+      (provider) => `Or set agents.defaults.memorySearch.provider = "${provider}" (remote).`,
+    ),
   ]
     .filter(Boolean)
     .join("\n");

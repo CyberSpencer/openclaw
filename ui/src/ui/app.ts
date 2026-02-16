@@ -80,12 +80,7 @@ import {
   type ModelSelectionInfo,
   type ToolStreamEntry,
 } from "./app-tool-stream.ts";
-import { resolveInjectedAssistantIdentity } from "./assistant-identity.ts";
-import {
-  buildCommandPaletteActions,
-  filterCommandPaletteActions,
-  type CommandPaletteAction,
-} from "./command-palette.ts";
+import { normalizeAssistantIdentity } from "./assistant-identity.ts";
 import { loadAssistantIdentity as loadAssistantIdentityInternal } from "./controllers/assistant-identity.ts";
 import { pcmFramesToWavBlob } from "./controllers/audio-capture.ts";
 import { loadChatThreads } from "./controllers/chat-threads.ts";
@@ -124,51 +119,7 @@ declare global {
   }
 }
 
-/** Max chars per TTS chunk to stay under DGX timeout (~60s). ~250 chars ~= 12-15s under load. */
-const MAX_TTS_CHARS = 250;
-const WORKLET_VERSION = "20260210-v1";
-const SPARK_STATUS_FAILURE_STOP_THRESHOLD = 3;
-
-/**
- * Chunk text for TTS to avoid DGX timeouts. Long text (~1270 chars) takes 60–78s;
- * chunks of ~250 chars stay under the 60s gateway timeout.
- * Prefers sentence boundaries; falls back to space; hard-breaks at maxChars.
- */
-function chunkTextForTts(text: string, maxChars = MAX_TTS_CHARS): string[] {
-  const t = text.trim();
-  if (!t) {
-    return [];
-  }
-  if (t.length <= maxChars) {
-    return [t];
-  }
-
-  const chunks: string[] = [];
-  let rest = t;
-
-  while (rest.length > 0) {
-    if (rest.length <= maxChars) {
-      chunks.push(rest.trim());
-      break;
-    }
-    const window = rest.slice(0, maxChars);
-    const sentMatches = [...window.matchAll(/[.!?]\s+/g)];
-    const lastSent = sentMatches[sentMatches.length - 1];
-    const lastSpace = window.lastIndexOf(" ");
-    const breakAt = lastSent
-      ? lastSent.index + lastSent[0].length
-      : lastSpace > 0
-        ? lastSpace + 1
-        : maxChars;
-
-    chunks.push(rest.slice(0, breakAt).trim());
-    rest = rest.slice(breakAt).trim();
-  }
-
-  return chunks;
-}
-
-const injectedAssistantIdentity = resolveInjectedAssistantIdentity();
+const bootAssistantIdentity = normalizeAssistantIdentity({});
 
 function resolveOnboardingMode(): boolean {
   if (!window.location.search) {
@@ -368,9 +319,9 @@ export class OpenClawApp extends LitElement {
   private toolStreamSyncTimer: number | null = null;
   private sidebarCloseTimer: number | null = null;
 
-  @state() assistantName = injectedAssistantIdentity.name;
-  @state() assistantAvatar = injectedAssistantIdentity.avatar;
-  @state() assistantAgentId = injectedAssistantIdentity.agentId ?? null;
+  @state() assistantName = bootAssistantIdentity.name;
+  @state() assistantAvatar = bootAssistantIdentity.avatar;
+  @state() assistantAgentId = bootAssistantIdentity.agentId ?? null;
 
   @state() sessionKey = this.settings.sessionKey;
   @state() chatLoading = false;
