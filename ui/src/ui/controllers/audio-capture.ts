@@ -57,8 +57,10 @@ export function pcmFramesToWavBlob(
   }
   const pcm = combinePcmFrames(frames);
   const wavBytes = encodeWavPcm16(pcm, sampleRate);
+  const wavBuffer = new ArrayBuffer(wavBytes.byteLength);
+  new Uint8Array(wavBuffer).set(wavBytes);
   return {
-    blob: new Blob([wavBytes], { type: "audio/wav" }),
+    blob: new Blob([wavBuffer], { type: "audio/wav" }),
     pcm,
   };
 }

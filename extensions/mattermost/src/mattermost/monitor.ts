@@ -294,11 +294,11 @@ export async function monitorMattermostProvider(opts: MonitorMattermostOpts = {}
   );
   const channelHistories = new Map<string, HistoryEntry[]>();
 
-  const fetchWithAuth: FetchLike = (input, init) => {
+  const fetchWithAuth = ((input, init) => {
     const headers = new Headers(init?.headers);
     headers.set("Authorization", `Bearer ${client.token}`);
     return fetch(input, { ...init, headers });
-  };
+  }) as FetchLike;
 
   const resolveMattermostMedia = async (
     fileIds?: string[] | null,

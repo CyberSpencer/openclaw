@@ -1,5 +1,6 @@
 import { html } from "lit";
 import type { AppViewState } from "./app-view-state.ts";
+import type { OpenClawApp } from "./app.ts";
 import type { ThemeTransitionContext } from "./theme-transition.ts";
 import type { ThemeMode } from "./theme.ts";
 import { refreshChat } from "./app-chat.ts";

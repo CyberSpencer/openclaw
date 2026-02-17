@@ -43,7 +43,7 @@ export async function loadChatThreads(
     if (search) {
       params.search = search;
     }
-    const res = await state.client.request("sessions.list", params);
+    const res = await state.client.request<SessionsListResult | null>("sessions.list", params);
     if (res) {
       state.chatThreadsResult = res;
     }

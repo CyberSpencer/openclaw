@@ -5,6 +5,7 @@ import type { AppViewState } from "./app-view-state.ts";
 import type { DevicePairingList } from "./controllers/devices.ts";
 import type { ExecApprovalRequest } from "./controllers/exec-approval.ts";
 import type { ExecApprovalsFile, ExecApprovalsSnapshot } from "./controllers/exec-approvals.ts";
+import type { SkillMessage } from "./controllers/skills.ts";
 import type { GatewayBrowserClient, GatewayHelloOk } from "./gateway.ts";
 import type { Tab } from "./navigation.ts";
 import type { ResolvedTheme, ThemeMode } from "./theme.ts";
@@ -60,6 +61,7 @@ import {
   handleChatScroll as handleChatScrollInternal,
   handleLogsScroll as handleLogsScrollInternal,
   resetChatScroll as resetChatScrollInternal,
+  scheduleChatScroll as scheduleChatScrollInternal,
 } from "./app-scroll.ts";
 import {
   applySettings as applySettingsInternal,
@@ -211,6 +213,82 @@ type SparkStatusResult = {
     net_io?: string;
     block_io?: string;
   }> | null;
+};
+
+type OrchestratorGetResult = {
+  exists?: boolean;
+  hash?: string;
+  scopeKey?: string;
+  state?: {
+    version?: unknown;
+    selectedBoardId?: unknown;
+    boards?: unknown;
+  };
+};
+
+type OrchestratorSetResult = {
+  hash?: string;
+  scopeKey?: string;
+};
+
+type CodexTeamRunResult = {
+  runId?: string;
+  sessionKey?: string;
+};
+
+type SessionSpawnResult = {
+  status?: string;
+  error?: string;
+  childSessionKey?: string;
+  runId?: string;
+  warning?: string;
+};
+
+type SessionsSubagentsResult = {
+  tasks?: Array<{
+    runId?: string;
+    childSessionKey?: string;
+    status?: "running" | "done" | "error";
+    startedAt?: number;
+    endedAt?: number;
+  }>;
+};
+
+type AgentWaitResult = {
+  status?: string;
+  startedAt?: number;
+  endedAt?: number;
+  error?: string;
+};
+
+type ConfigGetResult = {
+  hash?: string;
+  config?: Record<string, unknown> | null;
+};
+
+type DoctorRunResult = {
+  ok?: boolean;
+  exitCode?: number;
+  signal?: string;
+  durationMs?: number;
+  timedOut?: boolean;
+  stdout?: string;
+  stderr?: string;
+};
+
+type RouterStatusResult = {
+  enabled?: boolean;
+  healthy?: boolean;
+};
+
+type RouterSetEnabledResult = {
+  enabled?: boolean;
+  healthy?: boolean;
+};
+
+type SparkVoiceTtsResult = {
+  audio_base64?: string;
+  format?: string;
 };
 
 function asObject(value: unknown): Record<string, unknown> | null {
@@ -711,6 +789,7 @@ export class OpenClawApp extends LitElement {
   client: GatewayBrowserClient | null = null;
   private chatScrollFrame: number | null = null;
   private chatScrollTimeout: number | null = null;
+  @state() chatManualRefreshInFlight = false;
   private chatHasAutoScrolled = false;
   private chatUserNearBottom = true;
   @state() chatNewMessagesBelow = false;
@@ -990,14 +1069,15 @@ export class OpenClawApp extends LitElement {
     }
     const sessionKey = (this.sessionKey ?? "").trim();
     try {
-      const res = await this.client.request("orchestrator.get", sessionKey ? { sessionKey } : {});
+      const res = await this.client.request<OrchestratorGetResult>(
+        "orchestrator.get",
+        sessionKey ? { sessionKey } : {},
+      );
       const exists = Boolean(res?.exists);
       const hash = typeof res?.hash === "string" ? res.hash : "";
       const scopeKeyRaw = typeof res?.scopeKey === "string" ? res.scopeKey.trim() : "";
       const scopeKey = scopeKeyRaw || "main";
-      const stateRaw = res?.state as
-        | { version?: unknown; selectedBoardId?: unknown; boards?: unknown }
-        | undefined;
+      const stateRaw = res?.state;
 
       this.orchScopeKey = scopeKey;
       if (hash) {
@@ -1127,7 +1207,7 @@ export class OpenClawApp extends LitElement {
     }
     this.orchServerSyncing = true;
     try {
-      const res = await this.client.request("orchestrator.set", {
+      const res = await this.client.request<OrchestratorSetResult>("orchestrator.set", {
         ...(sessionKey ? { sessionKey } : {}),
         state,
         baseHash: this.orchServerHash ?? undefined,
@@ -1145,7 +1225,7 @@ export class OpenClawApp extends LitElement {
         err instanceof Error ? err.message : typeof err === "string" ? err : "unknown error";
       if (message.includes("baseHash") && message.includes("mismatch")) {
         try {
-          const latest = await this.client.request(
+          const latest = await this.client.request<OrchestratorGetResult>(
             "orchestrator.get",
             sessionKey ? { sessionKey } : {},
           );
@@ -1157,7 +1237,7 @@ export class OpenClawApp extends LitElement {
           if (nextScopeKey) {
             this.orchScopeKey = nextScopeKey;
           }
-          const retry = await this.client.request("orchestrator.set", {
+          const retry = await this.client.request<OrchestratorSetResult>("orchestrator.set", {
             ...(sessionKey ? { sessionKey } : {}),
             state,
           });
@@ -1601,7 +1681,7 @@ export class OpenClawApp extends LitElement {
         this.orchBoards = nextBoards;
         this.rebuildOrchRunIndex();
 
-        const accepted = await this.client.request("codex-team.run", {
+        const accepted = await this.client.request<CodexTeamRunResult>("codex-team.run", {
           cardId: card.id,
           title: card.title?.trim() || undefined,
           task: card.task,
@@ -1656,7 +1736,7 @@ export class OpenClawApp extends LitElement {
       const thinking = (card.thinking ?? "").trim() || undefined;
       const idem = generateUUID();
 
-      const result = await this.client.request("sessions.spawn", {
+      const result = await this.client.request<SessionSpawnResult>("sessions.spawn", {
         requesterSessionKey,
         task: card.task,
         label: card.title?.trim() || undefined,
@@ -1857,7 +1937,11 @@ export class OpenClawApp extends LitElement {
       sessionKey: key,
       lastActiveSessionKey: key,
     });
-    syncUrlWithSessionKeyInternal(this, key, true);
+    syncUrlWithSessionKeyInternal(
+      this as unknown as Parameters<typeof syncUrlWithSessionKeyInternal>[0],
+      key,
+      true,
+    );
     void this.loadAssistantIdentity();
     this.setTab("chat");
   }
@@ -2088,7 +2172,7 @@ export class OpenClawApp extends LitElement {
     }> = [];
 
     try {
-      const res = await this.client.request("sessions.subagents", {
+      const res = await this.client.request<SessionsSubagentsResult>("sessions.subagents", {
         requesterSessionKey,
         includeCompleted: true,
         limit: 200,
@@ -2148,7 +2232,10 @@ export class OpenClawApp extends LitElement {
 
       if (runId) {
         try {
-          const snapshot = await this.client.request("agent.wait", { runId, timeoutMs: 1 });
+          const snapshot = await this.client.request<AgentWaitResult>("agent.wait", {
+            runId,
+            timeoutMs: 1,
+          });
           const status = typeof snapshot?.status === "string" ? snapshot.status : "";
           const startedAt =
             typeof snapshot?.startedAt === "number" ? snapshot.startedAt : undefined;
@@ -2820,7 +2907,7 @@ export class OpenClawApp extends LitElement {
     this.cronBusy = true;
     this.cronError = null;
     try {
-      const snapshot = await this.client.request("config.get", {});
+      const snapshot = await this.client.request<ConfigGetResult>("config.get", {});
       const baseHash = typeof snapshot.hash === "string" ? snapshot.hash.trim() : "";
       if (!baseHash) {
         this.cronError = "Config hash missing, reload and retry.";
@@ -2858,7 +2945,7 @@ export class OpenClawApp extends LitElement {
     this.doctorError = null;
     this.doctorResult = null;
     try {
-      const res = await this.client.request("doctor.run", {
+      const res = await this.client.request<DoctorRunResult>("doctor.run", {
         timeoutMs: 120_000,
         deep: opts?.deep === true,
       });
@@ -2903,7 +2990,7 @@ export class OpenClawApp extends LitElement {
     }
     this.nvidiaRouterBusy = true;
     try {
-      const status = await this.client.request("router.status", {});
+      const status = await this.client.request<RouterStatusResult>("router.status", {});
       this.nvidiaRouterEnabled = status.enabled !== false;
       this.nvidiaRouterHealthy = status.enabled === false ? false : Boolean(status.healthy);
     } catch {
@@ -2914,7 +3001,7 @@ export class OpenClawApp extends LitElement {
     }
   }
 
-  async handleNvidiaRouterToggle() {
+  async handleNvidiaRouterToggle(forceEnabled?: boolean) {
     if (!this.client || !this.connected || this.nvidiaRouterBusy) {
       return;
     }
@@ -2922,8 +3009,8 @@ export class OpenClawApp extends LitElement {
     this.lastError = null;
     try {
       const currentEnabled = this.nvidiaRouterEnabled !== false;
-      const nextEnabled = !currentEnabled;
-      const result = await this.client.request("router.setEnabled", {
+      const nextEnabled = typeof forceEnabled === "boolean" ? forceEnabled : !currentEnabled;
+      const result = await this.client.request<RouterSetEnabledResult>("router.setEnabled", {
         enabled: nextEnabled,
       });
       this.nvidiaRouterEnabled = result.enabled !== false;
@@ -2942,7 +3029,7 @@ export class OpenClawApp extends LitElement {
     this.sparkBusy = true;
     let pollSucceeded = false;
     try {
-      const status = await this.client.request("spark.status", {});
+      const status = await this.client.request<SparkStatusResult>("spark.status", {});
       this.sparkStatus = status;
       this.sparkStatusConsecutivePollFailures = 0;
       pollSucceeded = true;
@@ -3431,7 +3518,7 @@ export class OpenClawApp extends LitElement {
       });
 
       const fetchChunkForWorklet = async (idx: number): Promise<Float32Array> => {
-        const result = await this.client!.request("spark.voice.tts", {
+        const result = await this.client!.request<SparkVoiceTtsResult>("spark.voice.tts", {
           text: chunks[idx],
           ...this.getTtsRequestParams(),
         });
@@ -3521,7 +3608,7 @@ export class OpenClawApp extends LitElement {
     }
 
     const fetchChunkAudio = async (idx: number): Promise<HTMLAudioElement> => {
-      const result = await this.client!.request("spark.voice.tts", {
+      const result = await this.client!.request<SparkVoiceTtsResult>("spark.voice.tts", {
         text: chunks[idx],
         ...this.getTtsRequestParams(),
       });

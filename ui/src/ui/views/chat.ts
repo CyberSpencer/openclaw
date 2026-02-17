@@ -677,7 +677,7 @@ function renderTerminalEntry(props: ChatProps, item: TerminalItem): TemplateResu
               ? html`<span class="pill terminal-entry__tts-status" role="status">${props.ttsProgress}</span>`
               : nothing
           }
-          ${renderAssistantActions(item.text, sparkAvailable)}
+          ${renderAssistantActions(item.text ?? "", sparkAvailable)}
         </div>
         <div class="terminal-entry__body">
           ${

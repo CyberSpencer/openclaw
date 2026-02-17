@@ -57,7 +57,7 @@ function getDOMPurify(): DOMPurifyInstance {
     return dompurify;
   }
   const w = (globalThis as unknown as { window?: unknown }).window ?? globalThis;
-  dompurify = createDOMPurify(w as unknown as Window);
+  dompurify = createDOMPurify(w as unknown as Parameters<typeof createDOMPurify>[0]);
   return dompurify;
 }
 

@@ -1,7 +1,7 @@
 import { html, nothing } from "lit";
 import type { GatewayHelloOk } from "../gateway.ts";
 import type { UiSettings } from "../storage.ts";
-import { formatRelativeTimestamp } from "../format.ts";
+import { formatAgo, formatDurationHuman, formatRelativeTimestamp } from "../format.ts";
 import { formatNextRun } from "../presenter.ts";
 
 type ControlUiBuildMeta = {
@@ -64,7 +64,7 @@ export function renderOverview(props: OverviewProps) {
   const snapshot = props.hello?.snapshot as
     | { uptimeMs?: number; policy?: { tickIntervalMs?: number } }
     | undefined;
-  const uptime = snapshot?.uptimeMs ? formatDurationMs(snapshot.uptimeMs) : "n/a";
+  const uptime = snapshot?.uptimeMs ? formatDurationHuman(snapshot.uptimeMs) : "n/a";
   const tick = snapshot?.policy?.tickIntervalMs ? `${snapshot.policy.tickIntervalMs}ms` : "n/a";
   const authHint = (() => {
     if (props.connected || !props.lastError) {

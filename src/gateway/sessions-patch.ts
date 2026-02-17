@@ -343,7 +343,8 @@ export async function applySessionsPatchToStore(params: {
       // Best-effort normalization: ensure tasks array is capped.
       const plan = raw as { tasks?: unknown } & Record<string, unknown>;
       const tasks = Array.isArray(plan.tasks) ? plan.tasks.slice(0, 50) : [];
-      next.taskPlan = { ...plan, tasks };
+      const id = typeof plan.id === "string" && plan.id.trim() ? plan.id.trim() : randomUUID();
+      next.taskPlan = { ...plan, id, tasks };
     }
   }
 

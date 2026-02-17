@@ -3,6 +3,10 @@ import type { AppViewState } from "./app-view-state.ts";
 import { parseAgentSessionKey } from "../../../src/routing/session-key.js";
 import { refreshChatAvatar } from "./app-chat.ts";
 import { renderChatControls, renderTab, renderThemeToggle } from "./app-render.helpers.ts";
+import { loadAgentFiles, loadAgentFileContent, saveAgentFile } from "./controllers/agent-files.ts";
+import { loadAgentIdentity, loadAgentIdentities } from "./controllers/agent-identity.ts";
+import { loadAgentSkills } from "./controllers/agent-skills.ts";
+import { loadAgents } from "./controllers/agents.ts";
 import { loadChannels } from "./controllers/channels.ts";
 import { loadChatThreads } from "./controllers/chat-threads.ts";
 import { loadChatHistory } from "./controllers/chat.ts";
@@ -29,6 +33,12 @@ import {
   revokeDeviceToken,
   rotateDeviceToken,
 } from "./controllers/devices.ts";
+import {
+  loadExecApprovals,
+  removeExecApprovalsFormValue,
+  saveExecApprovals,
+  updateExecApprovalsFormValue,
+} from "./controllers/exec-approvals.ts";
 import { loadLogs } from "./controllers/logs.ts";
 import { loadNodes } from "./controllers/nodes.ts";
 import { loadPresence } from "./controllers/presence.ts";
@@ -41,8 +51,10 @@ import {
   updateSkillEnabled,
 } from "./controllers/skills.ts";
 import { loadSubagentMonitor } from "./controllers/subagent-monitor.ts";
+import { loadSessionLogs, loadSessionTimeSeries, loadUsage } from "./controllers/usage.ts";
 import { icons } from "./icons.ts";
 import { TAB_GROUPS, subtitleForTab, titleForTab } from "./navigation.ts";
+import { renderAgents } from "./views/agents.ts";
 import { renderChannels } from "./views/channels.ts";
 import { renderChatThreadsNav } from "./views/chat-threads-nav.ts";
 import { renderChat } from "./views/chat.ts";
@@ -61,6 +73,7 @@ import { renderOverview } from "./views/overview.ts";
 import { renderSessions } from "./views/sessions.ts";
 import { renderSettings } from "./views/settings.ts";
 import { renderSkills } from "./views/skills.ts";
+import { renderUsage } from "./views/usage.ts";
 import { renderVoiceBar } from "./views/voice-bar.ts";
 
 const AVATAR_DATA_RE = /^data:/i;
@@ -186,6 +199,41 @@ export function renderApp(state: AppViewState) {
       : sparkActive
         ? `DGX Spark active${sparkHost ? ` (${sparkHost})` : ""}`
         : `DGX Spark fallback${sparkHost ? ` (${sparkHost})` : ""}`;
+  const configValue =
+    state.configForm ?? (state.configSnapshot?.config as Record<string, unknown> | null);
+  const resolvedAgentId =
+    state.agentsSelectedId ??
+    state.agentsList?.defaultId ??
+    state.agentsList?.agents?.[0]?.id ??
+    null;
+  const systemStatusLoading = state.nvidiaRouterBusy || state.sparkBusy;
+  const routerStatus: import("./types.js").RouterStatus | null =
+    state.nvidiaRouterEnabled == null && state.nvidiaRouterHealthy == null
+      ? null
+      : {
+          enabled: state.nvidiaRouterEnabled !== false,
+          healthy: state.nvidiaRouterEnabled === false ? false : state.nvidiaRouterHealthy === true,
+          url: "",
+          checkedAt: Date.now(),
+        };
+  const sparkStatus: import("./types.js").SparkStatus | null = state.sparkStatus
+    ? {
+        enabled: state.sparkStatus.enabled !== false,
+        active: state.sparkStatus.active === true,
+        source: state.sparkStatus.source,
+        host: typeof state.sparkStatus.host === "string" ? state.sparkStatus.host : null,
+        checkedAt:
+          typeof state.sparkStatus.checkedAt === "number"
+            ? state.sparkStatus.checkedAt
+            : Date.now(),
+        voiceAvailable: state.sparkStatus.voiceAvailable,
+        overall: state.sparkStatus.overall,
+        counts: state.sparkStatus.counts,
+        services: state.sparkStatus.services,
+        gpu: state.sparkStatus.gpu,
+        containers: state.sparkStatus.containers,
+      }
+    : null;
 
   return html`
     <div class="shell ${isChat ? "shell--chat" : ""} ${chatFocus ? "shell--chat-focus" : ""} ${state.settings.navCollapsed ? "shell--nav-collapsed" : ""} ${state.onboarding ? "shell--onboarding" : ""}">
@@ -404,10 +452,10 @@ export function renderApp(state: AppViewState) {
                 cronEnabled: state.cronStatus?.enabled ?? null,
                 cronNext,
                 lastChannelsRefresh: state.channelsLastSuccess,
-                systemStatusLoading: state.systemStatusLoading,
-                systemStatusError: state.systemStatusError,
-                routerStatus: state.routerStatus,
-                sparkStatus: state.sparkStatus,
+                systemStatusLoading,
+                systemStatusError: state.lastError,
+                routerStatus,
+                sparkStatus,
                 onSettingsChange: (next) => state.applySettings(next),
                 onPasswordChange: (next) => (state.password = next),
                 onSessionKeyChange: (next) => {
@@ -423,7 +471,7 @@ export function renderApp(state: AppViewState) {
                 },
                 onConnect: () => state.connect(),
                 onRefresh: () => state.loadOverview(),
-                onRouterSetEnabled: (enabled) => void state.handleRouterSetEnabled(enabled),
+                onRouterSetEnabled: (enabled) => void state.handleNvidiaRouterToggle(enabled),
               })
             : nothing
         }
@@ -432,7 +480,7 @@ export function renderApp(state: AppViewState) {
           state.tab === "dgx"
             ? renderDgx({
                 connected: state.connected,
-                sparkStatus: state.sparkStatus,
+                sparkStatus,
                 onRefresh: () => state.refreshSparkStatus(),
               })
             : nothing
@@ -559,14 +607,14 @@ export function renderApp(state: AppViewState) {
                   state.usageSelectedDays = [];
                   state.usageSelectedHours = [];
                   state.usageSelectedSessions = [];
-                  debouncedLoadUsage(state);
+                  void loadUsage(state);
                 },
                 onEndDateChange: (date) => {
                   state.usageEndDate = date;
                   state.usageSelectedDays = [];
                   state.usageSelectedHours = [];
                   state.usageSelectedSessions = [];
-                  debouncedLoadUsage(state);
+                  void loadUsage(state);
                 },
                 onRefresh: () => loadUsage(state),
                 onTimeZoneChange: (zone) => {

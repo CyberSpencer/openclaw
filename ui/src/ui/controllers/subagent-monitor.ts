@@ -101,7 +101,6 @@ export async function loadSubagentMonitor(
       path: "(subagents)",
       count: sessions.length,
       defaults: {
-        modelProvider: null,
         model: null,
         contextTokens: null,
       },

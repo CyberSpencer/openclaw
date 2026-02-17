@@ -84,6 +84,47 @@ type SessionDefaultsSnapshot = {
   scope?: string;
 };
 
+function asRecord(value: unknown): Record<string, unknown> | null {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    return null;
+  }
+  return value as Record<string, unknown>;
+}
+
+function asAgentEventPayload(value: unknown): AgentEventPayload | null {
+  const obj = asRecord(value);
+  if (!obj) {
+    return null;
+  }
+  if (
+    typeof obj.runId !== "string" ||
+    typeof obj.seq !== "number" ||
+    typeof obj.stream !== "string" ||
+    typeof obj.ts !== "number"
+  ) {
+    return null;
+  }
+  return obj as unknown as AgentEventPayload;
+}
+
+function asChatEventPayload(
+  value: unknown,
+): import("./controllers/chat.ts").ChatEventPayload | null {
+  const obj = asRecord(value);
+  if (!obj) {
+    return null;
+  }
+  const state = obj.state;
+  if (
+    typeof obj.runId !== "string" ||
+    typeof obj.sessionKey !== "string" ||
+    (state !== "delta" && state !== "final" && state !== "aborted" && state !== "error")
+  ) {
+    return null;
+  }
+  return obj as unknown as import("./controllers/chat.ts").ChatEventPayload;
+}
+
 function normalizeSessionKeyForDefaults(
   value: string | undefined,
   defaults: SessionDefaultsSnapshot,
@@ -203,16 +244,14 @@ function handleGatewayEventUnsafe(host: GatewayHost, evt: GatewayEventFrame) {
     if (host.onboarding) {
       return;
     }
-    const payload = evt.payload;
+    const payload = asAgentEventPayload(evt.payload);
     if (payload) {
       host.handleOrchestratorAgentEvent?.(payload);
     }
     const sessionKey =
-      payload && typeof (payload as { sessionKey?: unknown }).sessionKey === "string"
-        ? String((payload as { sessionKey?: string }).sessionKey)
-        : host.sessionKey;
+      typeof payload?.sessionKey === "string" ? payload.sessionKey : host.sessionKey;
     const runHost = host.getSessionRunHost(sessionKey);
-    handleAgentEvent(runHost as Parameters<typeof handleAgentEvent>[0], payload);
+    handleAgentEvent(runHost as Parameters<typeof handleAgentEvent>[0], payload ?? undefined);
     return;
   }
 
@@ -222,7 +261,7 @@ function handleGatewayEventUnsafe(host: GatewayHost, evt: GatewayEventFrame) {
   }
 
   if (evt.event === "chat") {
-    const payload = evt.payload;
+    const payload = asChatEventPayload(evt.payload);
     if (payload?.sessionKey) {
       setLastActiveSessionKey(
         host as unknown as Parameters<typeof setLastActiveSessionKey>[0],
@@ -286,7 +325,7 @@ function handleGatewayEventUnsafe(host: GatewayHost, evt: GatewayEventFrame) {
       },
     };
 
-    const state = handleChatEvent(chatProxy, payload);
+    const state = handleChatEvent(chatProxy, payload ?? undefined);
 
     if ((state === "final" || state === "error" || state === "aborted") && isActive) {
       void flushChatQueueForEvent(host as unknown as Parameters<typeof flushChatQueueForEvent>[0]);
