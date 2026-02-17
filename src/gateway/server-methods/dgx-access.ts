@@ -90,8 +90,17 @@ export function resolveContractPath(): string | null {
   if (explicit) {
     return explicit;
   }
-  const fallback = path.resolve(process.cwd(), "config", "workspace.env");
-  return existsSync(fallback) ? fallback : null;
+  const cwd = process.cwd();
+  const candidates = [
+    path.resolve(cwd, "config", "workspace.env"),
+    path.resolve(cwd, "..", "config", "workspace.env"),
+  ];
+  for (const candidate of candidates) {
+    if (existsSync(candidate)) {
+      return candidate;
+    }
+  }
+  return null;
 }
 
 export function readContractEnv(contractPath: string | null): Record<string, string> {
@@ -327,11 +336,53 @@ function resolveWanHost(baseUrl: string): string | null {
   }
 }
 
-function buildWanHeaders(env: Record<string, string>): Record<string, string> {
-  if (!resolveWanSkipBrowserWarningHeader(env)) {
-    return {};
+function isUnresolvedTemplateValue(value: string | undefined): boolean {
+  if (!value) {
+    return false;
   }
-  return { "ngrok-skip-browser-warning": "true" };
+  return /^\$\{[^}]+\}$/.test(value.trim());
+}
+
+function resolveWanTokenFromContract(contractPath: string | null): string | undefined {
+  if (!contractPath) {
+    return undefined;
+  }
+  const configDir = path.dirname(contractPath);
+  const localEnv = readContractEnv(path.join(configDir, ".env"));
+  const secretsEnv = readContractEnv(path.join(configDir, "secrets.env"));
+  const token =
+    parseStringLike(secretsEnv.DGX_WAN_TOKEN) ??
+    parseStringLike(localEnv.DGX_WAN_TOKEN) ??
+    parseStringLike(secretsEnv.OPENCLAW_WAN_TOKEN) ??
+    parseStringLike(localEnv.OPENCLAW_WAN_TOKEN);
+  if (!token || isUnresolvedTemplateValue(token)) {
+    return undefined;
+  }
+  return token;
+}
+
+function resolveWanToken(env: Record<string, string>): string | undefined {
+  const tokenFromEnv =
+    parseStringLike(env.DGX_WAN_TOKEN) ??
+    parseStringLike(process.env.DGX_WAN_TOKEN) ??
+    parseStringLike(env.OPENCLAW_WAN_TOKEN) ??
+    parseStringLike(process.env.OPENCLAW_WAN_TOKEN);
+  if (tokenFromEnv && !isUnresolvedTemplateValue(tokenFromEnv)) {
+    return tokenFromEnv;
+  }
+  return resolveWanTokenFromContract(resolveContractPath());
+}
+
+function buildWanHeaders(env: Record<string, string>): Record<string, string> {
+  const headers: Record<string, string> = {};
+  if (resolveWanSkipBrowserWarningHeader(env)) {
+    headers["ngrok-skip-browser-warning"] = "true";
+  }
+  const wanToken = resolveWanToken(env);
+  if (wanToken) {
+    headers["X-OpenClaw-Token"] = wanToken;
+  }
+  return headers;
 }
 
 export async function resolveDgxAccess(

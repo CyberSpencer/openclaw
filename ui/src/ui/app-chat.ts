@@ -5,7 +5,6 @@ import type { ChatAttachment, ChatQueueItem } from "./ui-types.ts";
 import { parseAgentSessionKey } from "../../../src/sessions/session-key-utils.js";
 import { scheduleChatScroll } from "./app-scroll.ts";
 import { setLastActiveSessionKey } from "./app-settings.ts";
-import { resetToolStream } from "./app-tool-stream.ts";
 import { loadChatThreads } from "./controllers/chat-threads.ts";
 import {
   abortChatRun,
@@ -31,6 +30,7 @@ export type ChatHost = {
   chatThreadsResult: SessionsListResult | null;
   chatThreadsError: string | null;
   chatThreadsQuery: string;
+  resetToolStream: () => void;
 };
 
 export function isChatBusy(host: ChatHost) {
@@ -92,7 +92,7 @@ async function sendChatMessageNow(
     refreshSessions?: boolean;
   },
 ) {
-  resetToolStream(host as unknown as Parameters<typeof resetToolStream>[0]);
+  host.resetToolStream();
   const runId = await sendChatMessage(host as unknown as OpenClawApp, message, opts?.attachments);
   const ok = Boolean(runId);
   if (!ok && opts?.previousDraft != null) {

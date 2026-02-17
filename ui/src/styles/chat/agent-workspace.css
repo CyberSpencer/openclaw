@@ -70,6 +70,26 @@
   white-space: nowrap;
 }
 
+.agent-orchestration__expandToggle {
+  flex-shrink: 0;
+  padding: 6px 8px;
+  min-width: 32px;
+  color: var(--muted);
+}
+.agent-orchestration__expandToggle:hover {
+  color: var(--fg);
+}
+
+.agent-orchestration__expandToggle svg {
+  width: 16px;
+  height: 16px;
+  display: block;
+}
+
+.agent-orchestration--collapsed .agent-orchestration__body {
+  display: none;
+}
+
 .agent-spin svg {
   animation: spin 1s linear infinite;
 }

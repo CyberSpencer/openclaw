@@ -358,19 +358,43 @@ public struct AgentEvent: Codable, Sendable {
     public let stream: String
     public let ts: Int
     public let data: [String: AnyCodable]
+    public let sessionkey: String?
+    public let rootconversationid: String?
+    public let threadid: String?
+    public let parentrunid: String?
+    public let subagentgroupid: String?
+    public let taskid: String?
+    public let requestersessionkey: String?
+    public let spawnedbysessionkey: String?
 
     public init(
         runid: String,
         seq: Int,
         stream: String,
         ts: Int,
-        data: [String: AnyCodable]
+        data: [String: AnyCodable],
+        sessionkey: String?,
+        rootconversationid: String?,
+        threadid: String?,
+        parentrunid: String?,
+        subagentgroupid: String?,
+        taskid: String?,
+        requestersessionkey: String?,
+        spawnedbysessionkey: String?
     ) {
         self.runid = runid
         self.seq = seq
         self.stream = stream
         self.ts = ts
         self.data = data
+        self.sessionkey = sessionkey
+        self.rootconversationid = rootconversationid
+        self.threadid = threadid
+        self.parentrunid = parentrunid
+        self.subagentgroupid = subagentgroupid
+        self.taskid = taskid
+        self.requestersessionkey = requestersessionkey
+        self.spawnedbysessionkey = spawnedbysessionkey
     }
     private enum CodingKeys: String, CodingKey {
         case runid = "runId"
@@ -378,6 +402,14 @@ public struct AgentEvent: Codable, Sendable {
         case stream
         case ts
         case data
+        case sessionkey = "sessionKey"
+        case rootconversationid = "rootConversationId"
+        case threadid = "threadId"
+        case parentrunid = "parentRunId"
+        case subagentgroupid = "subagentGroupId"
+        case taskid = "taskId"
+        case requestersessionkey = "requesterSessionKey"
+        case spawnedbysessionkey = "spawnedBySessionKey"
     }
 }
 
@@ -482,6 +514,10 @@ public struct AgentParams: Codable, Sendable {
     public let accountid: String?
     public let replyaccountid: String?
     public let threadid: String?
+    public let rootconversationid: String?
+    public let parentrunid: String?
+    public let subagentgroupid: String?
+    public let taskid: String?
     public let groupid: String?
     public let groupchannel: String?
     public let groupspace: String?
@@ -507,6 +543,10 @@ public struct AgentParams: Codable, Sendable {
         accountid: String?,
         replyaccountid: String?,
         threadid: String?,
+        rootconversationid: String?,
+        parentrunid: String?,
+        subagentgroupid: String?,
+        taskid: String?,
         groupid: String?,
         groupchannel: String?,
         groupspace: String?,
@@ -531,6 +571,10 @@ public struct AgentParams: Codable, Sendable {
         self.accountid = accountid
         self.replyaccountid = replyaccountid
         self.threadid = threadid
+        self.rootconversationid = rootconversationid
+        self.parentrunid = parentrunid
+        self.subagentgroupid = subagentgroupid
+        self.taskid = taskid
         self.groupid = groupid
         self.groupchannel = groupchannel
         self.groupspace = groupspace
@@ -556,6 +600,10 @@ public struct AgentParams: Codable, Sendable {
         case accountid = "accountId"
         case replyaccountid = "replyAccountId"
         case threadid = "threadId"
+        case rootconversationid = "rootConversationId"
+        case parentrunid = "parentRunId"
+        case subagentgroupid = "subagentGroupId"
+        case taskid = "taskId"
         case groupid = "groupId"
         case groupchannel = "groupChannel"
         case groupspace = "groupSpace"
@@ -945,6 +993,39 @@ public struct SessionsListParams: Codable, Sendable {
     }
 }
 
+public struct SessionsSubagentsParams: Codable, Sendable {
+    public let requestersessionkey: String
+    public let limit: Int?
+    public let includecompleted: Bool?
+    public let rootconversationid: String?
+    public let threadid: String?
+    public let subagentgroupid: String?
+
+    public init(
+        requestersessionkey: String,
+        limit: Int?,
+        includecompleted: Bool?,
+        rootconversationid: String?,
+        threadid: String?,
+        subagentgroupid: String?
+    ) {
+        self.requestersessionkey = requestersessionkey
+        self.limit = limit
+        self.includecompleted = includecompleted
+        self.rootconversationid = rootconversationid
+        self.threadid = threadid
+        self.subagentgroupid = subagentgroupid
+    }
+    private enum CodingKeys: String, CodingKey {
+        case requestersessionkey = "requesterSessionKey"
+        case limit
+        case includecompleted = "includeCompleted"
+        case rootconversationid = "rootConversationId"
+        case threadid = "threadId"
+        case subagentgroupid = "subagentGroupId"
+    }
+}
+
 public struct SessionsPreviewParams: Codable, Sendable {
     public let keys: [String]
     public let limit: Int?
@@ -974,6 +1055,9 @@ public struct SessionsResolveParams: Codable, Sendable {
     public let spawnedby: String?
     public let includeglobal: Bool?
     public let includeunknown: Bool?
+    public let strictidentity: Bool?
+    public let rootconversationid: String?
+    public let threadid: AnyCodable?
 
     public init(
         key: String?,
@@ -982,7 +1066,10 @@ public struct SessionsResolveParams: Codable, Sendable {
         agentid: String?,
         spawnedby: String?,
         includeglobal: Bool?,
-        includeunknown: Bool?
+        includeunknown: Bool?,
+        strictidentity: Bool?,
+        rootconversationid: String?,
+        threadid: AnyCodable?
     ) {
         self.key = key
         self.sessionid = sessionid
@@ -991,6 +1078,9 @@ public struct SessionsResolveParams: Codable, Sendable {
         self.spawnedby = spawnedby
         self.includeglobal = includeglobal
         self.includeunknown = includeunknown
+        self.strictidentity = strictidentity
+        self.rootconversationid = rootconversationid
+        self.threadid = threadid
     }
     private enum CodingKeys: String, CodingKey {
         case key
@@ -1000,6 +1090,9 @@ public struct SessionsResolveParams: Codable, Sendable {
         case spawnedby = "spawnedBy"
         case includeglobal = "includeGlobal"
         case includeunknown = "includeUnknown"
+        case strictidentity = "strictIdentity"
+        case rootconversationid = "rootConversationId"
+        case threadid = "threadId"
     }
 }
 
@@ -1141,6 +1234,9 @@ public struct SessionsSpawnParams: Codable, Sendable {
     public let groupid: String?
     public let groupchannel: String?
     public let groupspace: String?
+    public let parentrunid: String?
+    public let subagentgroupid: String?
+    public let taskid: String?
 
     public init(
         requestersessionkey: String,
@@ -1159,7 +1255,10 @@ public struct SessionsSpawnParams: Codable, Sendable {
         threadid: AnyCodable?,
         groupid: String?,
         groupchannel: String?,
-        groupspace: String?
+        groupspace: String?,
+        parentrunid: String?,
+        subagentgroupid: String?,
+        taskid: String?
     ) {
         self.requestersessionkey = requestersessionkey
         self.task = task
@@ -1178,6 +1277,9 @@ public struct SessionsSpawnParams: Codable, Sendable {
         self.groupid = groupid
         self.groupchannel = groupchannel
         self.groupspace = groupspace
+        self.parentrunid = parentrunid
+        self.subagentgroupid = subagentgroupid
+        self.taskid = taskid
     }
     private enum CodingKeys: String, CodingKey {
         case requestersessionkey = "requesterSessionKey"
@@ -1197,6 +1299,9 @@ public struct SessionsSpawnParams: Codable, Sendable {
         case groupid = "groupId"
         case groupchannel = "groupChannel"
         case groupspace = "groupSpace"
+        case parentrunid = "parentRunId"
+        case subagentgroupid = "subagentGroupId"
+        case taskid = "taskId"
     }
 }
 

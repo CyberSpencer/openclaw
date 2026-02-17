@@ -73,6 +73,7 @@ import {
 import {
   resetToolStream as resetToolStreamInternal,
   type AgentEventPayload,
+  type CompactionStatus,
   type ModelSelectionInfo,
   type ToolStreamEntry,
 } from "./app-tool-stream.ts";
@@ -328,6 +329,29 @@ function isTaskPlanIncomplete(plan: TaskPlan | null | undefined): boolean {
   return done < tasks.length;
 }
 
+type SessionRunBucket = {
+  key: string;
+  chatRunId: string | null;
+  chatStream: string | null;
+  chatStreamStartedAt: number | null;
+  chatModelSelection: ModelSelectionInfo | null;
+  chatTaskPlan: TaskPlan | null;
+  compactionStatus: CompactionStatus | null;
+  compactionClearTimer: number | null;
+  toolStreamById: Map<string, ToolStreamEntry>;
+  toolStreamOrder: string[];
+  chatToolMessages: Record<string, unknown>[];
+  toolStreamSyncTimer: number | null;
+};
+
+type SessionRunHost = Parameters<typeof resetToolStreamInternal>[0] & {
+  sessionKey: string;
+  chatStream: string | null;
+  chatStreamStartedAt: number | null;
+  compactionStatus: CompactionStatus | null;
+  compactionClearTimer: number | null;
+};
+
 const SUBAGENT_RECENT_WINDOW_MS = 5 * 60_000;
 
 function hasRecentSubagentActivity(result: SessionsListResult | null | undefined): boolean {
@@ -361,8 +385,8 @@ export class OpenClawApp extends LitElement {
   @state() lastError: string | null = null;
   @state() eventLog: EventLogEntry[] = [];
   private eventLogBuffer: EventLogEntry[] = [];
-  private toolStreamSyncTimer: number | null = null;
   private sidebarCloseTimer: number | null = null;
+  private sessionRunHosts = new Map<string, { bucket: SessionRunBucket; host: SessionRunHost }>();
 
   @state() assistantName = injectedAssistantIdentity.name;
   @state() assistantAvatar = injectedAssistantIdentity.avatar;
@@ -379,7 +403,7 @@ export class OpenClawApp extends LitElement {
   @state() chatRunId: string | null = null;
   @state() chatModelSelection: ModelSelectionInfo | null = null;
   @state() chatTaskPlan: TaskPlan | null = null;
-  @state() compactionStatus: import("./app-tool-stream.ts").CompactionStatus | null = null;
+  @state() compactionStatus: CompactionStatus | null = null;
   @state() chatAvatarUrl: string | null = null;
   @state() chatThinkingLevel: string | null = null;
   @state() chatQueue: ChatQueueItem[] = [];
@@ -406,6 +430,7 @@ export class OpenClawApp extends LitElement {
   @state() sidebarContent: string | null = null;
   @state() sidebarError: string | null = null;
   @state() splitRatio = this.settings.splitRatio;
+  @state() orchestrationExpanded = true;
 
   // Command palette (Ctrl/Cmd+K)
   @state() commandPaletteOpen = false;
@@ -693,8 +718,6 @@ export class OpenClawApp extends LitElement {
   private logsPollInterval: number | null = null;
   private debugPollInterval: number | null = null;
   private logsScrollFrame: number | null = null;
-  private toolStreamById = new Map<string, ToolStreamEntry>();
-  private toolStreamOrder: string[] = [];
   basePath = "";
   private popStateHandler = () =>
     onPopStateInternal(this as unknown as Parameters<typeof onPopStateInternal>[0]);
@@ -739,6 +762,9 @@ export class OpenClawApp extends LitElement {
         this.sparkStatus = null;
         this.voiceState.sparkVoiceAvailable = false;
       }
+    }
+    if (changed.has("sessionKey")) {
+      this.syncActiveRunState(this.sessionKey);
     }
     if (this.connected && changed.has("sessionKey")) {
       void this.loadOrchestratorFromGateway({ seedIfMissing: true });
@@ -849,7 +875,8 @@ export class OpenClawApp extends LitElement {
   }
 
   resetToolStream() {
-    resetToolStreamInternal(this as unknown as Parameters<typeof resetToolStreamInternal>[0]);
+    const host = this.getSessionRunHost(this.sessionKey);
+    resetToolStreamInternal(host);
   }
 
   resetChatScroll() {
@@ -1821,12 +1848,9 @@ export class OpenClawApp extends LitElement {
 
     this.sessionKey = key;
     this.restoreComposeStateForSession(key);
-    this.chatStream = null;
-    this.chatStreamStartedAt = null;
-    this.chatRunId = null;
+    this.syncActiveRunState(key);
     this.subagentMonitorResult = null;
     this.subagentMonitorError = null;
-    this.resetToolStream();
     this.resetChatScroll();
     this.applySettings({
       ...this.settings,
@@ -1836,6 +1860,176 @@ export class OpenClawApp extends LitElement {
     syncUrlWithSessionKeyInternal(this, key, true);
     void this.loadAssistantIdentity();
     this.setTab("chat");
+  }
+
+  getSessionRunHost(sessionKey: string): SessionRunHost {
+    const key = sessionKey.trim();
+    const resolvedKey = key || "main";
+    const existing = this.sessionRunHosts.get(resolvedKey);
+    if (existing) {
+      return existing.host;
+    }
+
+    const bucket: SessionRunBucket = {
+      key: resolvedKey,
+      chatRunId: null,
+      chatStream: null,
+      chatStreamStartedAt: null,
+      chatModelSelection: null,
+      chatTaskPlan: null,
+      compactionStatus: null,
+      compactionClearTimer: null,
+      toolStreamById: new Map<string, ToolStreamEntry>(),
+      toolStreamOrder: [],
+      chatToolMessages: [],
+      toolStreamSyncTimer: null,
+    };
+
+    const isActiveSession = () => (this.sessionKey ?? "").trim() === resolvedKey;
+    const syncIfActive = (apply: () => void) => {
+      if (isActiveSession()) {
+        apply();
+      }
+    };
+    const syncChatRunId = (value: string | null) => {
+      syncIfActive(() => {
+        this.chatRunId = value;
+      });
+    };
+    const syncChatModelSelection = (value: ModelSelectionInfo | null) => {
+      syncIfActive(() => {
+        this.chatModelSelection = value;
+      });
+    };
+    const syncChatTaskPlan = (value: TaskPlan | null) => {
+      syncIfActive(() => {
+        this.chatTaskPlan = value;
+      });
+    };
+    const syncChatToolMessages = (value: Record<string, unknown>[]) => {
+      syncIfActive(() => {
+        this.chatToolMessages = value;
+      });
+    };
+    const syncCompactionStatus = (value: CompactionStatus | null) => {
+      syncIfActive(() => {
+        this.compactionStatus = value;
+      });
+    };
+    const syncChatStream = (value: string | null) => {
+      syncIfActive(() => {
+        this.chatStream = value;
+      });
+    };
+    const syncChatStreamStartedAt = (value: number | null) => {
+      syncIfActive(() => {
+        this.chatStreamStartedAt = value;
+      });
+    };
+
+    const host: SessionRunHost = {
+      sessionKey: resolvedKey,
+      get chatRunId() {
+        return bucket.chatRunId;
+      },
+      set chatRunId(value) {
+        bucket.chatRunId = value;
+        syncChatRunId(value);
+      },
+      get chatModelSelection() {
+        return bucket.chatModelSelection;
+      },
+      set chatModelSelection(value) {
+        bucket.chatModelSelection = value ?? null;
+        syncChatModelSelection(value ?? null);
+      },
+      get chatTaskPlan() {
+        return bucket.chatTaskPlan;
+      },
+      set chatTaskPlan(value) {
+        bucket.chatTaskPlan = value ?? null;
+        syncChatTaskPlan(value ?? null);
+      },
+      toolStreamById: bucket.toolStreamById,
+      get toolStreamOrder() {
+        return bucket.toolStreamOrder;
+      },
+      set toolStreamOrder(value) {
+        bucket.toolStreamOrder = value;
+      },
+      get chatToolMessages() {
+        return bucket.chatToolMessages;
+      },
+      set chatToolMessages(value) {
+        bucket.chatToolMessages = value;
+        syncChatToolMessages(value);
+      },
+      get toolStreamSyncTimer() {
+        return bucket.toolStreamSyncTimer;
+      },
+      set toolStreamSyncTimer(value) {
+        bucket.toolStreamSyncTimer = value;
+      },
+      get compactionStatus() {
+        return bucket.compactionStatus;
+      },
+      set compactionStatus(value) {
+        bucket.compactionStatus = value ?? null;
+        syncCompactionStatus(value ?? null);
+      },
+      get compactionClearTimer() {
+        return bucket.compactionClearTimer;
+      },
+      set compactionClearTimer(value) {
+        bucket.compactionClearTimer = value;
+      },
+      get chatStream() {
+        return bucket.chatStream;
+      },
+      set chatStream(value) {
+        bucket.chatStream = value;
+        syncChatStream(value);
+      },
+      get chatStreamStartedAt() {
+        return bucket.chatStreamStartedAt;
+      },
+      set chatStreamStartedAt(value) {
+        bucket.chatStreamStartedAt = value;
+        syncChatStreamStartedAt(value);
+      },
+    };
+
+    this.sessionRunHosts.set(resolvedKey, { bucket, host });
+    return host;
+  }
+
+  resetAllSessionRunState() {
+    for (const { bucket, host } of this.sessionRunHosts.values()) {
+      // Cancel any pending compaction clear timer.
+      if (bucket.compactionClearTimer != null) {
+        window.clearTimeout(bucket.compactionClearTimer);
+        bucket.compactionClearTimer = null;
+      }
+      resetToolStreamInternal(host);
+    }
+    this.sessionRunHosts.clear();
+    this.syncActiveRunState(this.sessionKey);
+  }
+
+  private syncActiveRunState(sessionKey: string) {
+    const host = this.getSessionRunHost(sessionKey);
+    const entry = this.sessionRunHosts.get(host.sessionKey);
+    const bucket = entry?.bucket;
+    if (!bucket) {
+      return;
+    }
+    this.chatRunId = bucket.chatRunId;
+    this.chatStream = bucket.chatStream;
+    this.chatStreamStartedAt = bucket.chatStreamStartedAt;
+    this.chatModelSelection = bucket.chatModelSelection;
+    this.chatTaskPlan = bucket.chatTaskPlan;
+    this.compactionStatus = bucket.compactionStatus;
+    this.chatToolMessages = bucket.chatToolMessages;
   }
 
   async reconcileInFlightOrchestratorRuns() {

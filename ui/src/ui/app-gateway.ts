@@ -18,12 +18,12 @@ import {
   refreshActiveTab,
   setLastActiveSessionKey,
 } from "./app-settings.ts";
-import { handleAgentEvent, resetToolStream, type AgentEventPayload } from "./app-tool-stream.ts";
+import { handleAgentEvent, type AgentEventPayload } from "./app-tool-stream.ts";
 import { loadAgents } from "./controllers/agents.ts";
 import { loadAssistantIdentity } from "./controllers/assistant-identity.ts";
 import { loadChatThreads } from "./controllers/chat-threads.ts";
 import { loadChatHistory } from "./controllers/chat.ts";
-import { handleChatEvent } from "./controllers/chat.ts";
+import { handleChatEvent, type ChatState } from "./controllers/chat.ts";
 import { loadDevices } from "./controllers/devices.ts";
 import {
   addExecApproval,
@@ -57,6 +57,8 @@ type GatewayHost = {
   assistantAvatar: string | null;
   assistantAgentId: string | null;
   sessionKey: string;
+  getSessionRunHost: (sessionKey: string) => unknown;
+  resetAllSessionRunState: () => void;
   chatRunId: string | null;
   chatThreadsQuery: string;
   chatThreadsLoading: boolean;
@@ -153,14 +155,9 @@ export function connectGateway(host: GatewayHost) {
       host.lastError = null;
       host.hello = hello;
       applySnapshot(host, hello);
-      // Reset orphaned chat run state from before disconnect.
-      // Any in-flight run's final event was lost during the disconnect window.
-      host.chatRunId = null;
-      (host as unknown as { chatStream: string | null }).chatStream = null;
-      (host as unknown as { chatStreamStartedAt: number | null }).chatStreamStartedAt = null;
-      (host as unknown as { chatModelProvider: string | null }).chatModelProvider = null;
-      (host as unknown as { chatModelId: string | null }).chatModelId = null;
-      resetToolStream(host as unknown as Parameters<typeof resetToolStream>[0]);
+      // Reset orphaned run state from before disconnect.
+      // Any in-flight run's final event may have been lost during the disconnect window.
+      host.resetAllSessionRunState();
       void loadAssistantIdentity(host as unknown as OpenClawApp);
       void host.loadOrchestratorFromGateway?.({ seedIfMissing: true });
       void host.reconcileInFlightOrchestratorRuns?.();
@@ -210,7 +207,12 @@ function handleGatewayEventUnsafe(host: GatewayHost, evt: GatewayEventFrame) {
     if (payload) {
       host.handleOrchestratorAgentEvent?.(payload);
     }
-    handleAgentEvent(host as unknown as Parameters<typeof handleAgentEvent>[0], payload);
+    const sessionKey =
+      payload && typeof (payload as { sessionKey?: unknown }).sessionKey === "string"
+        ? String((payload as { sessionKey?: string }).sessionKey)
+        : host.sessionKey;
+    const runHost = host.getSessionRunHost(sessionKey);
+    handleAgentEvent(runHost as Parameters<typeof handleAgentEvent>[0], payload);
     return;
   }
 
@@ -227,23 +229,82 @@ function handleGatewayEventUnsafe(host: GatewayHost, evt: GatewayEventFrame) {
         payload.sessionKey,
       );
     }
-    const state = handleChatEvent(host as unknown as OpenClawApp, payload);
-    if (state === "final" || state === "error" || state === "aborted") {
-      resetToolStream(host as unknown as Parameters<typeof resetToolStream>[0]);
+    const sessionKey = typeof payload?.sessionKey === "string" ? payload.sessionKey : "";
+    if (!sessionKey) {
+      return;
+    }
+
+    const runHost = host.getSessionRunHost(sessionKey) as {
+      chatRunId: string | null;
+      chatStream: string | null;
+      chatStreamStartedAt: number | null;
+      chatTaskPlan: unknown;
+    };
+    const isActive = sessionKey === host.sessionKey;
+
+    const chatProxy: ChatState = {
+      client: host.client as unknown as ChatState["client"],
+      connected: host.connected,
+      sessionKey,
+      chatLoading: false,
+      chatMessages: [],
+      chatThinkingLevel: null,
+      chatSending: false,
+      chatMessage: "",
+      chatAttachments: [],
+      get chatRunId() {
+        return runHost.chatRunId;
+      },
+      set chatRunId(value) {
+        runHost.chatRunId = value;
+      },
+      get chatStream() {
+        return runHost.chatStream;
+      },
+      set chatStream(value) {
+        runHost.chatStream = value;
+      },
+      get chatStreamStartedAt() {
+        return runHost.chatStreamStartedAt;
+      },
+      set chatStreamStartedAt(value) {
+        runHost.chatStreamStartedAt = value;
+      },
+      get chatTaskPlan() {
+        return runHost.chatTaskPlan as ChatState["chatTaskPlan"];
+      },
+      set chatTaskPlan(value) {
+        runHost.chatTaskPlan = value;
+      },
+      get lastError() {
+        return host.lastError;
+      },
+      set lastError(value) {
+        if (isActive) {
+          host.lastError = value;
+        }
+      },
+    };
+
+    const state = handleChatEvent(chatProxy, payload);
+
+    if ((state === "final" || state === "error" || state === "aborted") && isActive) {
       void flushChatQueueForEvent(host as unknown as Parameters<typeof flushChatQueueForEvent>[0]);
     }
+
     if (state === "final") {
-      const sessionKey = typeof payload?.sessionKey === "string" ? payload.sessionKey : "";
-      if (sessionKey) {
-        host.handleChatThreadFinalEvent?.(sessionKey);
+      host.handleChatThreadFinalEvent?.(sessionKey);
+      if (isActive) {
+        void loadChatHistory(host as unknown as OpenClawApp);
       }
-      void loadChatHistory(host as unknown as OpenClawApp);
       void loadChatThreads(host as unknown as Parameters<typeof loadChatThreads>[0], {
         search: host.chatThreadsQuery,
       });
-      void loadSubagentMonitor(host as unknown as Parameters<typeof loadSubagentMonitor>[0], {
-        quiet: true,
-      });
+      if (isActive) {
+        void loadSubagentMonitor(host as unknown as Parameters<typeof loadSubagentMonitor>[0], {
+          quiet: true,
+        });
+      }
     }
     return;
   }

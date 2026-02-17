@@ -85,6 +85,9 @@ export type ChatProps = {
   ttsProgress?: string | null;
   ttsSpeakingMessageKey?: string | null;
   onStopSpeaking?: () => void;
+  /** Agent orchestration card expanded (true) or collapsed (false). */
+  orchestrationExpanded?: boolean;
+  onOrchestrationExpandedChange?: (expanded: boolean) => void;
 };
 
 const COMPACTION_TOAST_DURATION_MS = 5000;
@@ -867,8 +870,11 @@ function renderOrchestrationCard(props: ChatProps) {
     return map;
   })();
 
+  const expanded = props.orchestrationExpanded !== false;
+  const toggleLabel = expanded ? "Collapse" : "Expand";
+
   return html`
-    <section class="card agent-orchestration" aria-label="Agent orchestration">
+    <section class="card agent-orchestration ${expanded ? "" : "agent-orchestration--collapsed"}" aria-label="Agent orchestration">
       <div class="agent-orchestration__header">
         <div class="agent-orchestration__titleBlock">
           <div class="card-title">Agent Orchestration</div>
@@ -878,6 +884,16 @@ function renderOrchestrationCard(props: ChatProps) {
         </div>
 
         <div class="agent-orchestration__actions">
+          <button
+            type="button"
+            class="btn btn--sm agent-orchestration__expandToggle"
+            title=${toggleLabel}
+            aria-label=${toggleLabel}
+            aria-expanded=${expanded}
+            @click=${() => props.onOrchestrationExpandedChange?.(!expanded)}
+          >
+            ${expanded ? icons.chevronUp : icons.chevronDown}
+          </button>
           <div class="pill agent-orchestration__statusPill" title=${statusLabel}>
             <span class="statusDot ${statusDotClass}"></span>
             <span>Status</span>
@@ -902,6 +918,7 @@ function renderOrchestrationCard(props: ChatProps) {
         </div>
       </div>
 
+      <div class="agent-orchestration__body">
       <div class="agent-progress-wrap">
         <div
           class="agent-progress"
@@ -1165,6 +1182,7 @@ function renderOrchestrationCard(props: ChatProps) {
                     </div>
                   `
         }
+      </div>
       </div>
     </section>
   `;

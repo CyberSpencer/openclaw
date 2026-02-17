@@ -164,15 +164,17 @@ describe("spark voice gateway handlers", () => {
     );
   });
 
-  it("routes STT to WAN endpoint and sends ngrok bypass header in WAN mode", async () => {
+  it("routes STT to WAN endpoint and sends WAN auth headers in WAN mode", async () => {
     process.env.DGX_ACCESS_MODE = "wan";
     process.env.DGX_WAN_BASE_URL = "https://abc123.ngrok-free.dev";
+    process.env.DGX_WAN_TOKEN = "wan-token";
 
     const fetchMock = vi.fn(async (url: string, init?: RequestInit) => {
       expect(url).toBe("https://abc123.ngrok-free.dev/voice-stt/v1/transcribe");
       expect(init?.method).toBe("POST");
       const headers = (init?.headers ?? {}) as Record<string, string>;
       expect(headers["ngrok-skip-browser-warning"]).toBe("true");
+      expect(headers["X-OpenClaw-Token"]).toBe("wan-token");
       return {
         ok: true,
         status: 200,

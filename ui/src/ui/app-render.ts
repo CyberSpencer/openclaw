@@ -118,8 +118,9 @@ function classifyModelSource(provider: string | null): {
 }
 
 function renderModelPill(state: AppViewState) {
-  const provider = state.chatModelProvider;
-  const modelId = state.chatModelId;
+  const selection = state.chatModelSelection;
+  const provider = selection?.provider ?? null;
+  const modelId = selection?.model ?? null;
   if (!provider && !modelId) {
     return nothing;
   }
@@ -1263,25 +1264,7 @@ export function renderApp(state: AppViewState) {
                 ${renderChat({
                   sessionKey: state.sessionKey,
                   onSessionKeyChange: (next) => {
-                    state.sessionKey = next;
-                    state.chatMessage = "";
-                    state.chatAttachments = [];
-                    state.chatStream = null;
-                    state.chatStreamStartedAt = null;
-                    state.chatRunId = null;
-                    state.chatModelSelection = null;
-                    state.chatTaskPlan = null;
-                    state.chatQueue = [];
-                    state.resetToolStream();
-                    state.resetChatScroll();
-                    state.applySettings({
-                      ...state.settings,
-                      sessionKey: next,
-                      lastActiveSessionKey: next,
-                    });
-                    void state.loadAssistantIdentity();
-                    void loadChatHistory(state);
-                    void refreshChatAvatar(state);
+                    state.openChatSession(next);
                   },
                   thinkingLevel: state.chatThinkingLevel,
                   showThinking,
@@ -1342,6 +1325,9 @@ export function renderApp(state: AppViewState) {
                   onOpenSidebar: (content: string) => state.handleOpenSidebar(content),
                   onCloseSidebar: () => state.handleCloseSidebar(),
                   onSplitRatioChange: (ratio: number) => state.handleSplitRatioChange(ratio),
+                  orchestrationExpanded: state.orchestrationExpanded,
+                  onOrchestrationExpandedChange: (expanded) =>
+                    (state.orchestrationExpanded = expanded),
                   assistantName: state.assistantName,
                   assistantAvatar: state.assistantAvatar,
                   sparkVoiceAvailable: Boolean(
