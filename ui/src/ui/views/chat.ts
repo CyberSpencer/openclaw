@@ -387,7 +387,7 @@ function renderModelAttribution(selection: ModelSelectionInfo | null | undefined
   const think =
     selection.thinkLevel && selection.thinkLevel !== "off" ? selection.thinkLevel : null;
   return html`
-    <div class="agent-meta-row" role="status" aria-live="polite">
+    <div class="agent-meta-row agent-meta-row--compact" role="status" aria-live="polite">
       <span class="agent-meta-row__label">Model</span>
       <span class="mono agent-meta-row__value">${modelFull}</span>
       ${think ? html`<span class="agent-meta-row__muted">(thinking: ${think})</span>` : nothing}
@@ -872,6 +872,10 @@ function renderOrchestrationCard(props: ChatProps) {
 
   const expanded = props.orchestrationExpanded !== false;
   const toggleLabel = expanded ? "Collapse" : "Expand";
+  const sessionShort =
+    props.sessionKey.length > 24
+      ? `${props.sessionKey.slice(0, 10)}…${props.sessionKey.slice(-10)}`
+      : props.sessionKey;
 
   return html`
     <section class="card agent-orchestration ${expanded ? "" : "agent-orchestration--collapsed"}" aria-label="Agent orchestration">
@@ -896,7 +900,6 @@ function renderOrchestrationCard(props: ChatProps) {
           </button>
           <div class="pill agent-orchestration__statusPill" title=${statusLabel}>
             <span class="statusDot ${statusDotClass}"></span>
-            <span>Status</span>
             <span class="mono">${statusLabel}</span>
           </div>
           ${
@@ -919,9 +922,9 @@ function renderOrchestrationCard(props: ChatProps) {
       </div>
 
       <div class="agent-orchestration__body">
-      <div class="agent-progress-wrap">
+      <div class="agent-orchestration__compact-bar">
         <div
-          class="agent-progress"
+          class="agent-progress agent-progress--compact"
           role="progressbar"
           aria-label="Task progress"
           aria-valuemin="0"
@@ -933,24 +936,19 @@ function renderOrchestrationCard(props: ChatProps) {
             class="agent-progress__bar ${isStreaming || isCompacting ? "agent-progress__bar--active" : ""}"
           ></div>
         </div>
-        <div class="agent-progress-meta">
-          <span class="agent-progress-meta__label">Progress</span>
-          <span class="mono agent-progress-meta__value">
-            ${progress.total > 0 ? `${progress.done}/${progress.total}` : "—"}
-          </span>
-        </div>
+        <span
+          class="agent-orchestration__session mono"
+          title=${props.sessionKey}
+        >${sessionShort}</span>
+        <span class="agent-orchestration__subagents-badge">Subagents ${subagents.length}</span>
       </div>
 
       <div class="agent-orchestration__meta">
         ${renderModelAttribution(props.modelSelection)}
-        <div class="agent-meta-row">
-          <span class="agent-meta-row__label">Session</span>
-          <span class="mono agent-meta-row__value">${props.sessionKey}</span>
-        </div>
         ${
           props.queue.length
             ? html`
-                <div class="agent-meta-row">
+                <div class="agent-meta-row agent-meta-row--compact">
                   <span class="agent-meta-row__label">Queued</span>
                   <span class="mono agent-meta-row__value">${props.queue.length}</span>
                 </div>
@@ -1108,7 +1106,13 @@ function renderOrchestrationCard(props: ChatProps) {
             Subagents
             <span class="agent-subagents__count mono">${subagents.length}</span>
           </div>
-          <div class="agent-subagents__hint muted">spawned by this thread</div>
+          ${
+            subagents.length > 0
+              ? html`
+                  <div class="agent-subagents__hint muted">spawned by this thread</div>
+                `
+              : nothing
+          }
         </div>
 
         ${subagentError ? html`<div class="callout danger">${subagentError}</div>` : nothing}
@@ -1116,16 +1120,14 @@ function renderOrchestrationCard(props: ChatProps) {
         ${
           !props.connected
             ? html`
-                <div class="muted">Connect to see subagents.</div>
+                <div class="muted agent-subagents__empty">Connect to see subagents.</div>
               `
             : subagentLoading && subagents.length === 0
               ? html`
-                  <div class="muted">Loading subagents...</div>
+                  <div class="muted agent-subagents__empty">Loading…</div>
                 `
               : subagents.length === 0
-                ? html`
-                    <div class="muted">No subagents yet.</div>
-                  `
+                ? nothing
                 : html`
                     <div class="agent-subagents__list">
                       ${subagents.map((s) => {
