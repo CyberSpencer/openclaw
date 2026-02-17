@@ -76,7 +76,9 @@ export function applySettings(host: SettingsHost, next: UiSettings) {
   host.applySessionKey = host.settings.lastActiveSessionKey;
 }
 
-export function setLastActiveSessionKey(host: SettingsHost, next: string) {
+export type LastActiveSessionHost = Pick<SettingsHost, "settings" | "applySessionKey">;
+
+export function setLastActiveSessionKey(host: LastActiveSessionHost, next: string) {
   const trimmed = next.trim();
   if (!trimmed) {
     return;
@@ -84,7 +86,9 @@ export function setLastActiveSessionKey(host: SettingsHost, next: string) {
   if (host.settings.lastActiveSessionKey === trimmed) {
     return;
   }
-  applySettings(host, { ...host.settings, lastActiveSessionKey: trimmed });
+  host.settings = { ...host.settings, lastActiveSessionKey: trimmed };
+  saveSettings(host.settings);
+  host.applySessionKey = host.settings.lastActiveSessionKey;
 }
 
 export function applySettingsFromUrl(host: SettingsHost) {

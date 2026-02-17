@@ -57,6 +57,26 @@ import {
 } from "./app-lifecycle.ts";
 import { renderApp } from "./app-render.ts";
 import {
+  chunkTextForTts,
+  hasRecentSubagentActivity,
+  isTaskPlanIncomplete,
+  resolveMemorySearchEnabled,
+  resolveMemoryStoreLabel,
+  resolveOnboardingMode,
+  type AgentWaitResult,
+  type CodexTeamRunResult,
+  type ConfigGetResult,
+  type DoctorRunResult,
+  type OrchestratorGetResult,
+  type OrchestratorSetResult,
+  type RouterSetEnabledResult,
+  type RouterStatusResult,
+  type SessionSpawnResult,
+  type SessionsSubagentsResult,
+  type SparkStatusResult,
+  type SparkVoiceTtsResult,
+} from "./app-runtime-utils.ts";
+import {
   exportLogs as exportLogsInternal,
   handleChatScroll as handleChatScrollInternal,
   handleLogsScroll as handleLogsScrollInternal,
@@ -123,288 +143,13 @@ declare global {
   }
 }
 
-/** Max chars per TTS chunk to stay under DGX timeout (~60s). ~250 chars ~= 12-15s under load. */
-const MAX_TTS_CHARS = 250;
 const WORKLET_VERSION = "20260210-v1";
 const SPARK_STATUS_FAILURE_STOP_THRESHOLD = 3;
 
-/**
- * Chunk text for TTS to avoid DGX timeouts. Long text (~1270 chars) takes 60–78s;
- * chunks of ~250 chars stay under the 60s gateway timeout.
- * Prefers sentence boundaries; falls back to space; hard-breaks at maxChars.
- */
-function chunkTextForTts(text: string, maxChars = MAX_TTS_CHARS): string[] {
-  const t = text.trim();
-  if (!t) {
-    return [];
-  }
-  if (t.length <= maxChars) {
-    return [t];
-  }
-
-  const chunks: string[] = [];
-  let rest = t;
-
-  while (rest.length > 0) {
-    if (rest.length <= maxChars) {
-      chunks.push(rest.trim());
-      break;
-    }
-    const window = rest.slice(0, maxChars);
-    const sentMatches = [...window.matchAll(/[.!?]\s+/g)];
-    const lastSent = sentMatches[sentMatches.length - 1];
-    const lastSpace = window.lastIndexOf(" ");
-    const breakAt = lastSent
-      ? lastSent.index + lastSent[0].length
-      : lastSpace > 0
-        ? lastSpace + 1
-        : maxChars;
-
-    chunks.push(rest.slice(0, breakAt).trim());
-    rest = rest.slice(breakAt).trim();
-  }
-
-  return chunks;
-}
-
 const injectedAssistantIdentity = resolveInjectedAssistantIdentity();
 
-function resolveOnboardingMode(): boolean {
-  if (!window.location.search) {
-    return false;
-  }
-  const params = new URLSearchParams(window.location.search);
-  const raw = params.get("onboarding");
-  if (!raw) {
-    return false;
-  }
-  const normalized = raw.trim().toLowerCase();
-  return normalized === "1" || normalized === "true" || normalized === "yes" || normalized === "on";
-}
-
-type SparkStatusResult = {
-  enabled?: boolean;
-  active?: boolean;
-  source?: "dgx-stats" | "fallback";
-  host?: string | null;
-  checkedAt?: number;
-  voiceAvailable?: boolean;
-  overall?: "healthy" | "degraded" | "down" | "unknown";
-  counts?: { healthy: number; degraded: number; down: number; total: number };
-  services?: Record<
-    string,
-    { url?: string; healthy?: boolean; status?: number; error?: string | null; latency_ms?: number }
-  >;
-  gpu?: {
-    name?: string;
-    temperature_c?: number;
-    power_w?: number;
-    utilization_pct?: number;
-    memory_used_mib?: number;
-    memory_total_mib?: number;
-    unified_memory?: boolean;
-    processes?: Array<{ pid: number; memory_mib: number; process: string }>;
-  } | null;
-  containers?: Array<{
-    name: string;
-    cpu?: string;
-    memory?: string;
-    mem_pct?: string;
-    net_io?: string;
-    block_io?: string;
-  }> | null;
-};
-
-type OrchestratorGetResult = {
-  exists?: boolean;
-  hash?: string;
-  scopeKey?: string;
-  state?: {
-    version?: unknown;
-    selectedBoardId?: unknown;
-    boards?: unknown;
-  };
-};
-
-type OrchestratorSetResult = {
-  hash?: string;
-  scopeKey?: string;
-};
-
-type CodexTeamRunResult = {
-  runId?: string;
-  sessionKey?: string;
-};
-
-type SessionSpawnResult = {
-  status?: string;
-  error?: string;
-  childSessionKey?: string;
-  runId?: string;
-  warning?: string;
-};
-
-type SessionsSubagentsResult = {
-  tasks?: Array<{
-    runId?: string;
-    childSessionKey?: string;
-    status?: "running" | "done" | "error";
-    startedAt?: number;
-    endedAt?: number;
-  }>;
-};
-
-type AgentWaitResult = {
-  status?: string;
-  startedAt?: number;
-  endedAt?: number;
-  error?: string;
-};
-
-type ConfigGetResult = {
-  hash?: string;
-  config?: Record<string, unknown> | null;
-};
-
-type DoctorRunResult = {
-  ok?: boolean;
-  exitCode?: number;
-  signal?: string;
-  durationMs?: number;
-  timedOut?: boolean;
-  stdout?: string;
-  stderr?: string;
-};
-
-type RouterStatusResult = {
-  enabled?: boolean;
-  healthy?: boolean;
-};
-
-type RouterSetEnabledResult = {
-  enabled?: boolean;
-  healthy?: boolean;
-};
-
-type SparkVoiceTtsResult = {
-  audio_base64?: string;
-  format?: string;
-};
-
-function asObject(value: unknown): Record<string, unknown> | null {
-  if (!value || typeof value !== "object" || Array.isArray(value)) {
-    return null;
-  }
-  return value as Record<string, unknown>;
-}
-
-function resolveMemorySearchEnabled(config: Record<string, unknown> | null | undefined): boolean {
-  const agents = asObject(config?.agents);
-  const defaults = asObject(agents?.defaults);
-  const memorySearch = asObject(defaults?.memorySearch);
-  if (!memorySearch) {
-    return true;
-  }
-  const enabled = memorySearch.enabled;
-  return typeof enabled === "boolean" ? enabled : true;
-}
-
-/**
- * Resolve a human-readable label for the memory search store.
- * Returns e.g. "Qdrant (127.0.0.1)" or "SQLite" or "Auto".
- */
-function resolveMemoryStoreLabel(
-  config: Record<string, unknown> | null | undefined,
-): string | null {
-  const agents = asObject(config?.agents);
-  const defaults = asObject(agents?.defaults);
-  const memorySearch = asObject(defaults?.memorySearch);
-  if (!memorySearch) {
-    return null;
-  }
-  const store = asObject(memorySearch.store);
-  if (!store) {
-    return null;
-  }
-
-  const driver = typeof store.driver === "string" ? store.driver.toLowerCase().trim() : "auto";
-
-  const qdrantConfig = asObject(store.qdrant);
-
-  // Prefer the endpoints array (priority-based failover) over the legacy url field.
-  const endpoints = Array.isArray(qdrantConfig?.endpoints) ? qdrantConfig.endpoints : null;
-  let effectiveUrl: string | null = null;
-
-  if (endpoints && endpoints.length > 0) {
-    // Pick the endpoint with the lowest priority number (highest precedence).
-    let bestPriority = Infinity;
-    for (const ep of endpoints) {
-      const obj = asObject(ep);
-      if (!obj || typeof obj.url !== "string") {
-        continue;
-      }
-      const pri = typeof obj.priority === "number" ? obj.priority : 999;
-      if (pri < bestPriority) {
-        bestPriority = pri;
-        effectiveUrl = obj.url.trim();
-      }
-    }
-  }
-
-  // Fall back to the legacy url field if no endpoints were found.
-  if (!effectiveUrl && typeof qdrantConfig?.url === "string") {
-    effectiveUrl = qdrantConfig.url.trim() || null;
-  }
-
-  if (driver === "qdrant" || (driver === "auto" && effectiveUrl)) {
-    if (effectiveUrl) {
-      try {
-        const parsed = new URL(effectiveUrl);
-        const isLocal =
-          parsed.hostname === "127.0.0.1" ||
-          parsed.hostname === "localhost" ||
-          parsed.hostname === "::1";
-        return isLocal ? "Mac" : "DGX";
-      } catch {
-        return "Mac";
-      }
-    }
-    return "Mac";
-  }
-
-  if (driver === "sqlite") {
-    return "Mac";
-  }
-  return "Mac";
-}
-
-function normalizeTaskStatus(value: unknown): string {
-  if (typeof value !== "string") {
-    return "todo";
-  }
-  const normalized = value.trim().toLowerCase();
-  if (
-    normalized === "todo" ||
-    normalized === "running" ||
-    normalized === "done" ||
-    normalized === "blocked" ||
-    normalized === "skipped"
-  ) {
-    return normalized;
-  }
-  return "todo";
-}
-
-function isTaskPlanIncomplete(plan: TaskPlan | null | undefined): boolean {
-  const tasks = plan?.tasks ?? [];
-  if (!Array.isArray(tasks) || tasks.length === 0) {
-    return false;
-  }
-  const done = tasks.filter((task) => {
-    const status = normalizeTaskStatus((task as { status?: unknown }).status);
-    return status === "done" || status === "skipped";
-  }).length;
-  return done < tasks.length;
+function unsafeHostCast<T>(value: unknown): T {
+  return value as T;
 }
 
 type SessionRunBucket = {
@@ -429,26 +174,6 @@ type SessionRunHost = Parameters<typeof resetToolStreamInternal>[0] & {
   compactionStatus: CompactionStatus | null;
   compactionClearTimer: number | null;
 };
-
-const SUBAGENT_RECENT_WINDOW_MS = 5 * 60_000;
-
-function hasRecentSubagentActivity(result: SessionsListResult | null | undefined): boolean {
-  const sessions = result?.sessions ?? [];
-  if (!Array.isArray(sessions) || sessions.length === 0) {
-    return false;
-  }
-  let maxUpdatedAt = 0;
-  for (const row of sessions) {
-    const ts = typeof row.updatedAt === "number" ? row.updatedAt : 0;
-    if (ts > maxUpdatedAt) {
-      maxUpdatedAt = ts;
-    }
-  }
-  if (maxUpdatedAt <= 0) {
-    return false;
-  }
-  return Date.now() - maxUpdatedAt < SUBAGENT_RECENT_WINDOW_MS;
-}
 
 @customElement("openclaw-app")
 export class OpenClawApp extends LitElement {
@@ -799,7 +524,7 @@ export class OpenClawApp extends LitElement {
   private logsScrollFrame: number | null = null;
   basePath = "";
   private popStateHandler = () =>
-    onPopStateInternal(this as unknown as Parameters<typeof onPopStateInternal>[0]);
+    onPopStateInternal(unsafeHostCast<Parameters<typeof onPopStateInternal>[0]>(this));
   private themeMedia: MediaQueryList | null = null;
   private themeMediaHandler: ((event: MediaQueryListEvent) => void) | null = null;
   private topbarObserver: ResizeObserver | null = null;
@@ -813,15 +538,15 @@ export class OpenClawApp extends LitElement {
     super.connectedCallback();
     window.addEventListener("keydown", this.globalKeydownHandler);
     this.rebuildOrchRunIndex();
-    handleConnected(this as unknown as Parameters<typeof handleConnected>[0]);
+    handleConnected(unsafeHostCast<Parameters<typeof handleConnected>[0]>(this));
   }
 
   protected firstUpdated() {
-    handleFirstUpdated(this as unknown as Parameters<typeof handleFirstUpdated>[0]);
+    handleFirstUpdated(unsafeHostCast<Parameters<typeof handleFirstUpdated>[0]>(this));
   }
 
   disconnectedCallback() {
-    handleDisconnected(this as unknown as Parameters<typeof handleDisconnected>[0]);
+    handleDisconnected(unsafeHostCast<Parameters<typeof handleDisconnected>[0]>(this));
     window.removeEventListener("keydown", this.globalKeydownHandler);
     this.stopSparkStatusPolling();
     this.stopSubagentMonitorPolling();
@@ -829,7 +554,7 @@ export class OpenClawApp extends LitElement {
   }
 
   protected updated(changed: Map<PropertyKey, unknown>) {
-    handleUpdated(this as unknown as Parameters<typeof handleUpdated>[0], changed);
+    handleUpdated(unsafeHostCast<Parameters<typeof handleUpdated>[0]>(this), changed);
     if (changed.has("connected")) {
       if (this.connected) {
         this.sparkStatusConsecutivePollFailures = 0;
@@ -932,19 +657,19 @@ export class OpenClawApp extends LitElement {
   }
 
   connect() {
-    connectGatewayInternal(this as unknown as Parameters<typeof connectGatewayInternal>[0]);
+    connectGatewayInternal(unsafeHostCast<Parameters<typeof connectGatewayInternal>[0]>(this));
   }
 
   handleChatScroll(event: Event) {
     handleChatScrollInternal(
-      this as unknown as Parameters<typeof handleChatScrollInternal>[0],
+      unsafeHostCast<Parameters<typeof handleChatScrollInternal>[0]>(this),
       event,
     );
   }
 
   handleLogsScroll(event: Event) {
     handleLogsScrollInternal(
-      this as unknown as Parameters<typeof handleLogsScrollInternal>[0],
+      unsafeHostCast<Parameters<typeof handleLogsScrollInternal>[0]>(this),
       event,
     );
   }
@@ -959,13 +684,13 @@ export class OpenClawApp extends LitElement {
   }
 
   resetChatScroll() {
-    resetChatScrollInternal(this as unknown as Parameters<typeof resetChatScrollInternal>[0]);
+    resetChatScrollInternal(unsafeHostCast<Parameters<typeof resetChatScrollInternal>[0]>(this));
   }
 
   scrollToBottom(opts?: { smooth?: boolean }) {
-    resetChatScrollInternal(this as unknown as Parameters<typeof resetChatScrollInternal>[0]);
+    resetChatScrollInternal(unsafeHostCast<Parameters<typeof resetChatScrollInternal>[0]>(this));
     scheduleChatScrollInternal(
-      this as unknown as Parameters<typeof scheduleChatScrollInternal>[0],
+      unsafeHostCast<Parameters<typeof scheduleChatScrollInternal>[0]>(this),
       true,
       Boolean(opts?.smooth),
     );
@@ -976,23 +701,23 @@ export class OpenClawApp extends LitElement {
   }
 
   applySettings(next: UiSettings) {
-    applySettingsInternal(this as unknown as Parameters<typeof applySettingsInternal>[0], next);
+    applySettingsInternal(unsafeHostCast<Parameters<typeof applySettingsInternal>[0]>(this), next);
   }
 
   setTab(next: Tab) {
-    setTabInternal(this as unknown as Parameters<typeof setTabInternal>[0], next);
+    setTabInternal(unsafeHostCast<Parameters<typeof setTabInternal>[0]>(this), next);
   }
 
   setTheme(next: ThemeMode, context?: Parameters<typeof setThemeInternal>[2]) {
-    setThemeInternal(this as unknown as Parameters<typeof setThemeInternal>[0], next, context);
+    setThemeInternal(unsafeHostCast<Parameters<typeof setThemeInternal>[0]>(this), next, context);
   }
 
   async loadOverview() {
-    await loadOverviewInternal(this as unknown as Parameters<typeof loadOverviewInternal>[0]);
+    await loadOverviewInternal(unsafeHostCast<Parameters<typeof loadOverviewInternal>[0]>(this));
   }
 
   async loadCron() {
-    await loadCronInternal(this as unknown as Parameters<typeof loadCronInternal>[0]);
+    await loadCronInternal(unsafeHostCast<Parameters<typeof loadCronInternal>[0]>(this));
   }
 
   async openCommandPalette() {
@@ -1016,7 +741,7 @@ export class OpenClawApp extends LitElement {
 
   getCommandPaletteActions(): CommandPaletteAction[] {
     const actions = filterCommandPaletteActions(
-      buildCommandPaletteActions(this as unknown as AppViewState),
+      buildCommandPaletteActions(unsafeHostCast<AppViewState>(this)),
       this.commandPaletteQuery,
     );
     const maxIndex = Math.max(0, actions.length - 1);
@@ -1938,7 +1663,7 @@ export class OpenClawApp extends LitElement {
       lastActiveSessionKey: key,
     });
     syncUrlWithSessionKeyInternal(
-      this as unknown as Parameters<typeof syncUrlWithSessionKeyInternal>[0],
+      unsafeHostCast<Parameters<typeof syncUrlWithSessionKeyInternal>[0]>(this),
       key,
       true,
     );
@@ -2450,12 +2175,14 @@ export class OpenClawApp extends LitElement {
   }
 
   async handleAbortChat() {
-    await handleAbortChatInternal(this as unknown as Parameters<typeof handleAbortChatInternal>[0]);
+    await handleAbortChatInternal(
+      unsafeHostCast<Parameters<typeof handleAbortChatInternal>[0]>(this),
+    );
   }
 
   removeQueuedMessage(id: string) {
     removeQueuedMessageInternal(
-      this as unknown as Parameters<typeof removeQueuedMessageInternal>[0],
+      unsafeHostCast<Parameters<typeof removeQueuedMessageInternal>[0]>(this),
       id,
     );
   }
@@ -2465,7 +2192,7 @@ export class OpenClawApp extends LitElement {
     opts?: Parameters<typeof handleSendChatInternal>[2],
   ) {
     await handleSendChatInternal(
-      this as unknown as Parameters<typeof handleSendChatInternal>[0],
+      unsafeHostCast<Parameters<typeof handleSendChatInternal>[0]>(this),
       messageOverride,
       opts,
     );
@@ -2645,7 +2372,7 @@ export class OpenClawApp extends LitElement {
       return;
     }
     this.pendingGatewayUrl = null;
-    applySettingsInternal(this as unknown as Parameters<typeof applySettingsInternal>[0], {
+    applySettingsInternal(unsafeHostCast<Parameters<typeof applySettingsInternal>[0]>(this), {
       ...this.settings,
       gatewayUrl: nextGatewayUrl,
     });
@@ -3692,6 +3419,6 @@ export class OpenClawApp extends LitElement {
   }
 
   render() {
-    return renderApp(this as unknown as AppViewState);
+    return renderApp(unsafeHostCast<AppViewState>(this));
   }
 }
