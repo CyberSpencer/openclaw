@@ -29,7 +29,6 @@ import { authorizeGatewayConnect, isLocalDirectRequest } from "../../auth.js";
 import { buildDeviceAuthPayload } from "../../device-auth.js";
 import { isLoopbackAddress, isTrustedProxyAddress, resolveGatewayClientIp } from "../../net.js";
 import { resolveNodeCommandAllowlist } from "../../node-command-policy.js";
-import { checkBrowserOrigin } from "../../origin-check.js";
 import { GATEWAY_CLIENT_IDS } from "../../protocol/client-info.js";
 import {
   type ConnectParams,
@@ -38,7 +37,6 @@ import {
   errorShape,
   formatValidationErrors,
   PROTOCOL_VERSION,
-  validateConnectParams,
   validateRequestFrame,
 } from "../../protocol/index.js";
 import { MAX_BUFFERED_BYTES, MAX_PAYLOAD_BYTES, TICK_INTERVAL_MS } from "../../server-constants.js";
@@ -53,6 +51,13 @@ import {
   incrementPresenceVersion,
   refreshGatewayHealthSnapshot,
 } from "../health-state.js";
+import {
+  extractFrameMeta,
+  validateBrowserOrigin,
+  validateConnectHandshakeFrame,
+  validateProtocolCompatibility,
+  validateRoleAndScopes,
+} from "./handshake-phase1.js";
 
 type SubsystemLogger = ReturnType<typeof createSubsystemLogger>;
 
@@ -238,43 +243,19 @@ export function attachGatewayWsMessageHandler(params: {
     const text = rawDataToString(data);
     try {
       const parsed = JSON.parse(text);
-      const frameType =
-        parsed && typeof parsed === "object" && "type" in parsed
-          ? typeof (parsed as { type?: unknown }).type === "string"
-            ? String((parsed as { type?: unknown }).type)
-            : undefined
-          : undefined;
-      const frameMethod =
-        parsed && typeof parsed === "object" && "method" in parsed
-          ? typeof (parsed as { method?: unknown }).method === "string"
-            ? String((parsed as { method?: unknown }).method)
-            : undefined
-          : undefined;
-      const frameId =
-        parsed && typeof parsed === "object" && "id" in parsed
-          ? typeof (parsed as { id?: unknown }).id === "string"
-            ? String((parsed as { id?: unknown }).id)
-            : undefined
-          : undefined;
+      const frameMeta = extractFrameMeta(parsed);
+      const frameType = frameMeta.type;
+      const frameMethod = frameMeta.method;
+      const frameId = frameMeta.id;
       if (frameType || frameMethod || frameId) {
-        setLastFrameMeta({ type: frameType, method: frameMethod, id: frameId });
+        setLastFrameMeta(frameMeta);
       }
 
       const client = getClient();
       if (!client) {
-        // Handshake must be a normal request:
-        // { type:"req", method:"connect", params: ConnectParams }.
-        const isRequestFrame = validateRequestFrame(parsed);
-        if (
-          !isRequestFrame ||
-          parsed.method !== "connect" ||
-          !validateConnectParams(parsed.params)
-        ) {
-          const handshakeError = isRequestFrame
-            ? parsed.method === "connect"
-              ? `invalid connect params: ${formatValidationErrors(validateConnectParams.errors)}`
-              : "invalid handshake: first request must be connect"
-            : "invalid request frame";
+        const connectValidation = validateConnectHandshakeFrame(parsed);
+        if (!connectValidation.ok) {
+          const handshakeError = connectValidation.errorMessage;
           setHandshakeState("failed");
           setCloseCause("invalid-handshake", {
             frameType,
@@ -282,11 +263,10 @@ export function attachGatewayWsMessageHandler(params: {
             frameId,
             handshakeError,
           });
-          if (isRequestFrame) {
-            const req = parsed;
+          if (connectValidation.isRequestFrame && connectValidation.requestId) {
             send({
               type: "res",
-              id: req.id,
+              id: connectValidation.requestId,
               ok: false,
               error: errorShape(ErrorCodes.INVALID_REQUEST, handshakeError),
             });
@@ -296,7 +276,7 @@ export function attachGatewayWsMessageHandler(params: {
             );
           }
           const closeReason = truncateCloseReason(handshakeError || "invalid handshake");
-          if (isRequestFrame) {
+          if (connectValidation.isRequestFrame) {
             queueMicrotask(() => close(1008, closeReason));
           } else {
             close(1008, closeReason);
@@ -304,21 +284,20 @@ export function attachGatewayWsMessageHandler(params: {
           return;
         }
 
-        const frame = parsed;
-        const connectParams = frame.params as ConnectParams;
+        const frame = connectValidation.frame;
+        const connectParams = connectValidation.connectParams;
         const clientLabel = connectParams.client.displayName ?? connectParams.client.id;
 
-        // protocol negotiation
-        const { minProtocol, maxProtocol } = connectParams;
-        if (maxProtocol < PROTOCOL_VERSION || minProtocol > PROTOCOL_VERSION) {
+        const protocolValidation = validateProtocolCompatibility(connectParams, PROTOCOL_VERSION);
+        if (!protocolValidation.ok) {
           setHandshakeState("failed");
           logWsControl.warn(
             `protocol mismatch conn=${connId} remote=${remoteAddr ?? "?"} client=${clientLabel} ${connectParams.client.mode} v${connectParams.client.version}`,
           );
           setCloseCause("protocol-mismatch", {
-            minProtocol,
-            maxProtocol,
-            expectedProtocol: PROTOCOL_VERSION,
+            minProtocol: protocolValidation.minProtocol,
+            maxProtocol: protocolValidation.maxProtocol,
+            expectedProtocol: protocolValidation.expectedProtocol,
             client: connectParams.client.id,
             clientDisplayName: connectParams.client.displayName,
             mode: connectParams.client.mode,
@@ -328,20 +307,20 @@ export function attachGatewayWsMessageHandler(params: {
             type: "res",
             id: frame.id,
             ok: false,
-            error: errorShape(ErrorCodes.INVALID_REQUEST, "protocol mismatch", {
-              details: { expectedProtocol: PROTOCOL_VERSION },
+            error: errorShape(ErrorCodes.INVALID_REQUEST, protocolValidation.errorMessage, {
+              details: { expectedProtocol: protocolValidation.expectedProtocol },
             }),
           });
-          close(1002, "protocol mismatch");
+          close(1002, protocolValidation.errorMessage);
           return;
         }
 
-        const roleRaw = connectParams.role ?? "operator";
-        const role = roleRaw === "operator" || roleRaw === "node" ? roleRaw : null;
-        if (!role) {
+        const requestedScopes = Array.isArray(connectParams.scopes) ? connectParams.scopes : [];
+        const roleValidation = validateRoleAndScopes(connectParams);
+        if (!roleValidation.ok) {
           setHandshakeState("failed");
           setCloseCause("invalid-role", {
-            role: roleRaw,
+            role: roleValidation.roleRaw,
             client: connectParams.client.id,
             clientDisplayName: connectParams.client.displayName,
             mode: connectParams.client.mode,
@@ -351,51 +330,45 @@ export function attachGatewayWsMessageHandler(params: {
             type: "res",
             id: frame.id,
             ok: false,
-            error: errorShape(ErrorCodes.INVALID_REQUEST, "invalid role"),
+            error: errorShape(ErrorCodes.INVALID_REQUEST, roleValidation.errorMessage),
           });
-          close(1008, "invalid role");
+          close(1008, roleValidation.errorMessage);
           return;
         }
-        const requestedScopes = Array.isArray(connectParams.scopes) ? connectParams.scopes : [];
-        const scopes =
-          requestedScopes.length > 0
-            ? requestedScopes
-            : role === "operator"
-              ? ["operator.admin"]
-              : [];
-        connectParams.role = role;
-        connectParams.scopes = scopes;
+        connectParams.role = roleValidation.role;
+        connectParams.scopes = roleValidation.scopes;
+        const role = roleValidation.role;
+        const scopes = roleValidation.scopes;
 
         const isControlUi = connectParams.client.id === GATEWAY_CLIENT_IDS.CONTROL_UI;
         const isWebchat = isWebchatConnect(connectParams);
-        if (isControlUi || isWebchat) {
-          const originCheck = checkBrowserOrigin({
-            requestHost,
-            origin: requestOrigin,
-            allowedOrigins: configSnapshot.gateway?.controlUi?.allowedOrigins,
+        const originValidation = validateBrowserOrigin({
+          requestHost,
+          requestOrigin,
+          allowedOrigins: configSnapshot.gateway?.controlUi?.allowedOrigins,
+          isControlUi,
+          isWebchat,
+        });
+        if (!originValidation.ok) {
+          const errorMessage = originValidation.errorMessage;
+          setHandshakeState("failed");
+          setCloseCause("origin-mismatch", {
+            origin: requestOrigin ?? "n/a",
+            host: requestHost ?? "n/a",
+            reason: originValidation.reason,
+            client: connectParams.client.id,
+            clientDisplayName: connectParams.client.displayName,
+            mode: connectParams.client.mode,
+            version: connectParams.client.version,
           });
-          if (!originCheck.ok) {
-            const errorMessage =
-              "origin not allowed (open the Control UI from the gateway host or allow it in gateway.controlUi.allowedOrigins)";
-            setHandshakeState("failed");
-            setCloseCause("origin-mismatch", {
-              origin: requestOrigin ?? "n/a",
-              host: requestHost ?? "n/a",
-              reason: originCheck.reason,
-              client: connectParams.client.id,
-              clientDisplayName: connectParams.client.displayName,
-              mode: connectParams.client.mode,
-              version: connectParams.client.version,
-            });
-            send({
-              type: "res",
-              id: frame.id,
-              ok: false,
-              error: errorShape(ErrorCodes.INVALID_REQUEST, errorMessage),
-            });
-            close(1008, truncateCloseReason(errorMessage));
-            return;
-          }
+          send({
+            type: "res",
+            id: frame.id,
+            ok: false,
+            error: errorShape(ErrorCodes.INVALID_REQUEST, errorMessage),
+          });
+          close(1008, truncateCloseReason(errorMessage));
+          return;
         }
 
         const deviceRaw = connectParams.device;

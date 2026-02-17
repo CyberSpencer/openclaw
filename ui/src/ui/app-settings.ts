@@ -1,25 +1,24 @@
-import type { OpenClawApp } from "./app.ts";
-import type { AgentsListResult } from "./types.ts";
-import { refreshChat } from "./app-chat.ts";
+import { refreshChat, type ChatHost } from "./app-chat.ts";
 import {
   startDebugPolling,
   startLogsPolling,
   stopDebugPolling,
   stopLogsPolling,
+  type PollingHost,
 } from "./app-polling.ts";
-import { scheduleChatScroll, scheduleLogsScroll } from "./app-scroll.ts";
-import { loadAgents } from "./controllers/agents.ts";
-import { loadChannels } from "./controllers/channels.ts";
-import { loadConfig, loadConfigSchema } from "./controllers/config.ts";
-import { loadCronJobs, loadCronStatus } from "./controllers/cron.ts";
-import { loadDebug } from "./controllers/debug.ts";
-import { loadDevices } from "./controllers/devices.ts";
-import { loadExecApprovals } from "./controllers/exec-approvals.ts";
-import { loadLogs } from "./controllers/logs.ts";
-import { loadNodes } from "./controllers/nodes.ts";
-import { loadPresence } from "./controllers/presence.ts";
-import { loadSessions } from "./controllers/sessions.ts";
-import { loadSkills } from "./controllers/skills.ts";
+import { scheduleChatScroll, scheduleLogsScroll, type ScrollHost } from "./app-scroll.ts";
+import { loadAgents, type AgentsState } from "./controllers/agents.ts";
+import { loadChannels, type ChannelsState } from "./controllers/channels.ts";
+import { loadConfig, loadConfigSchema, type ConfigState } from "./controllers/config.ts";
+import { loadCronJobs, loadCronStatus, type CronState } from "./controllers/cron.ts";
+import { loadDebug, type DebugState } from "./controllers/debug.ts";
+import { loadDevices, type DevicesState } from "./controllers/devices.ts";
+import { loadExecApprovals, type ExecApprovalsState } from "./controllers/exec-approvals.ts";
+import { loadLogs, type LogsState } from "./controllers/logs.ts";
+import { loadNodes, type NodesState } from "./controllers/nodes.ts";
+import { loadPresence, type PresenceState } from "./controllers/presence.ts";
+import { loadSessions, type SessionsState } from "./controllers/sessions.ts";
+import { loadSkills, type SkillsState } from "./controllers/skills.ts";
 import {
   inferBasePathFromPathname,
   normalizeBasePath,
@@ -32,28 +31,36 @@ import { saveSettings, type UiSettings } from "./storage.ts";
 import { startThemeTransition, type ThemeTransitionContext } from "./theme-transition.ts";
 import { resolveTheme, type ResolvedTheme, type ThemeMode } from "./theme.ts";
 
-type SettingsHost = {
-  settings: UiSettings;
-  password?: string;
-  theme: ThemeMode;
-  themeResolved: ResolvedTheme;
-  applySessionKey: string;
-  sessionKey: string;
-  tab: Tab;
-  connected: boolean;
-  chatHasAutoScrolled: boolean;
-  logsAtBottom: boolean;
-  eventLog: unknown[];
-  eventLogBuffer: unknown[];
-  basePath: string;
-  agentsList?: AgentsListResult | null;
-  agentsSelectedId?: string | null;
-  agentsPanel?: "overview" | "files" | "tools" | "skills" | "channels" | "cron";
-  themeMedia: MediaQueryList | null;
-  themeMediaHandler: ((event: MediaQueryListEvent) => void) | null;
-  pendingGatewayUrl?: string | null;
-  refreshTopbarControls?: () => Promise<void> | void;
-};
+export type SettingsHost = PollingHost &
+  ScrollHost &
+  ChatHost &
+  AgentsState &
+  ChannelsState &
+  ConfigState &
+  CronState &
+  DebugState &
+  DevicesState &
+  ExecApprovalsState &
+  LogsState &
+  NodesState &
+  PresenceState &
+  SessionsState &
+  SkillsState & {
+    settings: UiSettings;
+    password?: string;
+    theme: ThemeMode;
+    themeResolved: ResolvedTheme;
+    applySessionKey: string;
+    tab: Tab;
+    eventLog: unknown[];
+    eventLogBuffer: unknown[];
+    basePath: string;
+    agentsPanel?: "overview" | "files" | "tools" | "skills" | "channels" | "cron";
+    themeMedia: MediaQueryList | null;
+    themeMediaHandler: ((event: MediaQueryListEvent) => void) | null;
+    pendingGatewayUrl?: string | null;
+    refreshTopbarControls?: () => Promise<void> | void;
+  };
 
 export function applySettings(host: SettingsHost, next: UiSettings) {
   const normalized = {
@@ -156,14 +163,14 @@ export function setTab(host: SettingsHost, next: Tab) {
     host.chatHasAutoScrolled = false;
   }
   if (next === "logs") {
-    startLogsPolling(host as unknown as Parameters<typeof startLogsPolling>[0]);
+    startLogsPolling(host);
   } else {
-    stopLogsPolling(host as unknown as Parameters<typeof stopLogsPolling>[0]);
+    stopLogsPolling(host);
   }
   if (next === "debug") {
-    startDebugPolling(host as unknown as Parameters<typeof startDebugPolling>[0]);
+    startDebugPolling(host);
   } else {
-    stopDebugPolling(host as unknown as Parameters<typeof stopDebugPolling>[0]);
+    stopDebugPolling(host);
   }
   void refreshActiveTab(host);
   syncUrlWithTab(host, next, false);
@@ -188,7 +195,7 @@ export async function refreshActiveTab(host: SettingsHost) {
     await loadOverview(host);
   }
   if (host.tab === "orchestrator") {
-    await loadAgents(host as unknown as OpenClawApp);
+    await loadAgents(host);
   }
   if (host.tab === "settings") {
     await host.refreshTopbarControls?.();
@@ -197,42 +204,39 @@ export async function refreshActiveTab(host: SettingsHost) {
     await loadChannelsTab(host);
   }
   if (host.tab === "instances") {
-    await loadPresence(host as unknown as OpenClawApp);
+    await loadPresence(host);
   }
   if (host.tab === "sessions") {
-    await loadSessions(host as unknown as OpenClawApp);
+    await loadSessions(host);
   }
   if (host.tab === "cron") {
     await loadCron(host);
   }
   if (host.tab === "skills") {
-    await loadSkills(host as unknown as OpenClawApp);
+    await loadSkills(host);
   }
   if (host.tab === "nodes") {
-    await loadNodes(host as unknown as OpenClawApp);
-    await loadDevices(host as unknown as OpenClawApp);
-    await loadConfig(host as unknown as OpenClawApp);
-    await loadExecApprovals(host as unknown as OpenClawApp);
+    await loadNodes(host);
+    await loadDevices(host);
+    await loadConfig(host);
+    await loadExecApprovals(host);
   }
   if (host.tab === "chat") {
-    await refreshChat(host as unknown as Parameters<typeof refreshChat>[0]);
-    scheduleChatScroll(
-      host as unknown as Parameters<typeof scheduleChatScroll>[0],
-      !host.chatHasAutoScrolled,
-    );
+    await refreshChat(host);
+    scheduleChatScroll(host, !host.chatHasAutoScrolled);
   }
   if (host.tab === "config") {
-    await loadConfigSchema(host as unknown as OpenClawApp);
-    await loadConfig(host as unknown as OpenClawApp);
+    await loadConfigSchema(host);
+    await loadConfig(host);
   }
   if (host.tab === "debug") {
-    await loadDebug(host as unknown as OpenClawApp);
+    await loadDebug(host);
     host.eventLog = host.eventLogBuffer;
   }
   if (host.tab === "logs") {
     host.logsAtBottom = true;
-    await loadLogs(host as unknown as OpenClawApp, { reset: true });
-    scheduleLogsScroll(host as unknown as Parameters<typeof scheduleLogsScroll>[0], true);
+    await loadLogs(host, { reset: true });
+    scheduleLogsScroll(host, true);
   }
 }
 
@@ -342,14 +346,14 @@ export function setTabFromRoute(host: SettingsHost, next: Tab) {
     host.chatHasAutoScrolled = false;
   }
   if (next === "logs") {
-    startLogsPolling(host as unknown as Parameters<typeof startLogsPolling>[0]);
+    startLogsPolling(host);
   } else {
-    stopLogsPolling(host as unknown as Parameters<typeof stopLogsPolling>[0]);
+    stopLogsPolling(host);
   }
   if (next === "debug") {
-    startDebugPolling(host as unknown as Parameters<typeof startDebugPolling>[0]);
+    startDebugPolling(host);
   } else {
-    stopDebugPolling(host as unknown as Parameters<typeof stopDebugPolling>[0]);
+    stopDebugPolling(host);
   }
   if (host.connected) {
     void refreshActiveTab(host);
@@ -396,26 +400,18 @@ export function syncUrlWithSessionKey(host: SettingsHost, sessionKey: string, re
 
 export async function loadOverview(host: SettingsHost) {
   await Promise.all([
-    loadChannels(host as unknown as OpenClawApp, false),
-    loadPresence(host as unknown as OpenClawApp),
-    loadSessions(host as unknown as OpenClawApp),
-    loadCronStatus(host as unknown as OpenClawApp),
-    loadDebug(host as unknown as OpenClawApp),
+    loadChannels(host, false),
+    loadPresence(host),
+    loadSessions(host),
+    loadCronStatus(host),
+    loadDebug(host),
   ]);
 }
 
 export async function loadChannelsTab(host: SettingsHost) {
-  await Promise.all([
-    loadChannels(host as unknown as OpenClawApp, true),
-    loadConfigSchema(host as unknown as OpenClawApp),
-    loadConfig(host as unknown as OpenClawApp),
-  ]);
+  await Promise.all([loadChannels(host, true), loadConfigSchema(host), loadConfig(host)]);
 }
 
 export async function loadCron(host: SettingsHost) {
-  await Promise.all([
-    loadChannels(host as unknown as OpenClawApp, false),
-    loadCronStatus(host as unknown as OpenClawApp),
-    loadCronJobs(host as unknown as OpenClawApp),
-  ]);
+  await Promise.all([loadChannels(host, false), loadCronStatus(host), loadCronJobs(host)]);
 }

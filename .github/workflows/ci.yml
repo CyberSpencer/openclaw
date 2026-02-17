@@ -327,6 +327,8 @@ jobs:
             command: pnpm lint
           - task: format
             command: pnpm format
+          - task: loc-budget-warn
+            command: pnpm check:loc:warn
     steps:
       - name: Checkout
         uses: actions/checkout@v4

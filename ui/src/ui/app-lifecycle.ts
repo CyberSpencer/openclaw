@@ -1,5 +1,4 @@
-import type { Tab } from "./navigation.ts";
-import { connectGateway } from "./app-gateway.ts";
+import { connectGateway, type GatewayHost } from "./app-gateway.ts";
 import {
   startLogsPolling,
   startNodesPolling,
@@ -18,49 +17,39 @@ import {
   syncThemeWithSettings,
 } from "./app-settings.ts";
 
-type LifecycleHost = {
-  basePath: string;
-  tab: Tab;
-  chatHasAutoScrolled: boolean;
+type LifecycleHost = GatewayHost & {
   chatManualRefreshInFlight: boolean;
-  chatLoading: boolean;
-  chatMessages: unknown[];
-  chatToolMessages: unknown[];
-  chatStream: string;
   logsAutoFollow: boolean;
-  logsAtBottom: boolean;
-  logsEntries: unknown[];
   popStateHandler: () => void;
-  topbarObserver: ResizeObserver | null;
 };
 
 export function handleConnected(host: LifecycleHost) {
   host.basePath = inferBasePath();
-  applySettingsFromUrl(host as unknown as Parameters<typeof applySettingsFromUrl>[0]);
-  syncTabWithLocation(host as unknown as Parameters<typeof syncTabWithLocation>[0], true);
-  syncThemeWithSettings(host as unknown as Parameters<typeof syncThemeWithSettings>[0]);
-  attachThemeListener(host as unknown as Parameters<typeof attachThemeListener>[0]);
+  applySettingsFromUrl(host);
+  syncTabWithLocation(host, true);
+  syncThemeWithSettings(host);
+  attachThemeListener(host);
   window.addEventListener("popstate", host.popStateHandler);
-  connectGateway(host as unknown as Parameters<typeof connectGateway>[0]);
-  startNodesPolling(host as unknown as Parameters<typeof startNodesPolling>[0]);
+  connectGateway(host);
+  startNodesPolling(host);
   if (host.tab === "logs") {
-    startLogsPolling(host as unknown as Parameters<typeof startLogsPolling>[0]);
+    startLogsPolling(host);
   }
   if (host.tab === "debug") {
-    startDebugPolling(host as unknown as Parameters<typeof startDebugPolling>[0]);
+    startDebugPolling(host);
   }
 }
 
 export function handleFirstUpdated(host: LifecycleHost) {
-  observeTopbar(host as unknown as Parameters<typeof observeTopbar>[0]);
+  observeTopbar(host);
 }
 
 export function handleDisconnected(host: LifecycleHost) {
   window.removeEventListener("popstate", host.popStateHandler);
-  stopNodesPolling(host as unknown as Parameters<typeof stopNodesPolling>[0]);
-  stopLogsPolling(host as unknown as Parameters<typeof stopLogsPolling>[0]);
-  stopDebugPolling(host as unknown as Parameters<typeof stopDebugPolling>[0]);
-  detachThemeListener(host as unknown as Parameters<typeof detachThemeListener>[0]);
+  stopNodesPolling(host);
+  stopLogsPolling(host);
+  stopDebugPolling(host);
+  detachThemeListener(host);
   host.topbarObserver?.disconnect();
   host.topbarObserver = null;
 }
@@ -80,20 +69,14 @@ export function handleUpdated(host: LifecycleHost, changed: Map<PropertyKey, unk
     const forcedByTab = changed.has("tab");
     const forcedByLoad =
       changed.has("chatLoading") && changed.get("chatLoading") === true && !host.chatLoading;
-    scheduleChatScroll(
-      host as unknown as Parameters<typeof scheduleChatScroll>[0],
-      forcedByTab || forcedByLoad || !host.chatHasAutoScrolled,
-    );
+    scheduleChatScroll(host, forcedByTab || forcedByLoad || !host.chatHasAutoScrolled);
   }
   if (
     host.tab === "logs" &&
     (changed.has("logsEntries") || changed.has("logsAutoFollow") || changed.has("tab"))
   ) {
     if (host.logsAutoFollow && host.logsAtBottom) {
-      scheduleLogsScroll(
-        host as unknown as Parameters<typeof scheduleLogsScroll>[0],
-        changed.has("tab") || changed.has("logsAutoFollow"),
-      );
+      scheduleLogsScroll(host, changed.has("tab") || changed.has("logsAutoFollow"));
     }
   }
 }

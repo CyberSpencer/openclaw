@@ -2,43 +2,42 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { Tab } from "./navigation.ts";
 import { setTabFromRoute } from "./app-settings.ts";
 
-type SettingsHost = Parameters<typeof setTabFromRoute>[0] & {
-  logsPollInterval: number | null;
-  debugPollInterval: number | null;
-};
+type SettingsHost = Parameters<typeof setTabFromRoute>[0];
 
-const createHost = (tab: Tab): SettingsHost => ({
-  settings: {
-    gatewayUrl: "",
-    token: "",
-    sessionKey: "main",
-    lastActiveSessionKey: "main",
+const createHost = (tab: Tab): SettingsHost =>
+  ({
+    settings: {
+      gatewayUrl: "",
+      token: "",
+      sessionKey: "main",
+      lastActiveSessionKey: "main",
+      theme: "system",
+      chatFocusMode: false,
+      chatShowThinking: true,
+      splitRatio: 0.6,
+      navCollapsed: false,
+      navGroupsCollapsed: {},
+      ttsVoice: "",
+      ttsInstruct: "",
+      ttsLanguage: "",
+    },
     theme: "system",
-    chatFocusMode: false,
-    chatShowThinking: true,
-    splitRatio: 0.6,
-    navCollapsed: false,
-    navGroupsCollapsed: {},
-    ttsVoice: "",
-    ttsInstruct: "",
-    ttsLanguage: "",
-  },
-  theme: "system",
-  themeResolved: "dark",
-  applySessionKey: "main",
-  sessionKey: "main",
-  tab,
-  connected: false,
-  chatHasAutoScrolled: false,
-  logsAtBottom: false,
-  eventLog: [],
-  eventLogBuffer: [],
-  basePath: "",
-  themeMedia: null,
-  themeMediaHandler: null,
-  logsPollInterval: null,
-  debugPollInterval: null,
-});
+    themeResolved: "dark",
+    applySessionKey: "main",
+    sessionKey: "main",
+    tab,
+    connected: false,
+    chatHasAutoScrolled: false,
+    logsAtBottom: false,
+    eventLog: [],
+    eventLogBuffer: [],
+    basePath: "",
+    themeMedia: null,
+    themeMediaHandler: null,
+    nodesPollInterval: null,
+    logsPollInterval: null,
+    debugPollInterval: null,
+  }) as unknown as SettingsHost;
 
 describe("setTabFromRoute", () => {
   beforeEach(() => {

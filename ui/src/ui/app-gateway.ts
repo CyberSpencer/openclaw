@@ -1,81 +1,58 @@
 import type { EventLogEntry } from "./app-events.ts";
-import type { OpenClawApp } from "./app.ts";
 import type { ExecApprovalRequest } from "./controllers/exec-approval.ts";
 import type { GatewayEventFrame, GatewayHelloOk } from "./gateway.ts";
-import type { Tab } from "./navigation.ts";
-import type { UiSettings } from "./storage.ts";
-import type {
-  AgentsListResult,
-  PresenceEntry,
-  HealthSnapshot,
-  SessionsListResult,
-  StatusSummary,
-} from "./types.ts";
-import { flushChatQueueForEvent } from "./app-chat.ts";
+import type { HealthSnapshot, PresenceEntry } from "./types.ts";
+import { flushChatQueueForEvent, type ChatHost } from "./app-chat.ts";
 import {
   applySettings,
   loadCron,
   refreshActiveTab,
   setLastActiveSessionKey,
+  type SettingsHost,
 } from "./app-settings.ts";
 import { handleAgentEvent, type AgentEventPayload } from "./app-tool-stream.ts";
-import { loadAgents } from "./controllers/agents.ts";
-import { loadAssistantIdentity } from "./controllers/assistant-identity.ts";
-import { loadChatThreads } from "./controllers/chat-threads.ts";
-import { loadChatHistory } from "./controllers/chat.ts";
-import { handleChatEvent, type ChatState } from "./controllers/chat.ts";
-import { loadDevices } from "./controllers/devices.ts";
+import { loadAgents, type AgentsState } from "./controllers/agents.ts";
+import {
+  loadAssistantIdentity,
+  type AssistantIdentityState,
+} from "./controllers/assistant-identity.ts";
+import { loadChatThreads, type ChatThreadsState } from "./controllers/chat-threads.ts";
+import { handleChatEvent, loadChatHistory, type ChatState } from "./controllers/chat.ts";
+import { loadDevices, type DevicesState } from "./controllers/devices.ts";
 import {
   addExecApproval,
   parseExecApprovalRequested,
   parseExecApprovalResolved,
   removeExecApproval,
 } from "./controllers/exec-approval.ts";
-import { loadNodes } from "./controllers/nodes.ts";
-import { loadSubagentMonitor } from "./controllers/subagent-monitor.ts";
+import { loadNodes, type NodesState } from "./controllers/nodes.ts";
+import { loadSubagentMonitor, type SubagentMonitorState } from "./controllers/subagent-monitor.ts";
 import { GatewayBrowserClient } from "./gateway.ts";
 
-type GatewayHost = {
-  settings: UiSettings;
-  password: string;
-  client: GatewayBrowserClient | null;
-  connected: boolean;
-  hello: GatewayHelloOk | null;
-  lastError: string | null;
-  onboarding?: boolean;
-  eventLogBuffer: EventLogEntry[];
-  eventLog: EventLogEntry[];
-  tab: Tab;
-  presenceEntries: PresenceEntry[];
-  presenceError: string | null;
-  presenceStatus: StatusSummary | null;
-  agentsLoading: boolean;
-  agentsList: AgentsListResult | null;
-  agentsError: string | null;
-  debugHealth: HealthSnapshot | null;
-  assistantName: string;
-  assistantAvatar: string | null;
-  assistantAgentId: string | null;
-  sessionKey: string;
-  getSessionRunHost: (sessionKey: string) => unknown;
-  resetAllSessionRunState: () => void;
-  chatRunId: string | null;
-  chatThreadsQuery: string;
-  chatThreadsLoading: boolean;
-  chatThreadsResult: SessionsListResult | null;
-  chatThreadsError: string | null;
-  subagentMonitorLoading?: boolean;
-  subagentMonitorResult?: SessionsListResult | null;
-  subagentMonitorError?: string | null;
-  execApprovalQueue: ExecApprovalRequest[];
-  execApprovalError: string | null;
-  refreshTopbarControls?: () => Promise<void> | void;
-  handleOrchestratorAgentEvent?: (payload: AgentEventPayload) => void;
-  handleOrchestratorStoreEvent?: (payload: unknown) => void;
-  handleChatThreadFinalEvent?: (sessionKey: string) => void;
-  loadOrchestratorFromGateway?: (opts?: { seedIfMissing?: boolean }) => Promise<void> | void;
-  reconcileInFlightOrchestratorRuns?: () => Promise<void> | void;
-};
+export type GatewayHost = SettingsHost &
+  AssistantIdentityState &
+  AgentsState &
+  NodesState &
+  DevicesState &
+  ChatThreadsState &
+  SubagentMonitorState &
+  ChatState &
+  ChatHost & {
+    password: string;
+    hello: GatewayHelloOk | null;
+    onboarding?: boolean;
+    eventLogBuffer: EventLogEntry[];
+    eventLog: EventLogEntry[];
+    getSessionRunHost: (sessionKey: string) => unknown;
+    resetAllSessionRunState: () => void;
+    execApprovalQueue: ExecApprovalRequest[];
+    execApprovalError: string | null;
+    handleOrchestratorAgentEvent?: (payload: AgentEventPayload) => void;
+    handleOrchestratorStoreEvent?: (payload: unknown) => void;
+    handleChatThreadFinalEvent?: (sessionKey: string) => void;
+    loadOrchestratorFromGateway?: (opts?: { seedIfMissing?: boolean }) => Promise<void> | void;
+    reconcileInFlightOrchestratorRuns?: () => Promise<void> | void;
+  };
 
 type SessionDefaultsSnapshot = {
   defaultAgentId?: string;
@@ -104,7 +81,7 @@ function asAgentEventPayload(value: unknown): AgentEventPayload | null {
   ) {
     return null;
   }
-  return obj as unknown as AgentEventPayload;
+  return obj as AgentEventPayload;
 }
 
 function asChatEventPayload(
@@ -122,7 +99,7 @@ function asChatEventPayload(
   ) {
     return null;
   }
-  return obj as unknown as import("./controllers/chat.ts").ChatEventPayload;
+  return obj as import("./controllers/chat.ts").ChatEventPayload;
 }
 
 function normalizeSessionKeyForDefaults(
@@ -173,7 +150,7 @@ function applySessionDefaults(host: GatewayHost, defaults?: SessionDefaultsSnaps
     host.sessionKey = nextSessionKey;
   }
   if (shouldUpdateSettings) {
-    applySettings(host as unknown as Parameters<typeof applySettings>[0], nextSettings);
+    applySettings(host, nextSettings);
   }
 }
 
@@ -199,13 +176,13 @@ export function connectGateway(host: GatewayHost) {
       // Reset orphaned run state from before disconnect.
       // Any in-flight run's final event may have been lost during the disconnect window.
       host.resetAllSessionRunState();
-      void loadAssistantIdentity(host as unknown as OpenClawApp);
+      void loadAssistantIdentity(host);
       void host.loadOrchestratorFromGateway?.({ seedIfMissing: true });
       void host.reconcileInFlightOrchestratorRuns?.();
-      void loadAgents(host as unknown as OpenClawApp);
-      void loadNodes(host as unknown as OpenClawApp, { quiet: true });
-      void loadDevices(host as unknown as OpenClawApp, { quiet: true });
-      void refreshActiveTab(host as unknown as Parameters<typeof refreshActiveTab>[0]);
+      void loadAgents(host);
+      void loadNodes(host, { quiet: true });
+      void loadDevices(host, { quiet: true });
+      void refreshActiveTab(host);
       void host.refreshTopbarControls?.();
     },
     onClose: ({ code, reason }) => {
@@ -263,10 +240,7 @@ function handleGatewayEventUnsafe(host: GatewayHost, evt: GatewayEventFrame) {
   if (evt.event === "chat") {
     const payload = asChatEventPayload(evt.payload);
     if (payload?.sessionKey) {
-      setLastActiveSessionKey(
-        host as unknown as Parameters<typeof setLastActiveSessionKey>[0],
-        payload.sessionKey,
-      );
+      setLastActiveSessionKey(host, payload.sessionKey);
     }
     const sessionKey = typeof payload?.sessionKey === "string" ? payload.sessionKey : "";
     if (!sessionKey) {
@@ -282,7 +256,7 @@ function handleGatewayEventUnsafe(host: GatewayHost, evt: GatewayEventFrame) {
     const isActive = sessionKey === host.sessionKey;
 
     const chatProxy: ChatState = {
-      client: host.client as unknown as ChatState["client"],
+      client: host.client,
       connected: host.connected,
       sessionKey,
       chatLoading: false,
@@ -328,19 +302,19 @@ function handleGatewayEventUnsafe(host: GatewayHost, evt: GatewayEventFrame) {
     const state = handleChatEvent(chatProxy, payload ?? undefined);
 
     if ((state === "final" || state === "error" || state === "aborted") && isActive) {
-      void flushChatQueueForEvent(host as unknown as Parameters<typeof flushChatQueueForEvent>[0]);
+      void flushChatQueueForEvent(host);
     }
 
     if (state === "final") {
       host.handleChatThreadFinalEvent?.(sessionKey);
       if (isActive) {
-        void loadChatHistory(host as unknown as OpenClawApp);
+        void loadChatHistory(host);
       }
-      void loadChatThreads(host as unknown as Parameters<typeof loadChatThreads>[0], {
+      void loadChatThreads(host, {
         search: host.chatThreadsQuery,
       });
       if (isActive) {
-        void loadSubagentMonitor(host as unknown as Parameters<typeof loadSubagentMonitor>[0], {
+        void loadSubagentMonitor(host, {
           quiet: true,
         });
       }
@@ -359,11 +333,11 @@ function handleGatewayEventUnsafe(host: GatewayHost, evt: GatewayEventFrame) {
   }
 
   if (evt.event === "cron" && host.tab === "cron") {
-    void loadCron(host as unknown as Parameters<typeof loadCron>[0]);
+    void loadCron(host);
   }
 
   if (evt.event === "device.pair.requested" || evt.event === "device.pair.resolved") {
-    void loadDevices(host as unknown as OpenClawApp, { quiet: true });
+    void loadDevices(host, { quiet: true });
   }
 
   if (evt.event === "exec.approval.requested") {
