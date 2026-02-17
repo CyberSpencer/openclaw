@@ -892,7 +892,7 @@ function renderOrchestrationCard(props: ChatProps) {
             aria-expanded=${expanded}
             @click=${() => props.onOrchestrationExpandedChange?.(!expanded)}
           >
-            ${expanded ? icons.chevronUp : icons.chevronDown}
+            ${expanded ? icons.chevronLeft : icons.chevronRight}
           </button>
           <div class="pill agent-orchestration__statusPill" title=${statusLabel}>
             <span class="statusDot ${statusDotClass}"></span>
@@ -1424,9 +1424,11 @@ function renderTerminalCard(props: ChatProps) {
 
 export function renderChat(props: ChatProps) {
   const showOrchestration = !props.focusMode;
+  const orchestrationExpanded = props.orchestrationExpanded !== false;
+  const orchestrationCollapsed = showOrchestration && !orchestrationExpanded;
 
   return html`
-    <section class="agent-workspace ${showOrchestration ? "" : "agent-workspace--solo"}">
+    <section class="agent-workspace ${showOrchestration ? "" : "agent-workspace--solo"} ${orchestrationCollapsed ? "agent-workspace--orchestration-collapsed" : ""}">
       ${showOrchestration ? renderOrchestrationCard(props) : nothing}
       ${renderTerminalCard(props)}
     </section>
