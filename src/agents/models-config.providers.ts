@@ -58,6 +58,17 @@ const MOONSHOT_DEFAULT_COST = {
   cacheWrite: 0,
 };
 
+const NVIDIA_BASE_URL = "https://integrate.api.nvidia.com/v1";
+const NVIDIA_DEFAULT_MODEL_ID = "moonshotai/kimi-k2.5";
+const NVIDIA_DEFAULT_CONTEXT_WINDOW = 256000;
+const NVIDIA_DEFAULT_MAX_TOKENS = 8192;
+const NVIDIA_DEFAULT_COST = {
+  input: 0,
+  output: 0,
+  cacheRead: 0,
+  cacheWrite: 0,
+};
+
 const QWEN_PORTAL_BASE_URL = "https://portal.qwen.ai/v1";
 const QWEN_PORTAL_OAUTH_PLACEHOLDER = "qwen-oauth";
 const QWEN_PORTAL_DEFAULT_CONTEXT_WINDOW = 128000;
@@ -343,6 +354,24 @@ function buildMoonshotProvider(): ProviderConfig {
   };
 }
 
+function buildNvidiaProvider(): ProviderConfig {
+  return {
+    baseUrl: NVIDIA_BASE_URL,
+    api: "openai-completions",
+    models: [
+      {
+        id: NVIDIA_DEFAULT_MODEL_ID,
+        name: "Kimi K2.5 (NVIDIA)",
+        reasoning: false,
+        input: ["text"],
+        cost: NVIDIA_DEFAULT_COST,
+        contextWindow: NVIDIA_DEFAULT_CONTEXT_WINDOW,
+        maxTokens: NVIDIA_DEFAULT_MAX_TOKENS,
+      },
+    ],
+  };
+}
+
 function buildQwenPortalProvider(): ProviderConfig {
   return {
     baseUrl: QWEN_PORTAL_BASE_URL,
@@ -469,6 +498,13 @@ export async function resolveImplicitProviders(params: {
     resolveApiKeyFromProfiles({ provider: "moonshot", store: authStore });
   if (moonshotKey) {
     providers.moonshot = { ...buildMoonshotProvider(), apiKey: moonshotKey };
+  }
+
+  const nvidiaKey =
+    resolveEnvApiKeyVarName("nvidia") ??
+    resolveApiKeyFromProfiles({ provider: "nvidia", store: authStore });
+  if (nvidiaKey) {
+    providers.nvidia = { ...buildNvidiaProvider(), apiKey: nvidiaKey };
   }
 
   const syntheticKey =
