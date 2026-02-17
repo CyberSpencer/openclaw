@@ -292,6 +292,102 @@ describe("memory manager qdrant failover", () => {
     expect(secondarySearchCalls).toHaveLength(0);
   });
 
+  it("keeps priority-first ordering after a lower-priority endpoint was last successful", async () => {
+    let primarySearchCalls = 0;
+    const fetchSpy = vi.fn(async (input: unknown) => {
+      const url = String(input);
+      if (url.includes("19011") && url.includes("/points/search")) {
+        primarySearchCalls += 1;
+        if (primarySearchCalls === 1) {
+          return new Response("busy", { status: 503 });
+        }
+        return new Response(
+          JSON.stringify({
+            result: [
+              {
+                id: "primary-point",
+                score: 0.99,
+                payload: {
+                  text: "hello",
+                  path: "memory/primary.md",
+                  source: "memory",
+                  start_line: 1,
+                  end_line: 1,
+                },
+              },
+            ],
+          }),
+          { status: 200, headers: { "Content-Type": "application/json" } },
+        );
+      }
+      if (url.includes("19012") && url.includes("/points/search")) {
+        return new Response(
+          JSON.stringify({
+            result: [
+              {
+                id: "secondary-point",
+                score: 0.89,
+                payload: {
+                  text: "hello",
+                  path: "memory/secondary.md",
+                  source: "memory",
+                  start_line: 1,
+                  end_line: 1,
+                },
+              },
+            ],
+          }),
+          { status: 200, headers: { "Content-Type": "application/json" } },
+        );
+      }
+      if (url.includes("19011/collections") || url.includes("19012/collections")) {
+        return new Response("", { status: 200 });
+      }
+      return new Response("", { status: 500 });
+    });
+    vi.stubGlobal("fetch", fetchSpy as unknown as typeof fetch);
+
+    const cfg = makeConfig(workspaceDir, indexPath, [
+      {
+        url: "http://127.0.0.1:19011",
+        priority: 0,
+        healthUrl: "http://127.0.0.1:19011/collections",
+        healthTimeoutMs: 200,
+        healthCacheTtlMs: 0,
+      },
+      {
+        url: "http://127.0.0.1:19012",
+        priority: 10,
+        healthUrl: "http://127.0.0.1:19012/collections",
+        healthTimeoutMs: 200,
+        healthCacheTtlMs: 0,
+      },
+    ]);
+
+    const result = await getMemorySearchManager({ cfg, agentId: "main" });
+    expect(result.manager).not.toBeNull();
+    if (!result.manager) {
+      throw new Error("manager missing");
+    }
+    manager = result.manager;
+
+    const first = await manager.search("hello", { maxResults: 1, minScore: 0 });
+    expect(first).toHaveLength(1);
+    expect(first[0]?.path).toBe("memory/secondary.md");
+
+    const second = await manager.search("hello", { maxResults: 1, minScore: 0 });
+    expect(second).toHaveLength(1);
+    expect(second[0]?.path).toBe("memory/primary.md");
+
+    const pointSearchCalls = fetchSpy.mock.calls
+      .map(([input]) => String(input))
+      .filter((url) => url.includes("/points/search"));
+    expect(pointSearchCalls).toHaveLength(3);
+    expect(pointSearchCalls[0]).toContain("19011");
+    expect(pointSearchCalls[1]).toContain("19012");
+    expect(pointSearchCalls[2]).toContain("19011");
+  });
+
   it("fails over from primary to secondary qdrant endpoint when requests fail after startup", async () => {
     const fetchSpy = vi.fn(async (input: unknown) => {
       const url = String(input);

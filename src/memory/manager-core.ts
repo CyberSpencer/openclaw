@@ -1025,13 +1025,22 @@ export class MemoryIndexManager {
       : [{ url: cfg.url, apiKey: cfg.apiKey, timeoutMs: cfg.timeoutMs }];
 
     const preferredUrl = this.lastSuccessfulQdrantEndpoint?.url;
-    const orderedEndpoints =
-      preferredUrl && endpoints.some((entry) => entry.url === preferredUrl)
-        ? [
-            endpoints.find((entry) => entry.url === preferredUrl)!,
-            ...endpoints.filter((entry) => entry.url !== preferredUrl),
-          ]
-        : endpoints;
+    let orderedEndpoints = endpoints;
+    if (preferredUrl) {
+      const preferred = endpoints.find((entry) => entry.url === preferredUrl);
+      if (preferred) {
+        const preferredPriority = preferred.priority ?? 0;
+        const samePriorityPeers = endpoints.filter(
+          (entry) => (entry.priority ?? 0) === preferredPriority,
+        );
+        orderedEndpoints = [
+          ...endpoints.filter((entry) => (entry.priority ?? 0) < preferredPriority),
+          preferred,
+          ...samePriorityPeers.filter((entry) => entry.url !== preferred.url),
+          ...endpoints.filter((entry) => (entry.priority ?? 0) > preferredPriority),
+        ];
+      }
+    }
 
     const errors: string[] = [];
     for (const endpoint of orderedEndpoints) {
