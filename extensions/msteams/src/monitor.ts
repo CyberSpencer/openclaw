@@ -1,6 +1,5 @@
 import type { Request, Response } from "express";
 import {
-  DEFAULT_WEBHOOK_MAX_BODY_BYTES,
   mergeAllowlist,
   summarizeMapping,
   type OpenClawConfig,
@@ -32,8 +31,6 @@ export type MonitorMSTeamsResult = {
   app: unknown;
   shutdown: () => Promise<void>;
 };
-
-const MSTEAMS_WEBHOOK_MAX_BODY_BYTES = DEFAULT_WEBHOOK_MAX_BODY_BYTES;
 
 export async function monitorMSTeamsProvider(
   opts: MonitorMSTeamsOpts,
@@ -242,14 +239,7 @@ export async function monitorMSTeamsProvider(
 
   // Create Express server
   const expressApp = express.default();
-  expressApp.use(express.json({ limit: MSTEAMS_WEBHOOK_MAX_BODY_BYTES }));
-  expressApp.use((err: unknown, _req: Request, res: Response, next: (err?: unknown) => void) => {
-    if (err && typeof err === "object" && "status" in err && err.status === 413) {
-      res.status(413).json({ error: "Payload too large" });
-      return;
-    }
-    next(err);
-  });
+  expressApp.use(express.json());
   expressApp.use(authorizeJWT(authConfig));
 
   // Set up the messages endpoint - use configured path and /api/messages as fallback

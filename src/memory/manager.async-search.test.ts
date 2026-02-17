@@ -3,17 +3,25 @@ import os from "node:os";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { getMemorySearchManager, type MemoryIndexManager } from "./index.js";
-import { createOpenAIEmbeddingProviderMock } from "./test-embeddings-mock.js";
 
 const embedBatch = vi.fn(async () => []);
 const embedQuery = vi.fn(async () => [0.2, 0.2, 0.2]);
 
 vi.mock("./embeddings.js", () => ({
-  createEmbeddingProvider: async () =>
-    createOpenAIEmbeddingProviderMock({
+  createEmbeddingProvider: async () => ({
+    requestedProvider: "openai",
+    provider: {
+      id: "openai",
+      model: "text-embedding-3-small",
       embedQuery,
       embedBatch,
-    }),
+    },
+    openAi: {
+      baseUrl: "https://api.openai.com/v1",
+      headers: { Authorization: "Bearer test", "Content-Type": "application/json" },
+      model: "text-embedding-3-small",
+    },
+  }),
 }));
 
 describe("memory search async sync", () => {
@@ -65,19 +73,10 @@ describe("memory search async sync", () => {
     const pending = new Promise<void>(() => {});
     (manager as unknown as { sync: () => Promise<void> }).sync = vi.fn(async () => pending);
 
-    const resolved = await new Promise<boolean>((resolve, reject) => {
-      const timeout = setTimeout(() => resolve(false), 1000);
-      void manager
-        .search("hello")
-        .then(() => {
-          clearTimeout(timeout);
-          resolve(true);
-        })
-        .catch((err) => {
-          clearTimeout(timeout);
-          reject(err);
-        });
-    });
+    const resolved = await Promise.race([
+      manager.search("hello").then(() => true),
+      new Promise<boolean>((resolve) => setTimeout(() => resolve(false), 1000)),
+    ]);
     expect(resolved).toBe(true);
   });
 });

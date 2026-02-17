@@ -1,18 +1,50 @@
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { OpenClawConfig } from "../config/config.js";
-import { __setModelCatalogImportForTest, loadModelCatalog } from "./model-catalog.js";
 import {
-  installModelCatalogTestHooks,
-  mockCatalogImportFailThenRecover,
-  type PiSdkModule,
-} from "./model-catalog.test-harness.js";
+  __setModelCatalogImportForTest,
+  loadModelCatalog,
+  resetModelCatalogCacheForTest,
+} from "./model-catalog.js";
+
+type PiSdkModule = typeof import("./pi-model-discovery.js");
+
+vi.mock("./models-config.js", () => ({
+  ensureOpenClawModelsJson: vi.fn().mockResolvedValue({ agentDir: "/tmp", wrote: false }),
+}));
+
+vi.mock("./agent-paths.js", () => ({
+  resolveOpenClawAgentDir: () => "/tmp/openclaw",
+}));
 
 describe("loadModelCatalog", () => {
-  installModelCatalogTestHooks();
+  beforeEach(() => {
+    resetModelCatalogCacheForTest();
+  });
+
+  afterEach(() => {
+    __setModelCatalogImportForTest();
+    resetModelCatalogCacheForTest();
+    vi.restoreAllMocks();
+  });
 
   it("retries after import failure without poisoning the cache", async () => {
     const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
-    const getCallCount = mockCatalogImportFailThenRecover();
+    let call = 0;
+
+    __setModelCatalogImportForTest(async () => {
+      call += 1;
+      if (call === 1) {
+        throw new Error("boom");
+      }
+      return {
+        AuthStorage: class {},
+        ModelRegistry: class {
+          getAll() {
+            return [{ id: "gpt-4.1", name: "GPT-4.1", provider: "openai" }];
+          }
+        },
+      } as unknown as PiSdkModule;
+    });
 
     const cfg = {} as OpenClawConfig;
     const first = await loadModelCatalog({ config: cfg });
@@ -20,11 +52,8 @@ describe("loadModelCatalog", () => {
 
     const second = await loadModelCatalog({ config: cfg });
     expect(second).toEqual([{ id: "gpt-4.1", name: "GPT-4.1", provider: "openai" }]);
-    expect(getCallCount()).toBe(2);
-    const catalogWarnings = warnSpy.mock.calls.filter((call) =>
-      String(call[0] ?? "").includes("[model-catalog]"),
-    );
-    expect(catalogWarnings).toHaveLength(1);
+    expect(call).toBe(2);
+    expect(warnSpy).toHaveBeenCalledTimes(1);
   });
 
   it("returns partial results on discovery errors", async () => {
@@ -53,48 +82,6 @@ describe("loadModelCatalog", () => {
 
     const result = await loadModelCatalog({ config: {} as OpenClawConfig });
     expect(result).toEqual([{ id: "gpt-4.1", name: "GPT-4.1", provider: "openai" }]);
-    const catalogWarnings = warnSpy.mock.calls.filter((call) =>
-      String(call[0] ?? "").includes("[model-catalog]"),
-    );
-    expect(catalogWarnings).toHaveLength(1);
-  });
-
-  it("adds openai-codex/gpt-5.3-codex-spark when base gpt-5.3-codex exists", async () => {
-    __setModelCatalogImportForTest(
-      async () =>
-        ({
-          AuthStorage: class {},
-          ModelRegistry: class {
-            getAll() {
-              return [
-                {
-                  id: "gpt-5.3-codex",
-                  provider: "openai-codex",
-                  name: "GPT-5.3 Codex",
-                  reasoning: true,
-                  contextWindow: 200000,
-                  input: ["text"],
-                },
-                {
-                  id: "gpt-5.2-codex",
-                  provider: "openai-codex",
-                  name: "GPT-5.2 Codex",
-                },
-              ];
-            }
-          },
-        }) as unknown as PiSdkModule,
-    );
-
-    const result = await loadModelCatalog({ config: {} as OpenClawConfig });
-    expect(result).toContainEqual(
-      expect.objectContaining({
-        provider: "openai-codex",
-        id: "gpt-5.3-codex-spark",
-      }),
-    );
-    const spark = result.find((entry) => entry.id === "gpt-5.3-codex-spark");
-    expect(spark?.name).toBe("gpt-5.3-codex-spark");
-    expect(spark?.reasoning).toBe(true);
+    expect(warnSpy).toHaveBeenCalledTimes(1);
   });
 });

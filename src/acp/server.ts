@@ -11,7 +11,7 @@ import { isMainModule } from "../infra/is-main.js";
 import { GATEWAY_CLIENT_MODES, GATEWAY_CLIENT_NAMES } from "../utils/message-channel.js";
 import { AcpGatewayAgent } from "./translator.js";
 
-export function serveAcpGateway(opts: AcpServerOptions = {}): Promise<void> {
+export function serveAcpGateway(opts: AcpServerOptions = {}): void {
   const cfg = loadConfig();
   const connection = buildGatewayConnectionDetails({
     config: cfg,
@@ -34,12 +34,6 @@ export function serveAcpGateway(opts: AcpServerOptions = {}): Promise<void> {
     auth.password;
 
   let agent: AcpGatewayAgent | null = null;
-  let onClosed!: () => void;
-  const closed = new Promise<void>((resolve) => {
-    onClosed = resolve;
-  });
-  let stopped = false;
-
   const gateway = new GatewayClient({
     url: connection.url,
     token: token || undefined,
@@ -56,28 +50,8 @@ export function serveAcpGateway(opts: AcpServerOptions = {}): Promise<void> {
     },
     onClose: (code, reason) => {
       agent?.handleGatewayDisconnect(`${code}: ${reason}`);
-      // Resolve only on intentional shutdown (gateway.stop() sets closed
-      // which skips scheduleReconnect, then fires onClose).  Transient
-      // disconnects are followed by automatic reconnect attempts.
-      if (stopped) {
-        onClosed();
-      }
     },
   });
-
-  const shutdown = () => {
-    if (stopped) {
-      return;
-    }
-    stopped = true;
-    gateway.stop();
-    // If no WebSocket is active (e.g. between reconnect attempts),
-    // gateway.stop() won't trigger onClose, so resolve directly.
-    onClosed();
-  };
-
-  process.once("SIGINT", shutdown);
-  process.once("SIGTERM", shutdown);
 
   const input = Writable.toWeb(process.stdout);
   const output = Readable.toWeb(process.stdin) as unknown as ReadableStream<Uint8Array>;
@@ -90,7 +64,6 @@ export function serveAcpGateway(opts: AcpServerOptions = {}): Promise<void> {
   }, stream);
 
   gateway.start();
-  return closed;
 }
 
 function parseArgs(args: string[]): AcpServerOptions {
@@ -167,8 +140,5 @@ Options:
 
 if (isMainModule({ currentFile: fileURLToPath(import.meta.url) })) {
   const opts = parseArgs(process.argv.slice(2));
-  serveAcpGateway(opts).catch((err) => {
-    console.error(String(err));
-    process.exit(1);
-  });
+  serveAcpGateway(opts);
 }

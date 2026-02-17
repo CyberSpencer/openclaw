@@ -1,8 +1,7 @@
 import type { GeminiEmbeddingClient } from "./embeddings-gemini.js";
 import { isTruthyEnvValue } from "../infra/env.js";
 import { createSubsystemLogger } from "../logging/subsystem.js";
-import { buildBatchHeaders, normalizeBatchBaseUrl, splitBatchRequests } from "./batch-utils.js";
-import { hashText, runWithConcurrency } from "./internal.js";
+import { hashText } from "./internal.js";
 
 export type GeminiBatchRequest = {
   custom_id: string;
@@ -46,11 +45,42 @@ const debugLog = (message: string, meta?: Record<string, unknown>) => {
   log.raw(`${message}${suffix}`);
 };
 
+function getGeminiBaseUrl(gemini: GeminiEmbeddingClient): string {
+  return gemini.baseUrl?.replace(/\/$/, "") ?? "";
+}
+
+function getGeminiHeaders(
+  gemini: GeminiEmbeddingClient,
+  params: { json: boolean },
+): Record<string, string> {
+  const headers = gemini.headers ? { ...gemini.headers } : {};
+  if (params.json) {
+    if (!headers["Content-Type"] && !headers["content-type"]) {
+      headers["Content-Type"] = "application/json";
+    }
+  } else {
+    delete headers["Content-Type"];
+    delete headers["content-type"];
+  }
+  return headers;
+}
+
 function getGeminiUploadUrl(baseUrl: string): string {
   if (baseUrl.includes("/v1beta")) {
     return baseUrl.replace(/\/v1beta\/?$/, "/upload/v1beta");
   }
   return `${baseUrl.replace(/\/$/, "")}/upload`;
+}
+
+function splitGeminiBatchRequests(requests: GeminiBatchRequest[]): GeminiBatchRequest[][] {
+  if (requests.length <= GEMINI_BATCH_MAX_REQUESTS) {
+    return [requests];
+  }
+  const groups: GeminiBatchRequest[][] = [];
+  for (let i = 0; i < requests.length; i += GEMINI_BATCH_MAX_REQUESTS) {
+    groups.push(requests.slice(i, i + GEMINI_BATCH_MAX_REQUESTS));
+  }
+  return groups;
 }
 
 function buildGeminiUploadBody(params: { jsonl: string; displayName: string }): {
@@ -83,7 +113,7 @@ async function submitGeminiBatch(params: {
   requests: GeminiBatchRequest[];
   agentId: string;
 }): Promise<GeminiBatchStatus> {
-  const baseUrl = normalizeBatchBaseUrl(params.gemini);
+  const baseUrl = getGeminiBaseUrl(params.gemini);
   const jsonl = params.requests
     .map((request) =>
       JSON.stringify({
@@ -107,7 +137,7 @@ async function submitGeminiBatch(params: {
   const fileRes = await fetch(uploadUrl, {
     method: "POST",
     headers: {
-      ...buildBatchHeaders(params.gemini, { json: false }),
+      ...getGeminiHeaders(params.gemini, { json: false }),
       "Content-Type": uploadPayload.contentType,
     },
     body: uploadPayload.body,
@@ -138,7 +168,7 @@ async function submitGeminiBatch(params: {
   });
   const batchRes = await fetch(batchEndpoint, {
     method: "POST",
-    headers: buildBatchHeaders(params.gemini, { json: true }),
+    headers: getGeminiHeaders(params.gemini, { json: true }),
     body: JSON.stringify(batchBody),
   });
   if (batchRes.ok) {
@@ -157,14 +187,14 @@ async function fetchGeminiBatchStatus(params: {
   gemini: GeminiEmbeddingClient;
   batchName: string;
 }): Promise<GeminiBatchStatus> {
-  const baseUrl = normalizeBatchBaseUrl(params.gemini);
+  const baseUrl = getGeminiBaseUrl(params.gemini);
   const name = params.batchName.startsWith("batches/")
     ? params.batchName
     : `batches/${params.batchName}`;
   const statusUrl = `${baseUrl}/${name}`;
   debugLog("memory embeddings: gemini batch status", { statusUrl });
   const res = await fetch(statusUrl, {
-    headers: buildBatchHeaders(params.gemini, { json: true }),
+    headers: getGeminiHeaders(params.gemini, { json: true }),
   });
   if (!res.ok) {
     const text = await res.text();
@@ -177,12 +207,12 @@ async function fetchGeminiFileContent(params: {
   gemini: GeminiEmbeddingClient;
   fileId: string;
 }): Promise<string> {
-  const baseUrl = normalizeBatchBaseUrl(params.gemini);
+  const baseUrl = getGeminiBaseUrl(params.gemini);
   const file = params.fileId.startsWith("files/") ? params.fileId : `files/${params.fileId}`;
   const downloadUrl = `${baseUrl}/${file}:download`;
   debugLog("memory embeddings: gemini batch download", { downloadUrl });
   const res = await fetch(downloadUrl, {
-    headers: buildBatchHeaders(params.gemini, { json: true }),
+    headers: getGeminiHeaders(params.gemini, { json: true }),
   });
   if (!res.ok) {
     const text = await res.text();
@@ -247,6 +277,41 @@ async function waitForGeminiBatch(params: {
   }
 }
 
+async function runWithConcurrency<T>(tasks: Array<() => Promise<T>>, limit: number): Promise<T[]> {
+  if (tasks.length === 0) {
+    return [];
+  }
+  const resolvedLimit = Math.max(1, Math.min(limit, tasks.length));
+  const results: T[] = Array.from({ length: tasks.length });
+  let next = 0;
+  let firstError: unknown = null;
+
+  const workers = Array.from({ length: resolvedLimit }, async () => {
+    while (true) {
+      if (firstError) {
+        return;
+      }
+      const index = next;
+      next += 1;
+      if (index >= tasks.length) {
+        return;
+      }
+      try {
+        results[index] = await tasks[index]();
+      } catch (err) {
+        firstError = err;
+        return;
+      }
+    }
+  });
+
+  await Promise.allSettled(workers);
+  if (firstError) {
+    throw firstError;
+  }
+  return results;
+}
+
 export async function runGeminiEmbeddingBatches(params: {
   gemini: GeminiEmbeddingClient;
   agentId: string;
@@ -260,7 +325,7 @@ export async function runGeminiEmbeddingBatches(params: {
   if (params.requests.length === 0) {
     return new Map();
   }
-  const groups = splitBatchRequests(params.requests, GEMINI_BATCH_MAX_REQUESTS);
+  const groups = splitGeminiBatchRequests(params.requests);
   const byCustomId = new Map<string, number[]>();
 
   const tasks = groups.map((group, groupIndex) => async () => {

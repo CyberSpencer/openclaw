@@ -60,18 +60,6 @@ function findPackageRootSync(startDir: string, maxDepth = 12): string | null {
 function candidateDirsFromArgv1(argv1: string): string[] {
   const normalized = path.resolve(argv1);
   const candidates = [path.dirname(normalized)];
-
-  // Resolve symlinks for version managers (nvm, fnm, n, Homebrew/Linuxbrew)
-  // that create symlinks in bin/ pointing to the real package location.
-  try {
-    const resolved = fsSync.realpathSync(normalized);
-    if (resolved !== normalized) {
-      candidates.push(path.dirname(resolved));
-    }
-  } catch {
-    // realpathSync throws if path doesn't exist; keep original candidates
-  }
-
   const parts = normalized.split(path.sep);
   const binIndex = parts.lastIndexOf(".bin");
   if (binIndex > 0 && parts[binIndex - 1] === "node_modules") {
@@ -87,7 +75,19 @@ export async function resolveOpenClawPackageRoot(opts: {
   argv1?: string;
   moduleUrl?: string;
 }): Promise<string | null> {
-  for (const candidate of buildCandidates(opts)) {
+  const candidates: string[] = [];
+
+  if (opts.moduleUrl) {
+    candidates.push(path.dirname(fileURLToPath(opts.moduleUrl)));
+  }
+  if (opts.argv1) {
+    candidates.push(...candidateDirsFromArgv1(opts.argv1));
+  }
+  if (opts.cwd) {
+    candidates.push(opts.cwd);
+  }
+
+  for (const candidate of candidates) {
     const found = await findPackageRoot(candidate);
     if (found) {
       return found;
@@ -102,17 +102,6 @@ export function resolveOpenClawPackageRootSync(opts: {
   argv1?: string;
   moduleUrl?: string;
 }): string | null {
-  for (const candidate of buildCandidates(opts)) {
-    const found = findPackageRootSync(candidate);
-    if (found) {
-      return found;
-    }
-  }
-
-  return null;
-}
-
-function buildCandidates(opts: { cwd?: string; argv1?: string; moduleUrl?: string }): string[] {
   const candidates: string[] = [];
 
   if (opts.moduleUrl) {
@@ -125,5 +114,12 @@ function buildCandidates(opts: { cwd?: string; argv1?: string; moduleUrl?: strin
     candidates.push(opts.cwd);
   }
 
-  return candidates;
+  for (const candidate of candidates) {
+    const found = findPackageRootSync(candidate);
+    if (found) {
+      return found;
+    }
+  }
+
+  return null;
 }

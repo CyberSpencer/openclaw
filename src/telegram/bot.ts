@@ -5,9 +5,10 @@ import { type Message, type UserFromGetMe, ReactionTypeEmoji } from "@grammyjs/t
 import { Bot, webhookCallback } from "grammy";
 import type { OpenClawConfig, ReplyToMode } from "../config/config.js";
 import type { RuntimeEnv } from "../runtime.js";
+import type { TelegramContext } from "./bot/types.js";
 import { resolveDefaultAgentId } from "../agents/agent-scope.js";
 import { resolveTextChunkLimit } from "../auto-reply/chunk.js";
-import { isAbortRequestText } from "../auto-reply/reply/abort.js";
+import { isControlCommandMessage } from "../auto-reply/command-detection.js";
 import { DEFAULT_GROUP_HISTORY_LIMIT, type HistoryEntry } from "../auto-reply/reply/history.js";
 import {
   isNativeCommandsExplicitlyDisabled,
@@ -27,6 +28,7 @@ import { getChildLogger } from "../logging.js";
 import { createSubsystemLogger } from "../logging/subsystem.js";
 import { resolveAgentRoute } from "../routing/resolve-route.js";
 import { resolveTelegramAccount } from "./accounts.js";
+import { withTelegramApiErrorLogging } from "./api-logging.js";
 import { registerTelegramHandlers } from "./bot-handlers.js";
 import { createTelegramMessageProcessor } from "./bot-message.js";
 import { registerTelegramNativeCommands } from "./bot-native-commands.js";
@@ -60,10 +62,6 @@ export type TelegramBotOptions = {
     lastUpdateId?: number | null;
     onUpdateId?: (updateId: number) => void | Promise<void>;
   };
-  testTimings?: {
-    mediaGroupFlushMs?: number;
-    textFragmentGapMs?: number;
-  };
 };
 
 export function getTelegramSequentialKey(ctx: {
@@ -90,7 +88,10 @@ export function getTelegramSequentialKey(ctx: {
   const chatId = msg?.chat?.id ?? ctx.chat?.id;
   const rawText = msg?.text ?? msg?.caption;
   const botUsername = ctx.me?.username;
-  if (isAbortRequestText(rawText, botUsername ? { botUsername } : undefined)) {
+  if (
+    rawText &&
+    isControlCommandMessage(rawText, undefined, botUsername ? { botUsername } : undefined)
+  ) {
     if (typeof chatId === "number") {
       return `telegram:${chatId}:control`;
     }
@@ -239,7 +240,7 @@ export function createTelegramBot(opts: TelegramBotOptions) {
       ? telegramCfg.allowFrom
       : undefined) ??
     (opts.allowFrom && opts.allowFrom.length > 0 ? opts.allowFrom : undefined);
-  const replyToMode = opts.replyToMode ?? telegramCfg.replyToMode ?? "off";
+  const replyToMode = opts.replyToMode ?? telegramCfg.replyToMode ?? "first";
   const nativeEnabled = resolveNativeCommandsEnabled({
     providerId: "telegram",
     providerSetting: telegramCfg.commands?.native,
@@ -259,6 +260,32 @@ export function createTelegramBot(opts: TelegramBotOptions) {
   const mediaMaxBytes = (opts.mediaMaxMb ?? telegramCfg.mediaMaxMb ?? 5) * 1024 * 1024;
   const logger = getChildLogger({ module: "telegram-auto-reply" });
   const streamMode = resolveTelegramStreamMode(telegramCfg);
+  let botHasTopicsEnabled: boolean | undefined;
+  const resolveBotTopicsEnabled = async (ctx?: TelegramContext) => {
+    if (typeof ctx?.me?.has_topics_enabled === "boolean") {
+      botHasTopicsEnabled = ctx.me.has_topics_enabled;
+      return botHasTopicsEnabled;
+    }
+    if (typeof botHasTopicsEnabled === "boolean") {
+      return botHasTopicsEnabled;
+    }
+    if (typeof bot.api.getMe !== "function") {
+      botHasTopicsEnabled = false;
+      return botHasTopicsEnabled;
+    }
+    try {
+      const me = await withTelegramApiErrorLogging({
+        operation: "getMe",
+        runtime,
+        fn: () => bot.api.getMe(),
+      });
+      botHasTopicsEnabled = Boolean(me?.has_topics_enabled);
+    } catch (err) {
+      logVerbose(`telegram getMe failed: ${String(err)}`);
+      botHasTopicsEnabled = false;
+    }
+    return botHasTopicsEnabled;
+  };
   const resolveGroupPolicy = (chatId: string | number) =>
     resolveChannelGroupPolicy({
       cfg,
@@ -332,6 +359,7 @@ export function createTelegramBot(opts: TelegramBotOptions) {
     streamMode,
     textLimit,
     opts,
+    resolveBotTopicsEnabled,
   });
 
   registerTelegramNativeCommands({

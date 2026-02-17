@@ -1,5 +1,5 @@
 import { Command } from "commander";
-import { beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
 const callGateway = vi.fn(async (opts: { method?: string }) => {
   if (opts.method === "node.list") {
@@ -75,20 +75,30 @@ vi.mock("../config/config.js", () => ({
 }));
 
 describe("nodes-cli coverage", () => {
-  let registerNodesCli: (program: Command) => void;
+  it("lists nodes via node.list", async () => {
+    runtimeLogs.length = 0;
+    runtimeErrors.length = 0;
+    callGateway.mockClear();
 
-  beforeAll(async () => {
-    ({ registerNodesCli } = await import("./nodes-cli.js"));
+    const { registerNodesCli } = await import("./nodes-cli.js");
+    const program = new Command();
+    program.exitOverride();
+    registerNodesCli(program);
+
+    await program.parseAsync(["nodes", "status"], { from: "user" });
+
+    expect(callGateway).toHaveBeenCalled();
+    expect(callGateway.mock.calls[0]?.[0]?.method).toBe("node.list");
+    expect(runtimeErrors).toHaveLength(0);
   });
 
-  beforeEach(() => {
+  it("invokes system.run with parsed params", async () => {
     runtimeLogs.length = 0;
     runtimeErrors.length = 0;
     callGateway.mockClear();
     randomIdempotencyKey.mockClear();
-  });
 
-  it("invokes system.run with parsed params", async () => {
+    const { registerNodesCli } = await import("./nodes-cli.js");
     const program = new Command();
     program.exitOverride();
     registerNodesCli(program);
@@ -128,12 +138,17 @@ describe("nodes-cli coverage", () => {
       agentId: "main",
       approved: true,
       approvalDecision: "allow-once",
-      runId: expect.any(String),
     });
     expect(invoke?.params?.timeoutMs).toBe(5000);
   });
 
   it("invokes system.run with raw command", async () => {
+    runtimeLogs.length = 0;
+    runtimeErrors.length = 0;
+    callGateway.mockClear();
+    randomIdempotencyKey.mockClear();
+
+    const { registerNodesCli } = await import("./nodes-cli.js");
     const program = new Command();
     program.exitOverride();
     registerNodesCli(program);
@@ -154,11 +169,15 @@ describe("nodes-cli coverage", () => {
       agentId: "main",
       approved: true,
       approvalDecision: "allow-once",
-      runId: expect.any(String),
     });
   });
 
   it("invokes system.notify with provided fields", async () => {
+    runtimeLogs.length = 0;
+    runtimeErrors.length = 0;
+    callGateway.mockClear();
+
+    const { registerNodesCli } = await import("./nodes-cli.js");
     const program = new Command();
     program.exitOverride();
     registerNodesCli(program);
@@ -193,6 +212,11 @@ describe("nodes-cli coverage", () => {
   });
 
   it("invokes location.get with params", async () => {
+    runtimeLogs.length = 0;
+    runtimeErrors.length = 0;
+    callGateway.mockClear();
+
+    const { registerNodesCli } = await import("./nodes-cli.js");
     const program = new Command();
     program.exitOverride();
     registerNodesCli(program);

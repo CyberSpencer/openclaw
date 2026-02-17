@@ -21,7 +21,6 @@ const ANTHROPIC_MODEL_ALIASES: Record<string, string> = {
   "opus-4.5": "claude-opus-4-5",
   "sonnet-4.5": "claude-sonnet-4-5",
 };
-const OPENAI_CODEX_OAUTH_MODEL_PREFIXES = ["gpt-5.3-codex"] as const;
 
 function normalizeAliasKey(value: string): string {
   return value.trim().toLowerCase();
@@ -79,28 +78,6 @@ function normalizeProviderModelId(provider: string, model: string): string {
   return model;
 }
 
-function shouldUseOpenAICodexProvider(provider: string, model: string): boolean {
-  if (provider !== "openai") {
-    return false;
-  }
-  const normalized = model.trim().toLowerCase();
-  if (!normalized) {
-    return false;
-  }
-  return OPENAI_CODEX_OAUTH_MODEL_PREFIXES.some(
-    (prefix) => normalized === prefix || normalized.startsWith(`${prefix}-`),
-  );
-}
-
-export function normalizeModelRef(provider: string, model: string): ModelRef {
-  const normalizedProvider = normalizeProviderId(provider);
-  const normalizedModel = normalizeProviderModelId(normalizedProvider, model.trim());
-  if (shouldUseOpenAICodexProvider(normalizedProvider, normalizedModel)) {
-    return { provider: "openai-codex", model: normalizedModel };
-  }
-  return { provider: normalizedProvider, model: normalizedModel };
-}
-
 export function parseModelRef(raw: string, defaultProvider: string): ModelRef | null {
   const trimmed = raw.trim();
   if (!trimmed) {
@@ -108,14 +85,18 @@ export function parseModelRef(raw: string, defaultProvider: string): ModelRef | 
   }
   const slash = trimmed.indexOf("/");
   if (slash === -1) {
-    return normalizeModelRef(defaultProvider, trimmed);
+    const provider = normalizeProviderId(defaultProvider);
+    const model = normalizeProviderModelId(provider, trimmed);
+    return { provider, model };
   }
   const providerRaw = trimmed.slice(0, slash).trim();
+  const provider = normalizeProviderId(providerRaw);
   const model = trimmed.slice(slash + 1).trim();
-  if (!providerRaw || !model) {
+  if (!provider || !model) {
     return null;
   }
-  return normalizeModelRef(providerRaw, model);
+  const normalizedModel = normalizeProviderModelId(provider, model);
+  return { provider, model: normalizedModel };
 }
 
 export function resolveAllowlistModelKey(raw: string, defaultProvider: string): string | null {

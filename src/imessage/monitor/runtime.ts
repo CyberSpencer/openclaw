@@ -1,8 +1,16 @@
+import type { RuntimeEnv } from "../../runtime.js";
 import type { MonitorIMessageOpts } from "./types.js";
-import { createNonExitingRuntime, type RuntimeEnv } from "../../runtime.js";
 
 export function resolveRuntime(opts: MonitorIMessageOpts): RuntimeEnv {
-  return opts.runtime ?? createNonExitingRuntime();
+  return (
+    opts.runtime ?? {
+      log: console.log,
+      error: console.error,
+      exit: (code: number): never => {
+        throw new Error(`exit ${code}`);
+      },
+    }
+  );
 }
 
 export function normalizeAllowList(list?: Array<string | number>) {

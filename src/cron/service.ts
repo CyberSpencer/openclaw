@@ -1,4 +1,4 @@
-import type { CronJob, CronJobCreate, CronJobPatch } from "./types.js";
+import type { CronJobCreate, CronJobPatch } from "./types.js";
 import * as ops from "./service/ops.js";
 import { type CronServiceDeps, createCronServiceState } from "./service/state.js";
 
@@ -40,10 +40,6 @@ export class CronService {
 
   async run(id: string, mode?: "due" | "force") {
     return await ops.run(this.state, id, mode);
-  }
-
-  getJob(id: string): CronJob | undefined {
-    return this.state.store?.jobs.find((job) => job.id === id);
   }
 
   wake(opts: { mode: "now" | "next-heartbeat"; text: string }) {

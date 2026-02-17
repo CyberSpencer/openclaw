@@ -25,11 +25,9 @@ export async function dashboardCommand(
   const customBindHost = cfg.gateway?.customBindHost;
   const token = cfg.gateway?.auth?.token ?? process.env.OPENCLAW_GATEWAY_TOKEN ?? "";
 
-  // LAN URLs fail secure-context checks in browsers.
-  // Coerce only lan->loopback and preserve other bind modes.
   const links = resolveControlUiLinks({
     port,
-    bind: bind === "lan" ? "loopback" : bind,
+    bind,
     customBindHost,
     basePath,
   });

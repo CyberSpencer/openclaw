@@ -22,8 +22,8 @@ function prefersSips(): boolean {
 }
 
 async function loadSharp(): Promise<(buffer: Buffer) => ReturnType<Sharp>> {
-  const mod = (await import("sharp")) as unknown as { default?: Sharp };
-  const sharp = mod.default ?? (mod as unknown as Sharp);
+  const mod = await import("sharp");
+  const sharp = "default" in mod ? mod.default : mod;
   return (buffer) => sharp(buffer, { failOnError: false });
 }
 

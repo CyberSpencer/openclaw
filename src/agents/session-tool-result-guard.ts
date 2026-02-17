@@ -4,7 +4,6 @@ import type { SessionManager } from "@mariozechner/pi-coding-agent";
 import { emitSessionTranscriptUpdate } from "../sessions/transcript-events.js";
 import { HARD_MAX_TOOL_RESULT_CHARS } from "./pi-embedded-runner/tool-result-truncation.js";
 import { makeMissingToolResult, sanitizeToolCallInputs } from "./session-transcript-repair.js";
-import { extractToolCallsFromAssistant, extractToolResultId } from "./tool-call-id.js";
 
 const GUARD_TRUNCATION_SUFFIX =
   "\n\n⚠️ [Content truncated during persistence — original exceeded size limit. " +
@@ -72,13 +71,48 @@ function capToolResultSize(msg: AgentMessage): AgentMessage {
   return { ...msg, content: newContent } as AgentMessage;
 }
 
+type ToolCall = { id: string; name?: string };
+
+function extractAssistantToolCalls(msg: Extract<AgentMessage, { role: "assistant" }>): ToolCall[] {
+  const content = msg.content;
+  if (!Array.isArray(content)) {
+    return [];
+  }
+
+  const toolCalls: ToolCall[] = [];
+  for (const block of content) {
+    if (!block || typeof block !== "object") {
+      continue;
+    }
+    const rec = block as { type?: unknown; id?: unknown; name?: unknown };
+    if (typeof rec.id !== "string" || !rec.id) {
+      continue;
+    }
+    if (rec.type === "toolCall" || rec.type === "toolUse" || rec.type === "functionCall") {
+      toolCalls.push({
+        id: rec.id,
+        name: typeof rec.name === "string" ? rec.name : undefined,
+      });
+    }
+  }
+  return toolCalls;
+}
+
+function extractToolResultId(msg: Extract<AgentMessage, { role: "toolResult" }>): string | null {
+  const toolCallId = (msg as { toolCallId?: unknown }).toolCallId;
+  if (typeof toolCallId === "string" && toolCallId) {
+    return toolCallId;
+  }
+  const toolUseId = (msg as { toolUseId?: unknown }).toolUseId;
+  if (typeof toolUseId === "string" && toolUseId) {
+    return toolUseId;
+  }
+  return null;
+}
+
 export function installSessionToolResultGuard(
   sessionManager: SessionManager,
   opts?: {
-    /**
-     * Optional transform applied to any message before persistence.
-     */
-    transformMessageForPersistence?: (message: AgentMessage) => AgentMessage;
     /**
      * Optional, synchronous transform applied to toolResult messages *before* they are
      * persisted to the session transcript.
@@ -99,10 +133,6 @@ export function installSessionToolResultGuard(
 } {
   const originalAppend = sessionManager.appendMessage.bind(sessionManager);
   const pending = new Map<string, string | undefined>();
-  const persistMessage = (message: AgentMessage) => {
-    const transformer = opts?.transformMessageForPersistence;
-    return transformer ? transformer(message) : message;
-  };
 
   const persistToolResult = (
     message: AgentMessage,
@@ -122,7 +152,7 @@ export function installSessionToolResultGuard(
       for (const [id, name] of pending.entries()) {
         const synthetic = makeMissingToolResult({ toolCallId: id, toolName: name });
         originalAppend(
-          persistToolResult(persistMessage(synthetic), {
+          persistToolResult(synthetic, {
             toolCallId: id,
             toolName: name,
             isSynthetic: true,
@@ -156,7 +186,7 @@ export function installSessionToolResultGuard(
       }
       // Apply hard size cap before persistence to prevent oversized tool results
       // from consuming the entire context window on subsequent LLM calls.
-      const capped = capToolResultSize(persistMessage(nextMessage));
+      const capped = capToolResultSize(nextMessage);
       return originalAppend(
         persistToolResult(capped, {
           toolCallId: id ?? undefined,
@@ -168,7 +198,7 @@ export function installSessionToolResultGuard(
 
     const toolCalls =
       nextRole === "assistant"
-        ? extractToolCallsFromAssistant(nextMessage as Extract<AgentMessage, { role: "assistant" }>)
+        ? extractAssistantToolCalls(nextMessage as Extract<AgentMessage, { role: "assistant" }>)
         : [];
 
     if (allowSyntheticToolResults) {
@@ -182,7 +212,7 @@ export function installSessionToolResultGuard(
       }
     }
 
-    const result = originalAppend(persistMessage(nextMessage) as never);
+    const result = originalAppend(nextMessage as never);
 
     const sessionFile = (
       sessionManager as { getSessionFile?: () => string | null }

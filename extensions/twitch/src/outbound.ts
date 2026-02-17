@@ -54,12 +54,6 @@ export const twitchOutbound: ChannelOutboundAdapter = {
     // If target is provided, normalize and validate it
     if (trimmed) {
       const normalizedTo = normalizeTwitchChannel(trimmed);
-      if (!normalizedTo) {
-        return {
-          ok: false,
-          error: missingTargetError("Twitch", "<channel-name>"),
-        };
-      }
 
       // For implicit/heartbeat modes with allowList, check against allowlist
       if (mode === "implicit" || mode === "heartbeat") {
@@ -69,22 +63,26 @@ export const twitchOutbound: ChannelOutboundAdapter = {
         if (allowList.includes(normalizedTo)) {
           return { ok: true, to: normalizedTo };
         }
-        return {
-          ok: false,
-          error: missingTargetError("Twitch", "<channel-name>"),
-        };
+        // Fallback to first allowFrom entry
+        return { ok: true, to: allowList[0] };
       }
 
       // For explicit mode, accept any valid channel name
       return { ok: true, to: normalizedTo };
     }
 
-    // No target provided - error
+    // No target provided, use allowFrom fallback
+    if (allowList.length > 0) {
+      return { ok: true, to: allowList[0] };
+    }
 
     // No target and no allowFrom - error
     return {
       ok: false,
-      error: missingTargetError("Twitch", "<channel-name>"),
+      error: missingTargetError(
+        "Twitch",
+        "<channel-name> or channels.twitch.accounts.<account>.allowFrom[0]",
+      ),
     };
   },
 

@@ -156,8 +156,7 @@ Configure your tunnel's ingress rules to only route the webhook path:
 
 Use these identifiers for delivery and allowlists:
 
-- Direct messages: `users/<userId>` (recommended) or raw email `name@example.com` (mutable principal).
-- Deprecated: `users/<email>` is treated as a user id, not an email allowlist.
+- Direct messages: `users/<userId>` or `users/<email>` (email addresses are accepted).
 - Spaces: `spaces/<spaceId>`.
 
 ## Config highlights

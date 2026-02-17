@@ -1,7 +1,6 @@
 import fs from "node:fs/promises";
 import path from "node:path";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { loadConfig } from "./config.js";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { withTempHome } from "./test-helpers.js";
 
 describe("config discord", () => {
@@ -56,6 +55,8 @@ describe("config discord", () => {
         "utf-8",
       );
 
+      vi.resetModules();
+      const { loadConfig } = await import("./config.js");
       const cfg = loadConfig();
 
       expect(cfg.channels?.discord?.enabled).toBe(true);

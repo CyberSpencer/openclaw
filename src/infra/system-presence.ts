@@ -1,6 +1,5 @@
 import { spawnSync } from "node:child_process";
 import os from "node:os";
-import { pickPrimaryLanIPv4 } from "../gateway/net.js";
 
 export type SystemPresence = {
   host?: string;
@@ -44,7 +43,25 @@ function normalizePresenceKey(key: string | undefined): string | undefined {
 }
 
 function resolvePrimaryIPv4(): string | undefined {
-  return pickPrimaryLanIPv4() ?? os.hostname();
+  const nets = os.networkInterfaces();
+  const prefer = ["en0", "eth0"];
+  const pick = (names: string[]) => {
+    for (const name of names) {
+      const list = nets[name];
+      const entry = list?.find((n) => n.family === "IPv4" && !n.internal);
+      if (entry?.address) {
+        return entry.address;
+      }
+    }
+    for (const list of Object.values(nets)) {
+      const entry = list?.find((n) => n.family === "IPv4" && !n.internal);
+      if (entry?.address) {
+        return entry.address;
+      }
+    }
+    return undefined;
+  };
+  return pick(prefer) ?? os.hostname();
 }
 
 function initSelfPresence() {

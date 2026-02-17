@@ -59,38 +59,50 @@ vi.mock("../infra/exec-approvals.js", async () => {
   };
 });
 
-const { registerExecApprovalsCli } = await import("./exec-approvals-cli.js");
-const execApprovals = await import("../infra/exec-approvals.js");
-
 describe("exec approvals CLI", () => {
-  const createProgram = () => {
-    const program = new Command();
-    program.exitOverride();
-    registerExecApprovalsCli(program);
-    return program;
-  };
-
-  it("routes get command to local, gateway, and node modes", async () => {
+  it("loads local approvals by default", async () => {
     runtimeLogs.length = 0;
     runtimeErrors.length = 0;
     callGatewayFromCli.mockClear();
 
-    const localProgram = createProgram();
-    await localProgram.parseAsync(["approvals", "get"], { from: "user" });
+    const { registerExecApprovalsCli } = await import("./exec-approvals-cli.js");
+    const program = new Command();
+    program.exitOverride();
+    registerExecApprovalsCli(program);
+
+    await program.parseAsync(["approvals", "get"], { from: "user" });
 
     expect(callGatewayFromCli).not.toHaveBeenCalled();
     expect(runtimeErrors).toHaveLength(0);
+  });
+
+  it("loads gateway approvals when --gateway is set", async () => {
+    runtimeLogs.length = 0;
+    runtimeErrors.length = 0;
     callGatewayFromCli.mockClear();
 
-    const gatewayProgram = createProgram();
-    await gatewayProgram.parseAsync(["approvals", "get", "--gateway"], { from: "user" });
+    const { registerExecApprovalsCli } = await import("./exec-approvals-cli.js");
+    const program = new Command();
+    program.exitOverride();
+    registerExecApprovalsCli(program);
+
+    await program.parseAsync(["approvals", "get", "--gateway"], { from: "user" });
 
     expect(callGatewayFromCli).toHaveBeenCalledWith("exec.approvals.get", expect.anything(), {});
     expect(runtimeErrors).toHaveLength(0);
+  });
+
+  it("loads node approvals when --node is set", async () => {
+    runtimeLogs.length = 0;
+    runtimeErrors.length = 0;
     callGatewayFromCli.mockClear();
 
-    const nodeProgram = createProgram();
-    await nodeProgram.parseAsync(["approvals", "get", "--node", "macbook"], { from: "user" });
+    const { registerExecApprovalsCli } = await import("./exec-approvals-cli.js");
+    const program = new Command();
+    program.exitOverride();
+    registerExecApprovalsCli(program);
+
+    await program.parseAsync(["approvals", "get", "--node", "macbook"], { from: "user" });
 
     expect(callGatewayFromCli).toHaveBeenCalledWith("exec.approvals.node.get", expect.anything(), {
       nodeId: "node-1",
@@ -103,9 +115,11 @@ describe("exec approvals CLI", () => {
     runtimeErrors.length = 0;
     callGatewayFromCli.mockClear();
 
+    const execApprovals = await import("../infra/exec-approvals.js");
     const saveExecApprovals = vi.mocked(execApprovals.saveExecApprovals);
     saveExecApprovals.mockClear();
 
+    const { registerExecApprovalsCli } = await import("./exec-approvals-cli.js");
     const program = new Command();
     program.exitOverride();
     registerExecApprovalsCli(program);

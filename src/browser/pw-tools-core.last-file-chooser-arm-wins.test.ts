@@ -1,13 +1,53 @@
-import { describe, expect, it, vi } from "vitest";
-import {
-  installPwToolsCoreTestHooks,
-  setPwToolsCoreCurrentPage,
-} from "./pw-tools-core.test-harness.js";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 
-installPwToolsCoreTestHooks();
-const mod = await import("./pw-tools-core.js");
+let currentPage: Record<string, unknown> | null = null;
+let currentRefLocator: Record<string, unknown> | null = null;
+let pageState: {
+  console: unknown[];
+  armIdUpload: number;
+  armIdDialog: number;
+  armIdDownload: number;
+};
+
+const sessionMocks = vi.hoisted(() => ({
+  getPageForTargetId: vi.fn(async () => {
+    if (!currentPage) {
+      throw new Error("missing page");
+    }
+    return currentPage;
+  }),
+  ensurePageState: vi.fn(() => pageState),
+  restoreRoleRefsForTarget: vi.fn(() => {}),
+  refLocator: vi.fn(() => {
+    if (!currentRefLocator) {
+      throw new Error("missing locator");
+    }
+    return currentRefLocator;
+  }),
+  rememberRoleRefsForTarget: vi.fn(() => {}),
+}));
+
+vi.mock("./pw-session.js", () => sessionMocks);
+
+async function importModule() {
+  return await import("./pw-tools-core.js");
+}
 
 describe("pw-tools-core", () => {
+  beforeEach(() => {
+    currentPage = null;
+    currentRefLocator = null;
+    pageState = {
+      console: [],
+      armIdUpload: 0,
+      armIdDialog: 0,
+      armIdDownload: 0,
+    };
+    for (const fn of Object.values(sessionMocks)) {
+      fn.mockClear();
+    }
+  });
+
   it("last file-chooser arm wins", async () => {
     let resolve1: ((value: unknown) => void) | null = null;
     let resolve2: ((value: unknown) => void) | null = null;
@@ -30,11 +70,12 @@ describe("pw-tools-core", () => {
           }),
       );
 
-    setPwToolsCoreCurrentPage({
+    currentPage = {
       waitForEvent,
       keyboard: { press: vi.fn(async () => {}) },
-    });
+    };
 
+    const mod = await importModule();
     await mod.armFileUploadViaPlaywright({
       cdpUrl: "http://127.0.0.1:18792",
       paths: ["/tmp/1"],
@@ -56,10 +97,11 @@ describe("pw-tools-core", () => {
     const dismiss = vi.fn(async () => {});
     const dialog = { accept, dismiss };
     const waitForEvent = vi.fn(async () => dialog);
-    setPwToolsCoreCurrentPage({
+    currentPage = {
       waitForEvent,
-    });
+    };
 
+    const mod = await importModule();
     await mod.armDialogViaPlaywright({
       cdpUrl: "http://127.0.0.1:18792",
       accept: true,
@@ -92,7 +134,7 @@ describe("pw-tools-core", () => {
     const waitForFunction = vi.fn(async () => {});
     const waitForTimeout = vi.fn(async () => {});
 
-    const page = {
+    currentPage = {
       locator: vi.fn(() => ({
         first: () => ({ waitFor: waitForSelector }),
       })),
@@ -102,8 +144,8 @@ describe("pw-tools-core", () => {
       waitForTimeout,
       getByText: vi.fn(() => ({ first: () => ({ waitFor: vi.fn() }) })),
     };
-    setPwToolsCoreCurrentPage(page);
 
+    const mod = await importModule();
     await mod.waitForViaPlaywright({
       cdpUrl: "http://127.0.0.1:18792",
       selector: "#main",
@@ -115,7 +157,7 @@ describe("pw-tools-core", () => {
     });
 
     expect(waitForTimeout).toHaveBeenCalledWith(50);
-    expect(page.locator as ReturnType<typeof vi.fn>).toHaveBeenCalledWith("#main");
+    expect(currentPage.locator as ReturnType<typeof vi.fn>).toHaveBeenCalledWith("#main");
     expect(waitForSelector).toHaveBeenCalledWith({
       state: "visible",
       timeout: 1234,

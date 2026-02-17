@@ -114,8 +114,8 @@ describe("datetimePickerAction", () => {
 });
 
 describe("createGridLayout", () => {
-  function createSixSimpleActions() {
-    return [
+  it("creates a 2x3 grid layout for tall menu", () => {
+    const actions = [
       messageAction("A1"),
       messageAction("A2"),
       messageAction("A3"),
@@ -130,10 +130,6 @@ describe("createGridLayout", () => {
       ReturnType<typeof messageAction>,
       ReturnType<typeof messageAction>,
     ];
-  }
-
-  it("creates a 2x3 grid layout for tall menu", () => {
-    const actions = createSixSimpleActions();
 
     const areas = createGridLayout(1686, actions);
 
@@ -154,7 +150,21 @@ describe("createGridLayout", () => {
   });
 
   it("creates a 2x3 grid layout for short menu", () => {
-    const actions = createSixSimpleActions();
+    const actions = [
+      messageAction("A1"),
+      messageAction("A2"),
+      messageAction("A3"),
+      messageAction("A4"),
+      messageAction("A5"),
+      messageAction("A6"),
+    ] as [
+      ReturnType<typeof messageAction>,
+      ReturnType<typeof messageAction>,
+      ReturnType<typeof messageAction>,
+      ReturnType<typeof messageAction>,
+      ReturnType<typeof messageAction>,
+      ReturnType<typeof messageAction>,
+    ];
 
     const areas = createGridLayout(843, actions);
 

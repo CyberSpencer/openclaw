@@ -19,17 +19,13 @@ export type MemorySearchManagerResult = {
 export async function getMemorySearchManager(params: {
   cfg: OpenClawConfig;
   agentId: string;
-  purpose?: "default" | "status";
 }): Promise<MemorySearchManagerResult> {
   const resolved = resolveMemoryBackendConfig(params);
   if (resolved.backend === "qmd" && resolved.qmd) {
-    const statusOnly = params.purpose === "status";
     const cacheKey = buildQmdCacheKey(params.agentId, resolved.qmd);
-    if (!statusOnly) {
-      const cached = QMD_MANAGER_CACHE.get(cacheKey);
-      if (cached) {
-        return { manager: cached };
-      }
+    const cached = QMD_MANAGER_CACHE.get(cacheKey);
+    if (cached) {
+      return { manager: cached };
     }
     try {
       const { QmdMemoryManager } = await import("./qmd-manager.js");
@@ -37,12 +33,8 @@ export async function getMemorySearchManager(params: {
         cfg: params.cfg,
         agentId: params.agentId,
         resolved,
-        mode: statusOnly ? "status" : "full",
       });
       if (primary) {
-        if (statusOnly) {
-          return { manager: primary };
-        }
         const wrapper = new FallbackMemoryManager(
           {
             primary,
@@ -191,16 +183,9 @@ class FallbackMemoryManager implements MemorySearchManager {
     if (this.fallback) {
       return this.fallback;
     }
-    let fallback: MemorySearchManager | null;
-    try {
-      fallback = await this.deps.fallbackFactory();
-      if (!fallback) {
-        log.warn("memory fallback requested but builtin index is unavailable");
-        return null;
-      }
-    } catch (err) {
-      const message = err instanceof Error ? err.message : String(err);
-      log.warn(`memory fallback unavailable: ${message}`);
+    const fallback = await this.deps.fallbackFactory();
+    if (!fallback) {
+      log.warn("memory fallback requested but builtin index is unavailable");
       return null;
     }
     this.fallback = fallback;

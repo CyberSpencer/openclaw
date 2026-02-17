@@ -1,5 +1,4 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { captureEnv } from "../test-utils/env.js";
 
 const loadConfig = vi.fn();
 const resolveGatewayPort = vi.fn();
@@ -332,10 +331,7 @@ describe("callGateway error details", () => {
 });
 
 describe("callGateway url override auth requirements", () => {
-  let envSnapshot: ReturnType<typeof captureEnv>;
-
   beforeEach(() => {
-    envSnapshot = captureEnv(["OPENCLAW_GATEWAY_TOKEN", "OPENCLAW_GATEWAY_PASSWORD"]);
     loadConfig.mockReset();
     resolveGatewayPort.mockReset();
     pickPrimaryTailnetIPv4.mockReset();
@@ -349,7 +345,8 @@ describe("callGateway url override auth requirements", () => {
   });
 
   afterEach(() => {
-    envSnapshot.restore();
+    delete process.env.OPENCLAW_GATEWAY_TOKEN;
+    delete process.env.OPENCLAW_GATEWAY_PASSWORD;
   });
 
   it("throws when url override is set without explicit credentials", async () => {
@@ -369,10 +366,9 @@ describe("callGateway url override auth requirements", () => {
 });
 
 describe("callGateway password resolution", () => {
-  let envSnapshot: ReturnType<typeof captureEnv>;
+  const originalEnvPassword = process.env.OPENCLAW_GATEWAY_PASSWORD;
 
   beforeEach(() => {
-    envSnapshot = captureEnv(["OPENCLAW_GATEWAY_PASSWORD"]);
     loadConfig.mockReset();
     resolveGatewayPort.mockReset();
     pickPrimaryTailnetIPv4.mockReset();
@@ -387,7 +383,11 @@ describe("callGateway password resolution", () => {
   });
 
   afterEach(() => {
-    envSnapshot.restore();
+    if (originalEnvPassword == null) {
+      delete process.env.OPENCLAW_GATEWAY_PASSWORD;
+    } else {
+      process.env.OPENCLAW_GATEWAY_PASSWORD = originalEnvPassword;
+    }
   });
 
   it("uses local config password when env is unset", async () => {
@@ -468,10 +468,9 @@ describe("callGateway password resolution", () => {
 });
 
 describe("callGateway token resolution", () => {
-  let envSnapshot: ReturnType<typeof captureEnv>;
+  const originalEnvToken = process.env.OPENCLAW_GATEWAY_TOKEN;
 
   beforeEach(() => {
-    envSnapshot = captureEnv(["OPENCLAW_GATEWAY_TOKEN"]);
     loadConfig.mockReset();
     resolveGatewayPort.mockReset();
     pickPrimaryTailnetIPv4.mockReset();
@@ -486,7 +485,11 @@ describe("callGateway token resolution", () => {
   });
 
   afterEach(() => {
-    envSnapshot.restore();
+    if (originalEnvToken == null) {
+      delete process.env.OPENCLAW_GATEWAY_TOKEN;
+    } else {
+      process.env.OPENCLAW_GATEWAY_TOKEN = originalEnvToken;
+    }
   });
 
   it("uses explicit token when url override is set", async () => {

@@ -1,13 +1,12 @@
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   restoreStateDirEnv,
   setStateDirEnv,
   snapshotStateDirEnv,
 } from "../test-helpers/state-dir-env.js";
-import { loadOrCreateDeviceIdentity } from "./device-identity.js";
 
 describe("device identity state dir defaults", () => {
   let envSnapshot: ReturnType<typeof snapshotStateDirEnv>;
@@ -17,6 +16,7 @@ describe("device identity state dir defaults", () => {
   });
 
   afterEach(() => {
+    vi.resetModules();
     restoreStateDirEnv(envSnapshot);
   });
 
@@ -24,6 +24,9 @@ describe("device identity state dir defaults", () => {
     const tempRoot = await fs.mkdtemp(path.join(os.tmpdir(), "openclaw-identity-state-"));
     const stateDir = path.join(tempRoot, "state");
     setStateDirEnv(stateDir);
+    vi.resetModules();
+
+    const { loadOrCreateDeviceIdentity } = await import("./device-identity.js");
     const identity = loadOrCreateDeviceIdentity();
 
     try {

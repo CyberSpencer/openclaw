@@ -90,8 +90,17 @@ export function resolveContractPath(): string | null {
   if (explicit) {
     return explicit;
   }
-  const fallback = path.resolve(process.cwd(), "config", "workspace.env");
-  return existsSync(fallback) ? fallback : null;
+  const cwd = process.cwd();
+  const candidates = [
+    path.resolve(cwd, "config", "workspace.env"),
+    path.resolve(cwd, "..", "config", "workspace.env"),
+  ];
+  for (const candidate of candidates) {
+    if (existsSync(candidate)) {
+      return candidate;
+    }
+  }
+  return null;
 }
 
 export function readContractEnv(contractPath: string | null): Record<string, string> {
@@ -133,15 +142,16 @@ export function resolveEffectiveEnv(): Record<string, string> {
 }
 
 export function resolveDgxEnabled(env: Record<string, string>): boolean {
-  return Boolean(parseBooleanLike(env.DGX_ENABLED));
+  return Boolean(parseBooleanLike(env.DGX_ENABLED) ?? parseBooleanLike(process.env.DGX_ENABLED));
 }
 
 export function resolveDgxHost(env: Record<string, string>): string | undefined {
-  return parseStringLike(env.DGX_HOST);
+  return parseStringLike(env.DGX_HOST) ?? parseStringLike(process.env.DGX_HOST);
 }
 
 export function resolveDgxAccessMode(env: Record<string, string>): DgxAccessMode {
-  const raw = parseStringLike(env.DGX_ACCESS_MODE) ?? "auto";
+  const raw =
+    parseStringLike(env.DGX_ACCESS_MODE) ?? parseStringLike(process.env.DGX_ACCESS_MODE) ?? "auto";
   const normalized = raw.toLowerCase();
   if (normalized === "lan" || normalized === "wan") {
     return normalized;
@@ -150,7 +160,11 @@ export function resolveDgxAccessMode(env: Record<string, string>): DgxAccessMode
 }
 
 export function resolveWanBaseUrlFromEnv(env: Record<string, string>): string | undefined {
-  const candidate = parseStringLike(env.DGX_WAN_BASE_URL) ?? parseStringLike(env.OPENCLAW_WAN_BASE_URL);
+  const candidate =
+    parseStringLike(env.DGX_WAN_BASE_URL) ??
+    parseStringLike(process.env.DGX_WAN_BASE_URL) ??
+    parseStringLike(env.OPENCLAW_WAN_BASE_URL) ??
+    parseStringLike(process.env.OPENCLAW_WAN_BASE_URL);
   if (!candidate) {
     return undefined;
   }
@@ -166,19 +180,25 @@ export function resolveWanBaseUrlFromEnv(env: Record<string, string>): string | 
 }
 
 export function resolveWanSkipBrowserWarningHeader(env: Record<string, string>): boolean {
-  const fromEnv = parseBooleanLike(env.DGX_WAN_SKIP_BROWSER_WARNING);
+  const fromEnv =
+    parseBooleanLike(env.DGX_WAN_SKIP_BROWSER_WARNING) ??
+    parseBooleanLike(process.env.DGX_WAN_SKIP_BROWSER_WARNING);
   // Default enabled so free-tier ngrok interstitial does not break JSON APIs.
   return fromEnv ?? true;
 }
 
 function resolveLanProbeTimeoutMs(env: Record<string, string>): number {
-  const raw = parseStringLike(env.DGX_LAN_PROBE_TIMEOUT_MS);
+  const raw =
+    parseStringLike(env.DGX_LAN_PROBE_TIMEOUT_MS) ??
+    parseStringLike(process.env.DGX_LAN_PROBE_TIMEOUT_MS);
   const parsed = raw ? Number(raw) : DEFAULT_LAN_PROBE_TIMEOUT_MS;
   return Number.isFinite(parsed) && parsed > 0 ? parsed : DEFAULT_LAN_PROBE_TIMEOUT_MS;
 }
 
 function resolveAccessCacheTtlMs(env: Record<string, string>): number {
-  const raw = parseStringLike(env.DGX_ACCESS_CACHE_TTL_MS);
+  const raw =
+    parseStringLike(env.DGX_ACCESS_CACHE_TTL_MS) ??
+    parseStringLike(process.env.DGX_ACCESS_CACHE_TTL_MS);
   const parsed = raw ? Number(raw) : DEFAULT_ACCESS_CACHE_TTL_MS;
   return Number.isFinite(parsed) && parsed >= 0 ? parsed : DEFAULT_ACCESS_CACHE_TTL_MS;
 }
@@ -186,7 +206,9 @@ function resolveAccessCacheTtlMs(env: Record<string, string>): number {
 function resolveRouterPortForLanProbe(env: Record<string, string>): number {
   const explicitRouterUrl =
     parseStringLike(env.DGX_ROUTER_URL) ??
-    parseStringLike(env.OPENCLAW_NVIDIA_ROUTER_URL);
+    parseStringLike(process.env.DGX_ROUTER_URL) ??
+    parseStringLike(env.OPENCLAW_NVIDIA_ROUTER_URL) ??
+    parseStringLike(process.env.OPENCLAW_NVIDIA_ROUTER_URL);
   if (explicitRouterUrl) {
     try {
       const parsed = new URL(explicitRouterUrl);
@@ -314,11 +336,53 @@ function resolveWanHost(baseUrl: string): string | null {
   }
 }
 
-function buildWanHeaders(env: Record<string, string>): Record<string, string> {
-  if (!resolveWanSkipBrowserWarningHeader(env)) {
-    return {};
+function isUnresolvedTemplateValue(value: string | undefined): boolean {
+  if (!value) {
+    return false;
   }
-  return { "ngrok-skip-browser-warning": "true" };
+  return /^\$\{[^}]+\}$/.test(value.trim());
+}
+
+function resolveWanTokenFromContract(contractPath: string | null): string | undefined {
+  if (!contractPath) {
+    return undefined;
+  }
+  const configDir = path.dirname(contractPath);
+  const localEnv = readContractEnv(path.join(configDir, ".env"));
+  const secretsEnv = readContractEnv(path.join(configDir, "secrets.env"));
+  const token =
+    parseStringLike(secretsEnv.DGX_WAN_TOKEN) ??
+    parseStringLike(localEnv.DGX_WAN_TOKEN) ??
+    parseStringLike(secretsEnv.OPENCLAW_WAN_TOKEN) ??
+    parseStringLike(localEnv.OPENCLAW_WAN_TOKEN);
+  if (!token || isUnresolvedTemplateValue(token)) {
+    return undefined;
+  }
+  return token;
+}
+
+function resolveWanToken(env: Record<string, string>): string | undefined {
+  const tokenFromEnv =
+    parseStringLike(env.DGX_WAN_TOKEN) ??
+    parseStringLike(process.env.DGX_WAN_TOKEN) ??
+    parseStringLike(env.OPENCLAW_WAN_TOKEN) ??
+    parseStringLike(process.env.OPENCLAW_WAN_TOKEN);
+  if (tokenFromEnv && !isUnresolvedTemplateValue(tokenFromEnv)) {
+    return tokenFromEnv;
+  }
+  return resolveWanTokenFromContract(resolveContractPath());
+}
+
+function buildWanHeaders(env: Record<string, string>): Record<string, string> {
+  const headers: Record<string, string> = {};
+  if (resolveWanSkipBrowserWarningHeader(env)) {
+    headers["ngrok-skip-browser-warning"] = "true";
+  }
+  const wanToken = resolveWanToken(env);
+  if (wanToken) {
+    headers["X-OpenClaw-Token"] = wanToken;
+  }
+  return headers;
 }
 
 export async function resolveDgxAccess(

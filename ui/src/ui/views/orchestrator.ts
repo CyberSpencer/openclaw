@@ -145,8 +145,10 @@ function applyTemplateToDraft(state: OrchestratorHost, tpl: OrchestratorTemplate
 
 function agentOptions(state: OrchestratorHost) {
   const agents = state.agentsList?.agents ?? [];
-  const fallback = [{ id: "main", name: "Main" }];
-  const list = agents.length ? agents : fallback;
+  const fallback: Array<{ id: string; name?: string }> = [{ id: "main" }];
+  const list: Array<{ id: string; name?: string }> = agents.length
+    ? agents.map((agent) => ({ id: agent.id, name: agent.name }))
+    : fallback;
   return list.map((a) => ({ id: a.id, label: a.name?.trim() ? `${a.name} (${a.id})` : a.id }));
 }
 

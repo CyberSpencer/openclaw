@@ -16,36 +16,6 @@ type ClaudeWebOrganizationsResponse = Array<{
 
 type ClaudeWebUsageResponse = ClaudeUsageResponse;
 
-function buildClaudeUsageWindows(data: ClaudeUsageResponse): UsageWindow[] {
-  const windows: UsageWindow[] = [];
-
-  if (data.five_hour?.utilization !== undefined) {
-    windows.push({
-      label: "5h",
-      usedPercent: clampPercent(data.five_hour.utilization),
-      resetAt: data.five_hour.resets_at ? new Date(data.five_hour.resets_at).getTime() : undefined,
-    });
-  }
-
-  if (data.seven_day?.utilization !== undefined) {
-    windows.push({
-      label: "Week",
-      usedPercent: clampPercent(data.seven_day.utilization),
-      resetAt: data.seven_day.resets_at ? new Date(data.seven_day.resets_at).getTime() : undefined,
-    });
-  }
-
-  const modelWindow = data.seven_day_sonnet || data.seven_day_opus;
-  if (modelWindow?.utilization !== undefined) {
-    windows.push({
-      label: data.seven_day_sonnet ? "Sonnet" : "Opus",
-      usedPercent: clampPercent(modelWindow.utilization),
-    });
-  }
-
-  return windows;
-}
-
 function resolveClaudeWebSessionKey(): string | undefined {
   const direct =
     process.env.CLAUDE_AI_SESSION_KEY?.trim() ?? process.env.CLAUDE_WEB_SESSION_KEY?.trim();
@@ -100,7 +70,31 @@ async function fetchClaudeWebUsage(
   }
 
   const data = (await usageRes.json()) as ClaudeWebUsageResponse;
-  const windows = buildClaudeUsageWindows(data);
+  const windows: UsageWindow[] = [];
+
+  if (data.five_hour?.utilization !== undefined) {
+    windows.push({
+      label: "5h",
+      usedPercent: clampPercent(data.five_hour.utilization),
+      resetAt: data.five_hour.resets_at ? new Date(data.five_hour.resets_at).getTime() : undefined,
+    });
+  }
+
+  if (data.seven_day?.utilization !== undefined) {
+    windows.push({
+      label: "Week",
+      usedPercent: clampPercent(data.seven_day.utilization),
+      resetAt: data.seven_day.resets_at ? new Date(data.seven_day.resets_at).getTime() : undefined,
+    });
+  }
+
+  const modelWindow = data.seven_day_sonnet || data.seven_day_opus;
+  if (modelWindow?.utilization !== undefined) {
+    windows.push({
+      label: data.seven_day_sonnet ? "Sonnet" : "Opus",
+      usedPercent: clampPercent(modelWindow.utilization),
+    });
+  }
 
   if (windows.length === 0) {
     return null;
@@ -169,7 +163,31 @@ export async function fetchClaudeUsage(
   }
 
   const data = (await res.json()) as ClaudeUsageResponse;
-  const windows = buildClaudeUsageWindows(data);
+  const windows: UsageWindow[] = [];
+
+  if (data.five_hour?.utilization !== undefined) {
+    windows.push({
+      label: "5h",
+      usedPercent: clampPercent(data.five_hour.utilization),
+      resetAt: data.five_hour.resets_at ? new Date(data.five_hour.resets_at).getTime() : undefined,
+    });
+  }
+
+  if (data.seven_day?.utilization !== undefined) {
+    windows.push({
+      label: "Week",
+      usedPercent: clampPercent(data.seven_day.utilization),
+      resetAt: data.seven_day.resets_at ? new Date(data.seven_day.resets_at).getTime() : undefined,
+    });
+  }
+
+  const modelWindow = data.seven_day_sonnet || data.seven_day_opus;
+  if (modelWindow?.utilization !== undefined) {
+    windows.push({
+      label: data.seven_day_sonnet ? "Sonnet" : "Opus",
+      usedPercent: clampPercent(modelWindow.utilization),
+    });
+  }
 
   return {
     provider: "anthropic",

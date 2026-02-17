@@ -249,15 +249,15 @@ function buildChatCommands(): ChatCommandDefinition[] {
     defineChatCommand({
       key: "subagents",
       nativeName: "subagents",
-      description: "List, kill, log, or steer subagent runs for this session.",
+      description: "List/stop/log/info subagent runs for this session.",
       textAlias: "/subagents",
       category: "management",
       args: [
         {
           name: "action",
-          description: "list | kill | log | info | send | steer",
+          description: "list | stop | log | info | send",
           type: "string",
-          choices: ["list", "kill", "log", "info", "send", "steer"],
+          choices: ["list", "stop", "log", "info", "send"],
         },
         {
           name: "target",
@@ -272,41 +272,6 @@ function buildChatCommands(): ChatCommandDefinition[] {
         },
       ],
       argsMenu: "auto",
-    }),
-    defineChatCommand({
-      key: "kill",
-      nativeName: "kill",
-      description: "Kill a running subagent (or all).",
-      textAlias: "/kill",
-      category: "management",
-      args: [
-        {
-          name: "target",
-          description: "Label, run id, index, or all",
-          type: "string",
-        },
-      ],
-      argsMenu: "auto",
-    }),
-    defineChatCommand({
-      key: "steer",
-      nativeName: "steer",
-      description: "Send guidance to a running subagent.",
-      textAlias: "/steer",
-      category: "management",
-      args: [
-        {
-          name: "target",
-          description: "Label, run id, or index",
-          type: "string",
-        },
-        {
-          name: "message",
-          description: "Steering message",
-          type: "string",
-          captureRemaining: true,
-        },
-      ],
     }),
     defineChatCommand({
       key: "config",
@@ -427,29 +392,6 @@ function buildChatCommands(): ChatCommandDefinition[] {
       argsMenu: "auto",
     }),
     defineChatCommand({
-      key: "project",
-      nativeName: "project",
-      description: "Manage active project context (init/set/clear/show/list/mode/clone).",
-      textAlias: "/project",
-      acceptsArgs: true,
-      category: "management",
-      args: [
-        {
-          name: "action",
-          description: "init, set, clear, show, list, mode, or clone",
-          type: "string",
-          choices: ["init", "set", "clear", "show", "list", "mode", "clone"],
-        },
-        {
-          name: "value",
-          description: "Project id (init/set), memory mode (mode), or clone args (clone)",
-          type: "string",
-          captureRemaining: true,
-        },
-      ],
-      argsMenu: "auto",
-    }),
-    defineChatCommand({
       key: "reset",
       nativeName: "reset",
       description: "Reset the current session.",
@@ -467,9 +409,9 @@ function buildChatCommands(): ChatCommandDefinition[] {
     }),
     defineChatCommand({
       key: "compact",
-      nativeName: "compact",
       description: "Compact the session context.",
       textAlias: "/compact",
+      scope: "text",
       category: "session",
       args: [
         {
@@ -640,7 +582,6 @@ function buildChatCommands(): ChatCommandDefinition[] {
   registerAlias(commands, "verbose", "/v");
   registerAlias(commands, "reasoning", "/reason");
   registerAlias(commands, "elevated", "/elev");
-  registerAlias(commands, "steer", "/tell");
 
   assertCommandRegistry(commands);
   return commands;

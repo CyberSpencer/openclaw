@@ -63,32 +63,6 @@ function looksLikeGuid(value: string): boolean {
   return /^[0-9a-fA-F-]{16,}$/.test(value);
 }
 
-async function promptMSTeamsCredentials(prompter: WizardPrompter): Promise<{
-  appId: string;
-  appPassword: string;
-  tenantId: string;
-}> {
-  const appId = String(
-    await prompter.text({
-      message: "Enter MS Teams App ID",
-      validate: (value) => (value?.trim() ? undefined : "Required"),
-    }),
-  ).trim();
-  const appPassword = String(
-    await prompter.text({
-      message: "Enter MS Teams App Password",
-      validate: (value) => (value?.trim() ? undefined : "Required"),
-    }),
-  ).trim();
-  const tenantId = String(
-    await prompter.text({
-      message: "Enter MS Teams Tenant ID",
-      validate: (value) => (value?.trim() ? undefined : "Required"),
-    }),
-  ).trim();
-  return { appId, appPassword, tenantId };
-}
-
 async function promptMSTeamsAllowFrom(params: {
   cfg: OpenClawConfig;
   prompter: WizardPrompter;
@@ -277,7 +251,24 @@ export const msteamsOnboardingAdapter: ChannelOnboardingAdapter = {
           },
         };
       } else {
-        ({ appId, appPassword, tenantId } = await promptMSTeamsCredentials(prompter));
+        appId = String(
+          await prompter.text({
+            message: "Enter MS Teams App ID",
+            validate: (value) => (value?.trim() ? undefined : "Required"),
+          }),
+        ).trim();
+        appPassword = String(
+          await prompter.text({
+            message: "Enter MS Teams App Password",
+            validate: (value) => (value?.trim() ? undefined : "Required"),
+          }),
+        ).trim();
+        tenantId = String(
+          await prompter.text({
+            message: "Enter MS Teams Tenant ID",
+            validate: (value) => (value?.trim() ? undefined : "Required"),
+          }),
+        ).trim();
       }
     } else if (hasConfigCreds) {
       const keep = await prompter.confirm({
@@ -285,10 +276,44 @@ export const msteamsOnboardingAdapter: ChannelOnboardingAdapter = {
         initialValue: true,
       });
       if (!keep) {
-        ({ appId, appPassword, tenantId } = await promptMSTeamsCredentials(prompter));
+        appId = String(
+          await prompter.text({
+            message: "Enter MS Teams App ID",
+            validate: (value) => (value?.trim() ? undefined : "Required"),
+          }),
+        ).trim();
+        appPassword = String(
+          await prompter.text({
+            message: "Enter MS Teams App Password",
+            validate: (value) => (value?.trim() ? undefined : "Required"),
+          }),
+        ).trim();
+        tenantId = String(
+          await prompter.text({
+            message: "Enter MS Teams Tenant ID",
+            validate: (value) => (value?.trim() ? undefined : "Required"),
+          }),
+        ).trim();
       }
     } else {
-      ({ appId, appPassword, tenantId } = await promptMSTeamsCredentials(prompter));
+      appId = String(
+        await prompter.text({
+          message: "Enter MS Teams App ID",
+          validate: (value) => (value?.trim() ? undefined : "Required"),
+        }),
+      ).trim();
+      appPassword = String(
+        await prompter.text({
+          message: "Enter MS Teams App Password",
+          validate: (value) => (value?.trim() ? undefined : "Required"),
+        }),
+      ).trim();
+      tenantId = String(
+        await prompter.text({
+          message: "Enter MS Teams Tenant ID",
+          validate: (value) => (value?.trim() ? undefined : "Required"),
+        }),
+      ).trim();
     }
 
     if (appId && appPassword && tenantId) {

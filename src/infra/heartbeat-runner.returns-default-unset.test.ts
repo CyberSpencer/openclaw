@@ -1,20 +1,24 @@
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
-import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { OpenClawConfig } from "../config/config.js";
+import { telegramPlugin } from "../../extensions/telegram/src/channel.js";
+import { setTelegramRuntime } from "../../extensions/telegram/src/runtime.js";
+import { whatsappPlugin } from "../../extensions/whatsapp/src/channel.js";
+import { setWhatsAppRuntime } from "../../extensions/whatsapp/src/runtime.js";
 import { HEARTBEAT_PROMPT } from "../auto-reply/heartbeat.js";
 import * as replyModule from "../auto-reply/reply.js";
-import { whatsappOutbound } from "../channels/plugins/outbound/whatsapp.js";
 import {
   resolveAgentIdFromSessionKey,
   resolveAgentMainSessionKey,
   resolveMainSessionKey,
   resolveStorePath,
 } from "../config/sessions.js";
-import { getActivePluginRegistry, setActivePluginRegistry } from "../plugins/runtime.js";
+import { setActivePluginRegistry } from "../plugins/runtime.js";
+import { createPluginRuntime } from "../plugins/runtime/index.js";
 import { buildAgentPeerSessionKey } from "../routing/session-key.js";
-import { createOutboundTestPlugin, createTestRegistry } from "../test-utils/channel-plugins.js";
+import { createTestRegistry } from "../test-utils/channel-plugins.js";
 import {
   isHeartbeatEnabledForAgent,
   resolveHeartbeatIntervalMs,
@@ -29,90 +33,16 @@ import {
 // Avoid pulling optional runtime deps during isolated runs.
 vi.mock("jiti", () => ({ createJiti: () => () => ({}) }));
 
-let previousRegistry: ReturnType<typeof getActivePluginRegistry> | null = null;
-let testRegistry: ReturnType<typeof getActivePluginRegistry> | null = null;
-
-let fixtureRoot = "";
-let fixtureCount = 0;
-
-const createCaseDir = async (prefix: string) => {
-  const dir = path.join(fixtureRoot, `${prefix}-${fixtureCount++}`);
-  await fs.mkdir(dir, { recursive: true });
-  return dir;
-};
-
-beforeAll(async () => {
-  previousRegistry = getActivePluginRegistry();
-
-  const whatsappPlugin = createOutboundTestPlugin({ id: "whatsapp", outbound: whatsappOutbound });
-  whatsappPlugin.config = {
-    ...whatsappPlugin.config,
-    resolveAllowFrom: ({ cfg }) =>
-      cfg.channels?.whatsapp?.allowFrom?.map((entry) => String(entry)) ?? [],
-  };
-
-  const telegramPlugin = createOutboundTestPlugin({
-    id: "telegram",
-    outbound: {
-      deliveryMode: "direct",
-      sendText: async ({ to, text, deps, accountId }) => {
-        if (!deps?.sendTelegram) {
-          throw new Error("sendTelegram missing");
-        }
-        const res = await deps.sendTelegram(to, text, {
-          verbose: false,
-          accountId: accountId ?? undefined,
-        });
-        return { channel: "telegram", messageId: res.messageId, chatId: res.chatId };
-      },
-      sendMedia: async ({ to, text, mediaUrl, deps, accountId }) => {
-        if (!deps?.sendTelegram) {
-          throw new Error("sendTelegram missing");
-        }
-        const res = await deps.sendTelegram(to, text, {
-          verbose: false,
-          accountId: accountId ?? undefined,
-          mediaUrl,
-        });
-        return { channel: "telegram", messageId: res.messageId, chatId: res.chatId };
-      },
-    },
-  });
-  telegramPlugin.config = {
-    ...telegramPlugin.config,
-    listAccountIds: (cfg) => Object.keys(cfg.channels?.telegram?.accounts ?? {}),
-    resolveAllowFrom: ({ cfg, accountId }) => {
-      const channel = cfg.channels?.telegram;
-      const normalized = accountId?.trim();
-      if (normalized && channel?.accounts?.[normalized]?.allowFrom) {
-        return channel.accounts[normalized].allowFrom?.map((entry) => String(entry)) ?? [];
-      }
-      return channel?.allowFrom?.map((entry) => String(entry)) ?? [];
-    },
-  };
-
-  testRegistry = createTestRegistry([
-    { pluginId: "whatsapp", plugin: whatsappPlugin, source: "test" },
-    { pluginId: "telegram", plugin: telegramPlugin, source: "test" },
-  ]);
-  setActivePluginRegistry(testRegistry);
-
-  fixtureRoot = await fs.mkdtemp(path.join(os.tmpdir(), "openclaw-heartbeat-suite-"));
-});
-
 beforeEach(() => {
-  if (testRegistry) {
-    setActivePluginRegistry(testRegistry);
-  }
-});
-
-afterAll(async () => {
-  if (fixtureRoot) {
-    await fs.rm(fixtureRoot, { recursive: true, force: true });
-  }
-  if (previousRegistry) {
-    setActivePluginRegistry(previousRegistry);
-  }
+  const runtime = createPluginRuntime();
+  setTelegramRuntime(runtime);
+  setWhatsAppRuntime(runtime);
+  setActivePluginRegistry(
+    createTestRegistry([
+      { pluginId: "whatsapp", plugin: whatsappPlugin, source: "test" },
+      { pluginId: "telegram", plugin: telegramPlugin, source: "test" },
+    ]),
+  );
 });
 
 describe("resolveHeartbeatIntervalMs", () => {
@@ -268,7 +198,7 @@ describe("resolveHeartbeatDeliveryTarget", () => {
     });
   });
 
-  it("rejects WhatsApp target not in allowFrom (no silent fallback)", () => {
+  it("applies allowFrom fallback for WhatsApp targets", () => {
     const cfg: OpenClawConfig = {
       agents: { defaults: { heartbeat: { target: "whatsapp", to: "+1999" } } },
       channels: { whatsapp: { allowFrom: ["+1555", "+1666"] } },
@@ -279,8 +209,27 @@ describe("resolveHeartbeatDeliveryTarget", () => {
       lastTo: "+1222",
     };
     expect(resolveHeartbeatDeliveryTarget({ cfg, entry })).toEqual({
-      channel: "none",
-      reason: "no-target",
+      channel: "whatsapp",
+      to: "+1555",
+      reason: "allowFrom-fallback",
+      accountId: undefined,
+      lastChannel: "whatsapp",
+      lastAccountId: undefined,
+    });
+  });
+
+  it("keeps WhatsApp group targets even with allowFrom set", () => {
+    const cfg: OpenClawConfig = {
+      channels: { whatsapp: { allowFrom: ["+1555"] } },
+    };
+    const entry = {
+      ...baseEntry,
+      lastChannel: "whatsapp" as const,
+      lastTo: "120363401234567890@g.us",
+    };
+    expect(resolveHeartbeatDeliveryTarget({ cfg, entry })).toEqual({
+      channel: "whatsapp",
+      to: "120363401234567890@g.us",
       accountId: undefined,
       lastChannel: "whatsapp",
       lastAccountId: undefined,
@@ -301,6 +250,19 @@ describe("resolveHeartbeatDeliveryTarget", () => {
       to: "120363401234567890@g.us",
       accountId: undefined,
       lastChannel: "whatsapp",
+      lastAccountId: undefined,
+    });
+  });
+
+  it("keeps explicit telegram targets", () => {
+    const cfg: OpenClawConfig = {
+      agents: { defaults: { heartbeat: { target: "telegram", to: "123" } } },
+    };
+    expect(resolveHeartbeatDeliveryTarget({ cfg, entry: baseEntry })).toEqual({
+      channel: "telegram",
+      to: "123",
+      accountId: undefined,
+      lastChannel: undefined,
       lastAccountId: undefined,
     });
   });
@@ -436,7 +398,7 @@ describe("runHeartbeatOnce", () => {
   });
 
   it("uses the last non-empty payload for delivery", async () => {
-    const tmpDir = await createCaseDir("hb-last-payload");
+    const tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), "openclaw-hb-"));
     const storePath = path.join(tmpDir, "sessions.json");
     const replySpy = vi.spyOn(replyModule, "getReplyFromConfig");
     try {
@@ -454,14 +416,18 @@ describe("runHeartbeatOnce", () => {
 
       await fs.writeFile(
         storePath,
-        JSON.stringify({
-          [sessionKey]: {
-            sessionId: "sid",
-            updatedAt: Date.now(),
-            lastChannel: "whatsapp",
-            lastTo: "+1555",
+        JSON.stringify(
+          {
+            [sessionKey]: {
+              sessionId: "sid",
+              updatedAt: Date.now(),
+              lastChannel: "whatsapp",
+              lastTo: "+1555",
+            },
           },
-        }),
+          null,
+          2,
+        ),
       );
 
       replySpy.mockResolvedValue([{ text: "Let me check..." }, { text: "Final alert" }]);
@@ -485,11 +451,12 @@ describe("runHeartbeatOnce", () => {
       expect(sendWhatsApp).toHaveBeenCalledWith("+1555", "Final alert", expect.any(Object));
     } finally {
       replySpy.mockRestore();
+      await fs.rm(tmpDir, { recursive: true, force: true });
     }
   });
 
   it("uses per-agent heartbeat overrides and session keys", async () => {
-    const tmpDir = await createCaseDir("hb-agent-overrides");
+    const tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), "openclaw-hb-"));
     const storePath = path.join(tmpDir, "sessions.json");
     const replySpy = vi.spyOn(replyModule, "getReplyFromConfig");
     try {
@@ -513,83 +480,10 @@ describe("runHeartbeatOnce", () => {
 
       await fs.writeFile(
         storePath,
-        JSON.stringify({
-          [sessionKey]: {
-            sessionId: "sid",
-            updatedAt: Date.now(),
-            lastChannel: "whatsapp",
-            lastTo: "+1555",
-          },
-        }),
-      );
-      replySpy.mockResolvedValue([{ text: "Final alert" }]);
-      const sendWhatsApp = vi.fn().mockResolvedValue({
-        messageId: "m1",
-        toJid: "jid",
-      });
-      await runHeartbeatOnce({
-        cfg,
-        agentId: "ops",
-        deps: {
-          sendWhatsApp,
-          getQueueSize: () => 0,
-          nowMs: () => 0,
-          webAuthExists: async () => true,
-          hasActiveWebListener: () => true,
-        },
-      });
-      expect(sendWhatsApp).toHaveBeenCalledTimes(1);
-      expect(sendWhatsApp).toHaveBeenCalledWith("+1555", "Final alert", expect.any(Object));
-      expect(replySpy).toHaveBeenCalledWith(
-        expect.objectContaining({
-          Body: expect.stringMatching(/Ops check[\s\S]*Current time: /),
-          SessionKey: sessionKey,
-        }),
-        { isHeartbeat: true },
-        cfg,
-      );
-    } finally {
-      replySpy.mockRestore();
-    }
-  });
-
-  it("reuses non-default agent sessionFile from templated stores", async () => {
-    const tmpDir = await createCaseDir("hb-templated-store");
-    const storeTemplate = path.join(tmpDir, "agents", "{agentId}", "sessions", "sessions.json");
-    const replySpy = vi.spyOn(replyModule, "getReplyFromConfig");
-    const agentId = "ops";
-    try {
-      const cfg: OpenClawConfig = {
-        agents: {
-          defaults: {
-            heartbeat: { every: "30m", prompt: "Default prompt" },
-          },
-          list: [
-            { id: "main", default: true },
-            {
-              id: agentId,
-              heartbeat: { every: "5m", target: "whatsapp", prompt: "Ops check" },
-            },
-          ],
-        },
-        channels: { whatsapp: { allowFrom: ["*"] } },
-        session: { store: storeTemplate },
-      };
-      const sessionKey = resolveAgentMainSessionKey({ cfg, agentId });
-      const storePath = resolveStorePath(storeTemplate, { agentId });
-      const sessionsDir = path.dirname(storePath);
-      const sessionId = "sid-ops";
-      const sessionFile = path.join(sessionsDir, `${sessionId}.jsonl`);
-
-      await fs.mkdir(sessionsDir, { recursive: true });
-      await fs.writeFile(sessionFile, "", "utf-8");
-      await fs.writeFile(
-        storePath,
         JSON.stringify(
           {
             [sessionKey]: {
-              sessionId,
-              sessionFile,
+              sessionId: "sid",
               updatedAt: Date.now(),
               lastChannel: "whatsapp",
               lastTo: "+1555",
@@ -605,9 +499,10 @@ describe("runHeartbeatOnce", () => {
         messageId: "m1",
         toJid: "jid",
       });
-      const result = await runHeartbeatOnce({
+
+      await runHeartbeatOnce({
         cfg,
-        agentId,
+        agentId: "ops",
         deps: {
           sendWhatsApp,
           getQueueSize: () => 0,
@@ -617,21 +512,21 @@ describe("runHeartbeatOnce", () => {
         },
       });
 
-      expect(result.status).toBe("ran");
       expect(sendWhatsApp).toHaveBeenCalledTimes(1);
       expect(sendWhatsApp).toHaveBeenCalledWith("+1555", "Final alert", expect.any(Object));
       expect(replySpy).toHaveBeenCalledWith(
-        expect.objectContaining({ SessionKey: sessionKey }),
+        expect.objectContaining({ Body: "Ops check", SessionKey: sessionKey }),
         { isHeartbeat: true },
         cfg,
       );
     } finally {
       replySpy.mockRestore();
+      await fs.rm(tmpDir, { recursive: true, force: true });
     }
   });
 
   it("runs heartbeats in the explicit session key when configured", async () => {
-    const tmpDir = await createCaseDir("hb-explicit-session");
+    const tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), "openclaw-hb-"));
     const storePath = path.join(tmpDir, "sessions.json");
     const replySpy = vi.spyOn(replyModule, "getReplyFromConfig");
     try {
@@ -663,20 +558,24 @@ describe("runHeartbeatOnce", () => {
 
       await fs.writeFile(
         storePath,
-        JSON.stringify({
-          [mainSessionKey]: {
-            sessionId: "sid-main",
-            updatedAt: Date.now(),
-            lastChannel: "whatsapp",
-            lastTo: "+1555",
+        JSON.stringify(
+          {
+            [mainSessionKey]: {
+              sessionId: "sid-main",
+              updatedAt: Date.now(),
+              lastChannel: "whatsapp",
+              lastTo: "+1555",
+            },
+            [groupSessionKey]: {
+              sessionId: "sid-group",
+              updatedAt: Date.now() + 10_000,
+              lastChannel: "whatsapp",
+              lastTo: groupId,
+            },
           },
-          [groupSessionKey]: {
-            sessionId: "sid-group",
-            updatedAt: Date.now() + 10_000,
-            lastChannel: "whatsapp",
-            lastTo: groupId,
-          },
-        }),
+          null,
+          2,
+        ),
       );
 
       replySpy.mockResolvedValue([{ text: "Group alert" }]);
@@ -705,11 +604,12 @@ describe("runHeartbeatOnce", () => {
       );
     } finally {
       replySpy.mockRestore();
+      await fs.rm(tmpDir, { recursive: true, force: true });
     }
   });
 
   it("suppresses duplicate heartbeat payloads within 24h", async () => {
-    const tmpDir = await createCaseDir("hb-dup-suppress");
+    const tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), "openclaw-hb-"));
     const storePath = path.join(tmpDir, "sessions.json");
     const replySpy = vi.spyOn(replyModule, "getReplyFromConfig");
     try {
@@ -727,16 +627,20 @@ describe("runHeartbeatOnce", () => {
 
       await fs.writeFile(
         storePath,
-        JSON.stringify({
-          [sessionKey]: {
-            sessionId: "sid",
-            updatedAt: Date.now(),
-            lastChannel: "whatsapp",
-            lastTo: "+1555",
-            lastHeartbeatText: "Final alert",
-            lastHeartbeatSentAt: 0,
+        JSON.stringify(
+          {
+            [sessionKey]: {
+              sessionId: "sid",
+              updatedAt: Date.now(),
+              lastChannel: "whatsapp",
+              lastTo: "+1555",
+              lastHeartbeatText: "Final alert",
+              lastHeartbeatSentAt: 0,
+            },
           },
-        }),
+          null,
+          2,
+        ),
       );
 
       replySpy.mockResolvedValue([{ text: "Final alert" }]);
@@ -756,11 +660,12 @@ describe("runHeartbeatOnce", () => {
       expect(sendWhatsApp).toHaveBeenCalledTimes(0);
     } finally {
       replySpy.mockRestore();
+      await fs.rm(tmpDir, { recursive: true, force: true });
     }
   });
 
   it("can include reasoning payloads when enabled", async () => {
-    const tmpDir = await createCaseDir("hb-reasoning");
+    const tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), "openclaw-hb-"));
     const storePath = path.join(tmpDir, "sessions.json");
     const replySpy = vi.spyOn(replyModule, "getReplyFromConfig");
     try {
@@ -782,15 +687,19 @@ describe("runHeartbeatOnce", () => {
 
       await fs.writeFile(
         storePath,
-        JSON.stringify({
-          [sessionKey]: {
-            sessionId: "sid",
-            updatedAt: Date.now(),
-            lastChannel: "whatsapp",
-            lastProvider: "whatsapp",
-            lastTo: "+1555",
+        JSON.stringify(
+          {
+            [sessionKey]: {
+              sessionId: "sid",
+              updatedAt: Date.now(),
+              lastChannel: "whatsapp",
+              lastProvider: "whatsapp",
+              lastTo: "+1555",
+            },
           },
-        }),
+          null,
+          2,
+        ),
       );
 
       replySpy.mockResolvedValue([
@@ -823,11 +732,12 @@ describe("runHeartbeatOnce", () => {
       expect(sendWhatsApp).toHaveBeenNthCalledWith(2, "+1555", "Final alert", expect.any(Object));
     } finally {
       replySpy.mockRestore();
+      await fs.rm(tmpDir, { recursive: true, force: true });
     }
   });
 
   it("delivers reasoning even when the main heartbeat reply is HEARTBEAT_OK", async () => {
-    const tmpDir = await createCaseDir("hb-reasoning-heartbeat-ok");
+    const tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), "openclaw-hb-"));
     const storePath = path.join(tmpDir, "sessions.json");
     const replySpy = vi.spyOn(replyModule, "getReplyFromConfig");
     try {
@@ -849,15 +759,19 @@ describe("runHeartbeatOnce", () => {
 
       await fs.writeFile(
         storePath,
-        JSON.stringify({
-          [sessionKey]: {
-            sessionId: "sid",
-            updatedAt: Date.now(),
-            lastChannel: "whatsapp",
-            lastProvider: "whatsapp",
-            lastTo: "+1555",
+        JSON.stringify(
+          {
+            [sessionKey]: {
+              sessionId: "sid",
+              updatedAt: Date.now(),
+              lastChannel: "whatsapp",
+              lastProvider: "whatsapp",
+              lastTo: "+1555",
+            },
           },
-        }),
+          null,
+          2,
+        ),
       );
 
       replySpy.mockResolvedValue([
@@ -889,11 +803,12 @@ describe("runHeartbeatOnce", () => {
       );
     } finally {
       replySpy.mockRestore();
+      await fs.rm(tmpDir, { recursive: true, force: true });
     }
   });
 
   it("loads the default agent session from templated stores", async () => {
-    const tmpDir = await createCaseDir("openclaw-hb");
+    const tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), "openclaw-hb-"));
     const storeTemplate = path.join(tmpDir, "agents", "{agentId}", "sessions.json");
     const replySpy = vi.spyOn(replyModule, "getReplyFromConfig");
     try {
@@ -952,11 +867,12 @@ describe("runHeartbeatOnce", () => {
       );
     } finally {
       replySpy.mockRestore();
+      await fs.rm(tmpDir, { recursive: true, force: true });
     }
   });
 
   it("skips heartbeat when HEARTBEAT.md is effectively empty (saves API calls)", async () => {
-    const tmpDir = await createCaseDir("openclaw-hb");
+    const tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), "openclaw-hb-"));
     const storePath = path.join(tmpDir, "sessions.json");
     const workspaceDir = path.join(tmpDir, "workspace");
     const replySpy = vi.spyOn(replyModule, "getReplyFromConfig");
@@ -1023,78 +939,12 @@ describe("runHeartbeatOnce", () => {
       expect(sendWhatsApp).not.toHaveBeenCalled();
     } finally {
       replySpy.mockRestore();
-    }
-  });
-
-  it("does not skip wake-triggered heartbeat when HEARTBEAT.md is effectively empty", async () => {
-    const tmpDir = await createCaseDir("openclaw-hb");
-    const storePath = path.join(tmpDir, "sessions.json");
-    const workspaceDir = path.join(tmpDir, "workspace");
-    const replySpy = vi.spyOn(replyModule, "getReplyFromConfig");
-    try {
-      await fs.mkdir(workspaceDir, { recursive: true });
-      await fs.writeFile(
-        path.join(workspaceDir, "HEARTBEAT.md"),
-        "# HEARTBEAT.md\n\n## Tasks\n\n",
-        "utf-8",
-      );
-
-      const cfg: OpenClawConfig = {
-        agents: {
-          defaults: {
-            workspace: workspaceDir,
-            heartbeat: { every: "5m", target: "whatsapp" },
-          },
-        },
-        channels: { whatsapp: { allowFrom: ["*"] } },
-        session: { store: storePath },
-      };
-      const sessionKey = resolveMainSessionKey(cfg);
-
-      await fs.writeFile(
-        storePath,
-        JSON.stringify(
-          {
-            [sessionKey]: {
-              sessionId: "sid",
-              updatedAt: Date.now(),
-              lastChannel: "whatsapp",
-              lastTo: "+1555",
-            },
-          },
-          null,
-          2,
-        ),
-      );
-
-      replySpy.mockResolvedValue({ text: "wake event processed" });
-      const sendWhatsApp = vi.fn().mockResolvedValue({
-        messageId: "m1",
-        toJid: "jid",
-      });
-
-      const res = await runHeartbeatOnce({
-        cfg,
-        reason: "wake",
-        deps: {
-          sendWhatsApp,
-          getQueueSize: () => 0,
-          nowMs: () => 0,
-          webAuthExists: async () => true,
-          hasActiveWebListener: () => true,
-        },
-      });
-
-      expect(res.status).toBe("ran");
-      expect(replySpy).toHaveBeenCalled();
-      expect(sendWhatsApp).toHaveBeenCalledTimes(1);
-    } finally {
-      replySpy.mockRestore();
+      await fs.rm(tmpDir, { recursive: true, force: true });
     }
   });
 
   it("runs heartbeat when HEARTBEAT.md has actionable content", async () => {
-    const tmpDir = await createCaseDir("openclaw-hb");
+    const tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), "openclaw-hb-"));
     const storePath = path.join(tmpDir, "sessions.json");
     const workspaceDir = path.join(tmpDir, "workspace");
     const replySpy = vi.spyOn(replyModule, "getReplyFromConfig");
@@ -1159,11 +1009,12 @@ describe("runHeartbeatOnce", () => {
       expect(sendWhatsApp).toHaveBeenCalledTimes(1);
     } finally {
       replySpy.mockRestore();
+      await fs.rm(tmpDir, { recursive: true, force: true });
     }
   });
 
   it("runs heartbeat when HEARTBEAT.md does not exist (lets LLM decide)", async () => {
-    const tmpDir = await createCaseDir("openclaw-hb");
+    const tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), "openclaw-hb-"));
     const storePath = path.join(tmpDir, "sessions.json");
     const workspaceDir = path.join(tmpDir, "workspace");
     const replySpy = vi.spyOn(replyModule, "getReplyFromConfig");
@@ -1221,6 +1072,7 @@ describe("runHeartbeatOnce", () => {
       expect(replySpy).toHaveBeenCalled();
     } finally {
       replySpy.mockRestore();
+      await fs.rm(tmpDir, { recursive: true, force: true });
     }
   });
 });

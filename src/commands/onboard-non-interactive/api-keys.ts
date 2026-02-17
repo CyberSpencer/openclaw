@@ -45,11 +45,9 @@ export async function resolveNonInteractiveApiKey(params: {
   flagValue?: string;
   flagName: string;
   envVar: string;
-  envVarName?: string;
   runtime: RuntimeEnv;
   agentDir?: string;
   allowProfile?: boolean;
-  required?: boolean;
 }): Promise<{ key: string; source: NonInteractiveApiKeySource } | null> {
   const flagKey = normalizeOptionalSecretInput(params.flagValue);
   if (flagKey) {
@@ -61,14 +59,6 @@ export async function resolveNonInteractiveApiKey(params: {
     return { key: envResolved.apiKey, source: "env" };
   }
 
-  const explicitEnvVar = params.envVarName?.trim();
-  if (explicitEnvVar) {
-    const explicitEnvKey = normalizeOptionalSecretInput(process.env[explicitEnvVar]);
-    if (explicitEnvKey) {
-      return { key: explicitEnvKey, source: "env" };
-    }
-  }
-
   if (params.allowProfile ?? true) {
     const profileKey = await resolveApiKeyFromProfiles({
       provider: params.provider,
@@ -78,10 +68,6 @@ export async function resolveNonInteractiveApiKey(params: {
     if (profileKey) {
       return { key: profileKey, source: "profile" };
     }
-  }
-
-  if (params.required === false) {
-    return null;
   }
 
   const profileHint =

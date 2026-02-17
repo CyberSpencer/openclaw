@@ -1,4 +1,3 @@
-import fs from "node:fs/promises";
 import type {
   CommandHandler,
   CommandHandlerResult,
@@ -6,7 +5,6 @@ import type {
 } from "./commands-types.js";
 import { logVerbose } from "../../globals.js";
 import { createInternalHookEvent, triggerInternalHook } from "../../hooks/internal-hooks.js";
-import { getGlobalHookRunner } from "../../plugins/hook-runner-global.js";
 import { resolveSendPolicy } from "../../sessions/send-policy.js";
 import { shouldHandleTextCommands } from "../commands-registry.js";
 import { handleAllowlistCommand } from "./commands-allowlist.js";
@@ -23,7 +21,6 @@ import {
 } from "./commands-info.js";
 import { handleModelsCommand } from "./commands-models.js";
 import { handlePluginCommand } from "./commands-plugin.js";
-import { handleProjectCommand } from "./commands-project.js";
 import {
   handleAbortTrigger,
   handleActivationCommand,
@@ -46,7 +43,6 @@ export async function handleCommands(params: HandleCommandsParams): Promise<Comm
       handleBashCommand,
       handleActivationCommand,
       handleSendPolicyCommand,
-      handleProjectCommand,
       handleUsageCommand,
       handleRestartCommand,
       handleTtsCommands,
@@ -107,48 +103,6 @@ export async function handleCommands(params: HandleCommandsParams): Promise<Comm
           cfg: params.cfg,
         });
       }
-    }
-
-    // Fire before_reset plugin hook — extract memories before session history is lost
-    const hookRunner = getGlobalHookRunner();
-    if (hookRunner?.hasHooks("before_reset")) {
-      const prevEntry = params.previousSessionEntry;
-      const sessionFile = prevEntry?.sessionFile;
-      // Fire-and-forget: read old session messages and run hook
-      void (async () => {
-        try {
-          const messages: unknown[] = [];
-          if (sessionFile) {
-            const content = await fs.readFile(sessionFile, "utf-8");
-            for (const line of content.split("\n")) {
-              if (!line.trim()) {
-                continue;
-              }
-              try {
-                const entry = JSON.parse(line);
-                if (entry.type === "message" && entry.message) {
-                  messages.push(entry.message);
-                }
-              } catch {
-                // skip malformed lines
-              }
-            }
-          } else {
-            logVerbose("before_reset: no session file available, firing hook with empty messages");
-          }
-          await hookRunner.runBeforeReset(
-            { sessionFile, messages, reason: commandAction },
-            {
-              agentId: params.sessionKey?.split(":")[0] ?? "main",
-              sessionKey: params.sessionKey,
-              sessionId: prevEntry?.sessionId,
-              workspaceDir: params.workspaceDir,
-            },
-          );
-        } catch (err: unknown) {
-          logVerbose(`before_reset hook failed: ${String(err)}`);
-        }
-      })();
     }
   }
 

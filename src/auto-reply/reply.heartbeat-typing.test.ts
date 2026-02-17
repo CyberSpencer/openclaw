@@ -1,5 +1,6 @@
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { createTempHomeHarness, makeReplyConfig } from "./reply.test-harness.js";
+import { join } from "node:path";
+import { afterEach, describe, expect, it, vi } from "vitest";
+import { withTempHome as withTempHomeBase } from "../../test/helpers/temp-home.js";
 
 const runEmbeddedPiAgentMock = vi.fn();
 
@@ -38,20 +39,38 @@ vi.mock("../web/session.js", () => webMocks);
 
 import { getReplyFromConfig } from "./reply.js";
 
-const { withTempHome } = createTempHomeHarness({
-  prefix: "openclaw-typing-",
-  beforeEachCase: () => runEmbeddedPiAgentMock.mockClear(),
-});
+async function withTempHome<T>(fn: (home: string) => Promise<T>): Promise<T> {
+  return withTempHomeBase(
+    async (home) => {
+      runEmbeddedPiAgentMock.mockClear();
+      return await fn(home);
+    },
+    { prefix: "openclaw-typing-" },
+  );
+}
+
+function makeCfg(home: string) {
+  return {
+    agents: {
+      defaults: {
+        model: "anthropic/claude-opus-4-5",
+        workspace: join(home, "openclaw"),
+      },
+    },
+    channels: {
+      whatsapp: {
+        allowFrom: ["*"],
+      },
+    },
+    session: { store: join(home, "sessions.json") },
+  };
+}
 
 afterEach(() => {
   vi.restoreAllMocks();
 });
 
 describe("getReplyFromConfig typing (heartbeat)", () => {
-  beforeEach(() => {
-    vi.stubEnv("OPENCLAW_TEST_FAST", "1");
-  });
-
   it("starts typing for normal runs", async () => {
     await withTempHome(async (home) => {
       runEmbeddedPiAgentMock.mockResolvedValueOnce({
@@ -63,7 +82,7 @@ describe("getReplyFromConfig typing (heartbeat)", () => {
       await getReplyFromConfig(
         { Body: "hi", From: "+1000", To: "+2000", Provider: "whatsapp" },
         { onReplyStart, isHeartbeat: false },
-        makeReplyConfig(home),
+        makeCfg(home),
       );
 
       expect(onReplyStart).toHaveBeenCalled();
@@ -81,7 +100,7 @@ describe("getReplyFromConfig typing (heartbeat)", () => {
       await getReplyFromConfig(
         { Body: "hi", From: "+1000", To: "+2000", Provider: "whatsapp" },
         { onReplyStart, isHeartbeat: true },
-        makeReplyConfig(home),
+        makeCfg(home),
       );
 
       expect(onReplyStart).not.toHaveBeenCalled();

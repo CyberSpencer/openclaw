@@ -265,7 +265,11 @@ services:
     ports:
       # Recommended: keep the Gateway loopback-only on the VM; access via SSH tunnel.
       # To expose it publicly, remove the `127.0.0.1:` prefix and firewall accordingly.
-      - "127.0.0.1:${OPENCLAW_GATEWAY_PORT}:18789"
+      - "127.0.0.1:${OPENCLAW_GATEWAY_PORT}:32555"
+
+      # Optional: only if you run iOS/Android nodes against this VM and need Canvas host.
+      # If you expose this publicly, read /gateway/security and firewall accordingly.
+      # - "18793:18793"
     command:
       [
         "node",

@@ -1750,7 +1750,7 @@ private extension NodeAppModel {
     func makeOperatorConnectOptions(clientId: String, displayName: String?) -> GatewayConnectOptions {
         GatewayConnectOptions(
             role: "operator",
-            scopes: ["operator.read", "operator.write", "operator.talk.secrets"],
+            scopes: ["operator.read", "operator.write", "operator.admin"],
             caps: [],
             commands: [],
             permissions: [:],

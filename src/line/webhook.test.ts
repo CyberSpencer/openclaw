@@ -98,35 +98,15 @@ describe("createLineWebhookMiddleware", () => {
     expect(onEvents).not.toHaveBeenCalled();
   });
 
-  it("returns 200 for verification request (empty events, no signature)", async () => {
+  it("rejects webhooks with signatures computed using wrong secret", async () => {
     const onEvents = vi.fn(async () => {});
-    const secret = "secret";
-    const rawBody = JSON.stringify({ events: [] });
-    const middleware = createLineWebhookMiddleware({ channelSecret: secret, onEvents });
-
-    const req = {
-      headers: {},
-      body: rawBody,
-      // oxlint-disable-next-line typescript/no-explicit-any
-    } as any;
-    const res = createRes();
-
-    // oxlint-disable-next-line typescript/no-explicit-any
-    await middleware(req, res, {} as any);
-
-    expect(res.status).toHaveBeenCalledWith(200);
-    expect(res.json).toHaveBeenCalledWith({ status: "ok" });
-    expect(onEvents).not.toHaveBeenCalled();
-  });
-
-  it("rejects missing signature when events are non-empty", async () => {
-    const onEvents = vi.fn(async () => {});
-    const secret = "secret";
+    const correctSecret = "correct-secret";
+    const wrongSecret = "wrong-secret";
     const rawBody = JSON.stringify({ events: [{ type: "message" }] });
-    const middleware = createLineWebhookMiddleware({ channelSecret: secret, onEvents });
+    const middleware = createLineWebhookMiddleware({ channelSecret: correctSecret, onEvents });
 
     const req = {
-      headers: {},
+      headers: { "x-line-signature": sign(rawBody, wrongSecret) },
       body: rawBody,
       // oxlint-disable-next-line typescript/no-explicit-any
     } as any;
@@ -135,8 +115,7 @@ describe("createLineWebhookMiddleware", () => {
     // oxlint-disable-next-line typescript/no-explicit-any
     await middleware(req, res, {} as any);
 
-    expect(res.status).toHaveBeenCalledWith(400);
-    expect(res.json).toHaveBeenCalledWith({ error: "Missing X-Line-Signature header" });
+    expect(res.status).toHaveBeenCalledWith(401);
     expect(onEvents).not.toHaveBeenCalled();
   });
 });

@@ -331,7 +331,6 @@ export async function monitorWebChannel(
 
     if (!keepAlive) {
       await closeListener();
-      process.removeListener("SIGINT", handleSigint);
       return;
     }
 

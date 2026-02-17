@@ -28,30 +28,6 @@ function isOwnerSender(baseMentionConfig: MentionConfig, msg: WebInboundMsg) {
   return owners.includes(sender);
 }
 
-function recordPendingGroupHistoryEntry(params: {
-  msg: WebInboundMsg;
-  groupHistories: Map<string, GroupHistoryEntry[]>;
-  groupHistoryKey: string;
-  groupHistoryLimit: number;
-}) {
-  const sender =
-    params.msg.senderName && params.msg.senderE164
-      ? `${params.msg.senderName} (${params.msg.senderE164})`
-      : (params.msg.senderName ?? params.msg.senderE164 ?? "Unknown");
-  recordPendingHistoryEntryIfEnabled({
-    historyMap: params.groupHistories,
-    historyKey: params.groupHistoryKey,
-    limit: params.groupHistoryLimit,
-    entry: {
-      sender,
-      body: params.msg.body,
-      timestamp: params.msg.timestamp,
-      id: params.msg.id,
-      senderJid: params.msg.senderJid,
-    },
-  });
-}
-
 export function applyGroupGating(params: {
   cfg: ReturnType<typeof loadConfig>;
   msg: WebInboundMsg;
@@ -92,11 +68,21 @@ export function applyGroupGating(params: {
 
   if (activationCommand.hasCommand && !owner) {
     params.logVerbose(`Ignoring /activation from non-owner in group ${params.conversationId}`);
-    recordPendingGroupHistoryEntry({
-      msg: params.msg,
-      groupHistories: params.groupHistories,
-      groupHistoryKey: params.groupHistoryKey,
-      groupHistoryLimit: params.groupHistoryLimit,
+    const sender =
+      params.msg.senderName && params.msg.senderE164
+        ? `${params.msg.senderName} (${params.msg.senderE164})`
+        : (params.msg.senderName ?? params.msg.senderE164 ?? "Unknown");
+    recordPendingHistoryEntryIfEnabled({
+      historyMap: params.groupHistories,
+      historyKey: params.groupHistoryKey,
+      limit: params.groupHistoryLimit,
+      entry: {
+        sender,
+        body: params.msg.body,
+        timestamp: params.msg.timestamp,
+        id: params.msg.id,
+        senderJid: params.msg.senderJid,
+      },
     });
     return { shouldProcess: false };
   }
@@ -140,11 +126,21 @@ export function applyGroupGating(params: {
     params.logVerbose(
       `Group message stored for context (no mention detected) in ${params.conversationId}: ${params.msg.body}`,
     );
-    recordPendingGroupHistoryEntry({
-      msg: params.msg,
-      groupHistories: params.groupHistories,
-      groupHistoryKey: params.groupHistoryKey,
-      groupHistoryLimit: params.groupHistoryLimit,
+    const sender =
+      params.msg.senderName && params.msg.senderE164
+        ? `${params.msg.senderName} (${params.msg.senderE164})`
+        : (params.msg.senderName ?? params.msg.senderE164 ?? "Unknown");
+    recordPendingHistoryEntryIfEnabled({
+      historyMap: params.groupHistories,
+      historyKey: params.groupHistoryKey,
+      limit: params.groupHistoryLimit,
+      entry: {
+        sender,
+        body: params.msg.body,
+        timestamp: params.msg.timestamp,
+        id: params.msg.id,
+        senderJid: params.msg.senderJid,
+      },
     });
     return { shouldProcess: false };
   }

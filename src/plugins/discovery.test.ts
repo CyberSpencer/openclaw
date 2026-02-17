@@ -2,8 +2,7 @@ import { randomUUID } from "node:crypto";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { afterEach, describe, expect, it } from "vitest";
-import { discoverOpenClawPlugins } from "./discovery.js";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
 const tempDirs: string[] = [];
 
@@ -19,6 +18,7 @@ async function withStateDir<T>(stateDir: string, fn: () => Promise<T>) {
   const prevBundled = process.env.OPENCLAW_BUNDLED_PLUGINS_DIR;
   process.env.OPENCLAW_STATE_DIR = stateDir;
   process.env.OPENCLAW_BUNDLED_PLUGINS_DIR = "/nonexistent/bundled/plugins";
+  vi.resetModules();
   try {
     return await fn();
   } finally {
@@ -32,6 +32,7 @@ async function withStateDir<T>(stateDir: string, fn: () => Promise<T>) {
     } else {
       process.env.OPENCLAW_BUNDLED_PLUGINS_DIR = prevBundled;
     }
+    vi.resetModules();
   }
 }
 
@@ -59,6 +60,7 @@ describe("discoverOpenClawPlugins", () => {
     fs.writeFileSync(path.join(workspaceExt, "beta.ts"), "export default function () {}", "utf-8");
 
     const { candidates } = await withStateDir(stateDir, async () => {
+      const { discoverOpenClawPlugins } = await import("./discovery.js");
       return discoverOpenClawPlugins({ workspaceDir });
     });
 
@@ -92,6 +94,7 @@ describe("discoverOpenClawPlugins", () => {
     );
 
     const { candidates } = await withStateDir(stateDir, async () => {
+      const { discoverOpenClawPlugins } = await import("./discovery.js");
       return discoverOpenClawPlugins({});
     });
 
@@ -120,6 +123,7 @@ describe("discoverOpenClawPlugins", () => {
     );
 
     const { candidates } = await withStateDir(stateDir, async () => {
+      const { discoverOpenClawPlugins } = await import("./discovery.js");
       return discoverOpenClawPlugins({});
     });
 
@@ -143,6 +147,7 @@ describe("discoverOpenClawPlugins", () => {
     fs.writeFileSync(path.join(packDir, "index.js"), "module.exports = {}", "utf-8");
 
     const { candidates } = await withStateDir(stateDir, async () => {
+      const { discoverOpenClawPlugins } = await import("./discovery.js");
       return discoverOpenClawPlugins({ extraPaths: [packDir] });
     });
 

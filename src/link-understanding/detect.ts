@@ -1,4 +1,3 @@
-import { isBlockedHostname, isPrivateIpAddress } from "../infra/net/ssrf.js";
 import { DEFAULT_MAX_LINKS } from "./defaults.js";
 
 // Remove markdown link syntax so only bare URLs are considered.
@@ -22,23 +21,13 @@ function isAllowedUrl(raw: string): boolean {
     if (parsed.protocol !== "http:" && parsed.protocol !== "https:") {
       return false;
     }
-    if (isBlockedHost(parsed.hostname)) {
+    if (parsed.hostname === "127.0.0.1") {
       return false;
     }
     return true;
   } catch {
     return false;
   }
-}
-
-/** Block loopback, private, link-local, and metadata addresses. */
-function isBlockedHost(hostname: string): boolean {
-  const normalized = hostname.trim().toLowerCase();
-  return (
-    normalized === "localhost.localdomain" ||
-    isBlockedHostname(normalized) ||
-    isPrivateIpAddress(normalized)
-  );
 }
 
 export function extractLinksFromMessage(message: string, opts?: { maxLinks?: number }): string[] {

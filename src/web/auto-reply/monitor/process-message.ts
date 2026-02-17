@@ -26,7 +26,6 @@ import {
   resolveStorePath,
 } from "../../../config/sessions.js";
 import { logVerbose, shouldLogVerbose } from "../../../globals.js";
-import { getAgentScopedMediaLocalRoots } from "../../../media/local-roots.js";
 import { readChannelAllowFromStore } from "../../../pairing/pairing-store.js";
 import { jidToE164, normalizeE164 } from "../../../utils.js";
 import { newConnectionId } from "../../reconnect.js";
@@ -88,11 +87,7 @@ async function resolveWhatsAppCommandAuthorized(params: {
     return normalizeAllowFromE164(configuredGroupAllowFrom).includes(senderE164);
   }
 
-  const storeAllowFrom = await readChannelAllowFromStore(
-    "whatsapp",
-    process.env,
-    params.msg.accountId,
-  ).catch(() => []);
+  const storeAllowFrom = await readChannelAllowFromStore("whatsapp").catch(() => []);
   const combinedAllowFrom = Array.from(
     new Set([...(configuredAllowFrom ?? []), ...storeAllowFrom]),
   );
@@ -161,17 +156,21 @@ export async function processMessage(params: {
         sender: m.sender,
         body: m.body,
         timestamp: m.timestamp,
+        messageId: m.id,
       }));
       combinedBody = buildHistoryContextFromEntries({
         entries: historyEntries,
         currentMessage: combinedBody,
         excludeLast: false,
         formatEntry: (entry) => {
+          const bodyWithId = entry.messageId
+            ? `${entry.body}\n[message_id: ${entry.messageId}]`
+            : entry.body;
           return formatInboundEnvelope({
             channel: "WhatsApp",
             from: conversationId,
             timestamp: entry.timestamp,
-            body: entry.body,
+            body: bodyWithId,
             chatType: "group",
             senderLabel: entry.sender,
             envelope: envelopeOptions,
@@ -250,7 +249,6 @@ export async function processMessage(params: {
     channel: "whatsapp",
     accountId: params.route.accountId,
   });
-  const mediaLocalRoots = getAgentScopedMediaLocalRoots(params.cfg, params.route.agentId);
   let didLogHeartbeatStrip = false;
   let didSendReply = false;
   const commandAuthorized = shouldComputeCommandAuthorized(params.msg.body, params.cfg)
@@ -273,21 +271,8 @@ export async function processMessage(params: {
       ? (resolveIdentityNamePrefix(params.cfg, params.route.agentId) ?? "[openclaw]")
       : undefined);
 
-  const inboundHistory =
-    params.msg.chatType === "group"
-      ? (params.groupHistory ?? params.groupHistories.get(params.groupHistoryKey) ?? []).map(
-          (entry) => ({
-            sender: entry.sender,
-            body: entry.body,
-            timestamp: entry.timestamp,
-          }),
-        )
-      : undefined;
-
   const ctxPayload = finalizeInboundContext({
     Body: combinedBody,
-    BodyForAgent: params.msg.body,
-    InboundHistory: inboundHistory,
     RawBody: params.msg.body,
     CommandBody: params.msg.body,
     From: params.msg.from,
@@ -368,7 +353,6 @@ export async function processMessage(params: {
         await deliverWebReply({
           replyResult: payload,
           msg: params.msg,
-          mediaLocalRoots,
           maxMediaBytes: params.maxMediaBytes,
           textLimit,
           chunkMode,

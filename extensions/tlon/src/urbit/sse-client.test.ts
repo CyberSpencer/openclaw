@@ -16,9 +16,7 @@ describe("UrbitSSEClient", () => {
   it("sends subscriptions added after connect", async () => {
     mockFetch.mockResolvedValue({ ok: true, status: 200, text: async () => "" });
 
-    const client = new UrbitSSEClient("https://example.com", "urbauth-~zod=123", {
-      lookupFn: async () => [{ address: "1.1.1.1", family: 4 }],
-    });
+    const client = new UrbitSSEClient("https://example.com", "urbauth-~zod=123");
     (client as { isConnected: boolean }).isConnected = true;
 
     await client.subscribe({

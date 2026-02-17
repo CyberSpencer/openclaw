@@ -2,13 +2,13 @@ import { html, nothing } from "lit";
 import type { AppViewState } from "./app-view-state.ts";
 import { parseAgentSessionKey } from "../../../src/routing/session-key.js";
 import { refreshChatAvatar } from "./app-chat.ts";
-import { renderUsageTab } from "./app-render-usage-tab.ts";
 import { renderChatControls, renderTab, renderThemeToggle } from "./app-render.helpers.ts";
-import { loadAgentFileContent, loadAgentFiles, saveAgentFile } from "./controllers/agent-files.ts";
-import { loadAgentIdentities, loadAgentIdentity } from "./controllers/agent-identity.ts";
+import { loadAgentFiles, loadAgentFileContent, saveAgentFile } from "./controllers/agent-files.ts";
+import { loadAgentIdentity, loadAgentIdentities } from "./controllers/agent-identity.ts";
 import { loadAgentSkills } from "./controllers/agent-skills.ts";
 import { loadAgents } from "./controllers/agents.ts";
 import { loadChannels } from "./controllers/channels.ts";
+import { loadChatThreads } from "./controllers/chat-threads.ts";
 import { loadChatHistory } from "./controllers/chat.ts";
 import {
   applyConfig,
@@ -24,7 +24,6 @@ import {
   runCronJob,
   removeCronJob,
   addCronJob,
-  normalizeCronFormState,
 } from "./controllers/cron.ts";
 import { loadDebug, callDebugMethod } from "./controllers/debug.ts";
 import {
@@ -51,22 +50,31 @@ import {
   updateSkillEdit,
   updateSkillEnabled,
 } from "./controllers/skills.ts";
+import { loadSubagentMonitor } from "./controllers/subagent-monitor.ts";
+import { loadSessionLogs, loadSessionTimeSeries, loadUsage } from "./controllers/usage.ts";
 import { icons } from "./icons.ts";
-import { normalizeBasePath, TAB_GROUPS, subtitleForTab, titleForTab } from "./navigation.ts";
+import { TAB_GROUPS, subtitleForTab, titleForTab } from "./navigation.ts";
 import { renderAgents } from "./views/agents.ts";
 import { renderChannels } from "./views/channels.ts";
+import { renderChatThreadsNav } from "./views/chat-threads-nav.ts";
 import { renderChat } from "./views/chat.ts";
+import { renderCommandPalette } from "./views/command-palette.ts";
 import { renderConfig } from "./views/config.ts";
 import { renderCron } from "./views/cron.ts";
 import { renderDebug } from "./views/debug.ts";
+import { renderDgx } from "./views/dgx.ts";
 import { renderExecApprovalPrompt } from "./views/exec-approval.ts";
 import { renderGatewayUrlConfirmation } from "./views/gateway-url-confirmation.ts";
 import { renderInstances } from "./views/instances.ts";
 import { renderLogs } from "./views/logs.ts";
 import { renderNodes } from "./views/nodes.ts";
+import { renderOrchestrator } from "./views/orchestrator.ts";
 import { renderOverview } from "./views/overview.ts";
 import { renderSessions } from "./views/sessions.ts";
+import { renderSettings } from "./views/settings.ts";
 import { renderSkills } from "./views/skills.ts";
+import { renderUsage } from "./views/usage.ts";
+import { renderVoiceBar } from "./views/voice-bar.ts";
 
 const AVATAR_DATA_RE = /^data:/i;
 const AVATAR_HTTP_RE = /^https?:\/\//i;
@@ -87,6 +95,71 @@ function resolveAssistantAvatarUrl(state: AppViewState): string | undefined {
   return identity?.avatarUrl;
 }
 
+/**
+ * Classify the active model provider into a source category for the topbar indicator.
+ */
+function classifyModelSource(provider: string | null): {
+  label: string;
+  cssClass: string;
+} | null {
+  if (!provider) {
+    return null;
+  }
+  const p = provider.toLowerCase();
+  if (
+    p.startsWith("openai") ||
+    p.startsWith("anthropic") ||
+    p.startsWith("google") ||
+    p.startsWith("deepseek") ||
+    p.startsWith("mistral") ||
+    p.startsWith("xai") ||
+    p.startsWith("groq") ||
+    p.startsWith("together") ||
+    p.startsWith("fireworks") ||
+    p.startsWith("github-copilot") ||
+    p.includes("codex")
+  ) {
+    return { label: "Cloud", cssClass: "model-cloud" };
+  }
+  if (p.includes("spark") || p.includes("dgx")) {
+    return { label: "Spark", cssClass: "model-spark" };
+  }
+  if (p === "ollama" || p.includes("local") || p.includes("lmstudio")) {
+    return { label: "Local", cssClass: "model-local" };
+  }
+  return { label: provider, cssClass: "model-other" };
+}
+
+function renderModelPill(state: AppViewState) {
+  const selection = state.chatModelSelection;
+  const provider = selection?.provider ?? null;
+  const modelId = selection?.model ?? null;
+  if (!provider && !modelId) {
+    return nothing;
+  }
+
+  const source = classifyModelSource(provider);
+  if (!source) {
+    return nothing;
+  }
+
+  const shortModel = modelId
+    ? (modelId
+        .replace(/:latest$/, "")
+        .split("/")
+        .pop() ?? modelId)
+    : "";
+  const title = provider && modelId ? `${provider}/${modelId}` : (provider ?? modelId ?? "");
+
+  return html`
+    <div class="pill pill--model ${source.cssClass}" title="${title}">
+      <span class="statusDot ${source.cssClass}"></span>
+      <span>${source.label}</span>
+      ${shortModel ? html`<span class="mono">${shortModel}</span>` : nothing}
+    </div>
+  `;
+}
+
 export function renderApp(state: AppViewState) {
   const presenceCount = state.presenceEntries.length;
   const sessionsCount = state.sessionsResult?.count ?? null;
@@ -97,17 +170,74 @@ export function renderApp(state: AppViewState) {
   const showThinking = state.onboarding ? false : state.settings.chatShowThinking;
   const assistantAvatarUrl = resolveAssistantAvatarUrl(state);
   const chatAvatarUrl = state.chatAvatarUrl ?? assistantAvatarUrl ?? null;
+  const topbarLogoSrc = `${state.basePath}/favicon.svg`;
+  const cmdKey = (() => {
+    if (typeof navigator === "undefined") {
+      return "Ctrl K";
+    }
+    const platform = navigator.platform || "";
+    return /mac|iphone|ipad|ipod/i.test(platform) ? "Cmd K" : "Ctrl K";
+  })();
+  const sparkEnabled = state.sparkStatus?.enabled;
+  const sparkActive = state.sparkStatus?.active;
+  const sparkKnown = Boolean(state.sparkStatus);
+  const sparkHost = typeof state.sparkStatus?.host === "string" ? state.sparkStatus.host : null;
+  const sparkLabel = state.sparkBusy
+    ? "..."
+    : !sparkKnown
+      ? "..."
+      : sparkEnabled === false
+        ? "Off"
+        : sparkActive
+          ? "On"
+          : "Fallback";
+  const sparkDotClass = !sparkKnown || sparkEnabled === false ? "neutral" : sparkActive ? "ok" : "";
+  const sparkTitle = !sparkKnown
+    ? "DGX Spark status unavailable"
+    : sparkEnabled === false
+      ? "DGX Spark disabled"
+      : sparkActive
+        ? `DGX Spark active${sparkHost ? ` (${sparkHost})` : ""}`
+        : `DGX Spark fallback${sparkHost ? ` (${sparkHost})` : ""}`;
   const configValue =
     state.configForm ?? (state.configSnapshot?.config as Record<string, unknown> | null);
-  const basePath = normalizeBasePath(state.basePath ?? "");
   const resolvedAgentId =
     state.agentsSelectedId ??
     state.agentsList?.defaultId ??
     state.agentsList?.agents?.[0]?.id ??
     null;
+  const systemStatusLoading = state.nvidiaRouterBusy || state.sparkBusy;
+  const routerStatus: import("./types.js").RouterStatus | null =
+    state.nvidiaRouterEnabled == null && state.nvidiaRouterHealthy == null
+      ? null
+      : {
+          enabled: state.nvidiaRouterEnabled !== false,
+          healthy: state.nvidiaRouterEnabled === false ? false : state.nvidiaRouterHealthy === true,
+          url: "",
+          checkedAt: Date.now(),
+        };
+  const sparkStatus: import("./types.js").SparkStatus | null = state.sparkStatus
+    ? {
+        enabled: state.sparkStatus.enabled !== false,
+        active: state.sparkStatus.active === true,
+        source: state.sparkStatus.source,
+        host: typeof state.sparkStatus.host === "string" ? state.sparkStatus.host : null,
+        checkedAt:
+          typeof state.sparkStatus.checkedAt === "number"
+            ? state.sparkStatus.checkedAt
+            : Date.now(),
+        voiceAvailable: state.sparkStatus.voiceAvailable,
+        overall: state.sparkStatus.overall,
+        counts: state.sparkStatus.counts,
+        services: state.sparkStatus.services,
+        gpu: state.sparkStatus.gpu,
+        containers: state.sparkStatus.containers,
+      }
+    : null;
 
   return html`
     <div class="shell ${isChat ? "shell--chat" : ""} ${chatFocus ? "shell--chat-focus" : ""} ${state.settings.navCollapsed ? "shell--nav-collapsed" : ""} ${state.onboarding ? "shell--onboarding" : ""}">
+      <a class="skip-link" href="#main-content">Skip to content</a>
       <header class="topbar">
         <div class="topbar-left">
           <button
@@ -124,7 +254,7 @@ export function renderApp(state: AppViewState) {
           </button>
           <div class="brand">
             <div class="brand-logo">
-              <img src=${basePath ? `${basePath}/favicon.svg` : "/favicon.svg"} alt="OpenClaw" />
+              <img src=${topbarLogoSrc} alt="OpenClaw" />
             </div>
             <div class="brand-text">
               <div class="brand-title">OPENCLAW</div>
@@ -133,15 +263,124 @@ export function renderApp(state: AppViewState) {
           </div>
         </div>
         <div class="topbar-status">
+          ${renderModelPill(state)}
           <div class="pill">
             <span class="statusDot ${state.connected ? "ok" : ""}"></span>
             <span>Health</span>
             <span class="mono">${state.connected ? "OK" : "Offline"}</span>
           </div>
+          <button
+            class="pill topbar-action-btn"
+            @click=${() => state.openCommandPalette()}
+            title=${`Search (${cmdKey})`}
+            aria-label="Search (Command palette)"
+          >
+            <span class="pill-icon">${icons.search}</span>
+            <span>Search</span>
+            <span class="mono">${cmdKey}</span>
+          </button>
+          <button
+            class="pill topbar-action-btn topbar-action-btn--status"
+            ?disabled=${!state.connected || state.memorySearchBusy}
+            @click=${() => state.handleMemorySearchToggle()}
+            title="${(() => {
+              const base =
+                state.memorySearchEnabled === false
+                  ? "Enable memory search"
+                  : "Disable memory search";
+              return state.memoryStoreLabel ? `${base} (${state.memoryStoreLabel})` : base;
+            })()}"
+            aria-label="${state.memorySearchEnabled === false ? "Enable memory search" : "Disable memory search"}"
+          >
+            <span class="statusDot ${state.memorySearchEnabled === false ? "" : "ok"}"></span>
+            <span>Memory</span>
+            <span class="mono">
+              ${
+                state.memorySearchBusy
+                  ? "..."
+                  : state.memorySearchEnabled === false
+                    ? "Off"
+                    : state.memoryStoreLabel
+                      ? state.memoryStoreLabel
+                      : "On"
+              }
+            </span>
+          </button>
+          <button
+            class="pill topbar-action-btn topbar-action-btn--status"
+            ?disabled=${!state.connected || state.nvidiaRouterBusy}
+            @click=${() => state.handleNvidiaRouterToggle()}
+            title="${state.nvidiaRouterEnabled === false ? "Enable NVIDIA Router" : "Disable NVIDIA Router"}"
+            aria-label="${state.nvidiaRouterEnabled === false ? "Enable NVIDIA Router" : "Disable NVIDIA Router"}"
+          >
+            <span class="statusDot ${state.nvidiaRouterHealthy ? "ok" : ""}"></span>
+            <span>NVIDIA Router</span>
+          </button>
+          <button
+            class="pill topbar-action-btn topbar-action-btn--status"
+            ?disabled=${!state.connected || state.sparkBusy}
+            @click=${() => state.setTab("dgx")}
+            title=${sparkTitle}
+            aria-label="DGX Spark status"
+          >
+            <span class="statusDot ${sparkDotClass}"></span>
+            <span>DGX Spark</span>
+            <span class="mono">${sparkLabel}</span>
+          </button>
+          <button
+            class="voice-toggle-btn ${state.voiceBarVisible ? "voice-toggle-btn--active" : ""}"
+            @click=${() => state.toggleVoiceBar()}
+            title="${state.voiceBarVisible ? "Hide voice mode" : "Show voice mode"}"
+            aria-label="${state.voiceBarVisible ? "Hide voice mode" : "Show voice mode"}"
+          >
+            ${icons.mic || "🎤"}
+          </button>
           ${renderThemeToggle(state)}
         </div>
       </header>
       <aside class="nav ${state.settings.navCollapsed ? "nav--collapsed" : ""}">
+        ${
+          state.tab === "chat"
+            ? renderChatThreadsNav({
+                connected: state.connected,
+                onboarding: state.onboarding,
+                showThinking: state.settings.chatShowThinking,
+                focusMode: state.settings.chatFocusMode,
+                loading: state.chatThreadsLoading,
+                error: state.chatThreadsError,
+                sessions: state.chatThreadsResult,
+                activeSessionKey: state.sessionKey,
+                query: state.chatThreadsQuery,
+                showSubagents: state.chatThreadsShowSubagents,
+                onNewChat: () => state.handleChatNewThread(),
+                onSelectChat: (key) => state.openChatSession(key),
+                onQueryChange: (next) => state.handleChatThreadsQueryChange(next),
+                onToggleSubagents: () =>
+                  (state.chatThreadsShowSubagents = !state.chatThreadsShowSubagents),
+                onRenameChat: (key) => state.handleChatThreadRename(key),
+                onDeleteChat: (key) => state.handleChatThreadDelete(key),
+                onRefresh: () => loadChatThreads(state, { search: state.chatThreadsQuery }),
+                onToggleThinking: () => {
+                  if (state.onboarding) {
+                    return;
+                  }
+                  state.applySettings({
+                    ...state.settings,
+                    chatShowThinking: !state.settings.chatShowThinking,
+                  });
+                },
+                onToggleFocusMode: () => {
+                  if (state.onboarding) {
+                    return;
+                  }
+                  state.applySettings({
+                    ...state.settings,
+                    chatFocusMode: !state.settings.chatFocusMode,
+                  });
+                },
+              })
+            : nothing
+        }
         ${TAB_GROUPS.map((group) => {
           const isGroupCollapsed = state.settings.navGroupsCollapsed[group.label] ?? false;
           const hasActiveTab = group.tabs.some((tab) => tab === state.tab);
@@ -186,7 +425,7 @@ export function renderApp(state: AppViewState) {
           </div>
         </div>
       </aside>
-      <main class="content ${isChat ? "content--chat" : ""}">
+      <main id="main-content" class="content ${isChat ? "content--chat" : ""}" tabindex="-1">
         <section class="content-header">
           <div>
             ${state.tab === "usage" ? nothing : html`<div class="page-title">${titleForTab(state.tab)}</div>`}
@@ -197,6 +436,8 @@ export function renderApp(state: AppViewState) {
             ${isChat ? renderChatControls(state) : nothing}
           </div>
         </section>
+
+        ${state.tab === "orchestrator" ? renderOrchestrator(state) : nothing}
 
         ${
           state.tab === "overview"
@@ -211,6 +452,10 @@ export function renderApp(state: AppViewState) {
                 cronEnabled: state.cronStatus?.enabled ?? null,
                 cronNext,
                 lastChannelsRefresh: state.channelsLastSuccess,
+                systemStatusLoading,
+                systemStatusError: state.lastError,
+                routerStatus,
+                sparkStatus,
                 onSettingsChange: (next) => state.applySettings(next),
                 onPasswordChange: (next) => (state.password = next),
                 onSessionKeyChange: (next) => {
@@ -226,9 +471,22 @@ export function renderApp(state: AppViewState) {
                 },
                 onConnect: () => state.connect(),
                 onRefresh: () => state.loadOverview(),
+                onRouterSetEnabled: (enabled) => void state.handleNvidiaRouterToggle(enabled),
               })
             : nothing
         }
+
+        ${
+          state.tab === "dgx"
+            ? renderDgx({
+                connected: state.connected,
+                sparkStatus,
+                onRefresh: () => state.refreshSparkStatus(),
+              })
+            : nothing
+        }
+
+        ${state.tab === "settings" ? renderSettings(state) : nothing}
 
         ${
           state.tab === "channels"
@@ -305,7 +563,268 @@ export function renderApp(state: AppViewState) {
             : nothing
         }
 
-        ${renderUsageTab(state)}
+        ${
+          state.tab === "usage"
+            ? renderUsage({
+                loading: state.usageLoading,
+                error: state.usageError,
+                startDate: state.usageStartDate,
+                endDate: state.usageEndDate,
+                sessions: state.usageResult?.sessions ?? [],
+                sessionsLimitReached: (state.usageResult?.sessions?.length ?? 0) >= 1000,
+                totals: state.usageResult?.totals ?? null,
+                aggregates: state.usageResult?.aggregates ?? null,
+                costDaily: state.usageCostSummary?.daily ?? [],
+                selectedSessions: state.usageSelectedSessions,
+                selectedDays: state.usageSelectedDays,
+                selectedHours: state.usageSelectedHours,
+                chartMode: state.usageChartMode,
+                dailyChartMode: state.usageDailyChartMode,
+                timeSeriesMode: state.usageTimeSeriesMode,
+                timeSeriesBreakdownMode: state.usageTimeSeriesBreakdownMode,
+                timeSeries: state.usageTimeSeries,
+                timeSeriesLoading: state.usageTimeSeriesLoading,
+                sessionLogs: state.usageSessionLogs,
+                sessionLogsLoading: state.usageSessionLogsLoading,
+                sessionLogsExpanded: state.usageSessionLogsExpanded,
+                logFilterRoles: state.usageLogFilterRoles,
+                logFilterTools: state.usageLogFilterTools,
+                logFilterHasTools: state.usageLogFilterHasTools,
+                logFilterQuery: state.usageLogFilterQuery,
+                query: state.usageQuery,
+                queryDraft: state.usageQueryDraft,
+                sessionSort: state.usageSessionSort,
+                sessionSortDir: state.usageSessionSortDir,
+                recentSessions: state.usageRecentSessions,
+                sessionsTab: state.usageSessionsTab,
+                visibleColumns:
+                  state.usageVisibleColumns as import("./views/usage.ts").UsageColumnId[],
+                timeZone: state.usageTimeZone,
+                contextExpanded: state.usageContextExpanded,
+                headerPinned: state.usageHeaderPinned,
+                onStartDateChange: (date) => {
+                  state.usageStartDate = date;
+                  state.usageSelectedDays = [];
+                  state.usageSelectedHours = [];
+                  state.usageSelectedSessions = [];
+                  void loadUsage(state);
+                },
+                onEndDateChange: (date) => {
+                  state.usageEndDate = date;
+                  state.usageSelectedDays = [];
+                  state.usageSelectedHours = [];
+                  state.usageSelectedSessions = [];
+                  void loadUsage(state);
+                },
+                onRefresh: () => loadUsage(state),
+                onTimeZoneChange: (zone) => {
+                  state.usageTimeZone = zone;
+                },
+                onToggleContextExpanded: () => {
+                  state.usageContextExpanded = !state.usageContextExpanded;
+                },
+                onToggleSessionLogsExpanded: () => {
+                  state.usageSessionLogsExpanded = !state.usageSessionLogsExpanded;
+                },
+                onLogFilterRolesChange: (next) => {
+                  state.usageLogFilterRoles = next;
+                },
+                onLogFilterToolsChange: (next) => {
+                  state.usageLogFilterTools = next;
+                },
+                onLogFilterHasToolsChange: (next) => {
+                  state.usageLogFilterHasTools = next;
+                },
+                onLogFilterQueryChange: (next) => {
+                  state.usageLogFilterQuery = next;
+                },
+                onLogFilterClear: () => {
+                  state.usageLogFilterRoles = [];
+                  state.usageLogFilterTools = [];
+                  state.usageLogFilterHasTools = false;
+                  state.usageLogFilterQuery = "";
+                },
+                onToggleHeaderPinned: () => {
+                  state.usageHeaderPinned = !state.usageHeaderPinned;
+                },
+                onSelectHour: (hour, shiftKey) => {
+                  if (shiftKey && state.usageSelectedHours.length > 0) {
+                    const allHours = Array.from({ length: 24 }, (_, i) => i);
+                    const lastSelected =
+                      state.usageSelectedHours[state.usageSelectedHours.length - 1];
+                    const lastIdx = allHours.indexOf(lastSelected);
+                    const thisIdx = allHours.indexOf(hour);
+                    if (lastIdx !== -1 && thisIdx !== -1) {
+                      const [start, end] =
+                        lastIdx < thisIdx ? [lastIdx, thisIdx] : [thisIdx, lastIdx];
+                      const range = allHours.slice(start, end + 1);
+                      state.usageSelectedHours = [
+                        ...new Set([...state.usageSelectedHours, ...range]),
+                      ];
+                    }
+                  } else {
+                    if (state.usageSelectedHours.includes(hour)) {
+                      state.usageSelectedHours = state.usageSelectedHours.filter((h) => h !== hour);
+                    } else {
+                      state.usageSelectedHours = [...state.usageSelectedHours, hour];
+                    }
+                  }
+                },
+                onQueryDraftChange: (query) => {
+                  state.usageQueryDraft = query;
+                  if (state.usageQueryDebounceTimer) {
+                    window.clearTimeout(state.usageQueryDebounceTimer);
+                  }
+                  state.usageQueryDebounceTimer = window.setTimeout(() => {
+                    state.usageQuery = state.usageQueryDraft;
+                    state.usageQueryDebounceTimer = null;
+                  }, 250);
+                },
+                onApplyQuery: () => {
+                  if (state.usageQueryDebounceTimer) {
+                    window.clearTimeout(state.usageQueryDebounceTimer);
+                    state.usageQueryDebounceTimer = null;
+                  }
+                  state.usageQuery = state.usageQueryDraft;
+                },
+                onClearQuery: () => {
+                  if (state.usageQueryDebounceTimer) {
+                    window.clearTimeout(state.usageQueryDebounceTimer);
+                    state.usageQueryDebounceTimer = null;
+                  }
+                  state.usageQueryDraft = "";
+                  state.usageQuery = "";
+                },
+                onSessionSortChange: (sort) => {
+                  state.usageSessionSort = sort;
+                },
+                onSessionSortDirChange: (dir) => {
+                  state.usageSessionSortDir = dir;
+                },
+                onSessionsTabChange: (tab) => {
+                  state.usageSessionsTab = tab;
+                },
+                onToggleColumn: (column) => {
+                  if (state.usageVisibleColumns.includes(column)) {
+                    state.usageVisibleColumns = state.usageVisibleColumns.filter(
+                      (entry) => entry !== column,
+                    );
+                  } else {
+                    state.usageVisibleColumns = [...state.usageVisibleColumns, column];
+                  }
+                },
+                onSelectSession: (key, shiftKey) => {
+                  state.usageTimeSeries = null;
+                  state.usageSessionLogs = null;
+                  state.usageRecentSessions = [
+                    key,
+                    ...state.usageRecentSessions.filter((entry) => entry !== key),
+                  ].slice(0, 8);
+
+                  if (shiftKey && state.usageSelectedSessions.length > 0) {
+                    // Shift-click: select range from last selected to this session
+                    // Sort sessions same way as displayed (by tokens or cost descending)
+                    const isTokenMode = state.usageChartMode === "tokens";
+                    const sortedSessions = [...(state.usageResult?.sessions ?? [])].toSorted(
+                      (a, b) => {
+                        const valA = isTokenMode
+                          ? (a.usage?.totalTokens ?? 0)
+                          : (a.usage?.totalCost ?? 0);
+                        const valB = isTokenMode
+                          ? (b.usage?.totalTokens ?? 0)
+                          : (b.usage?.totalCost ?? 0);
+                        return valB - valA;
+                      },
+                    );
+                    const allKeys = sortedSessions.map((s) => s.key);
+                    const lastSelected =
+                      state.usageSelectedSessions[state.usageSelectedSessions.length - 1];
+                    const lastIdx = allKeys.indexOf(lastSelected);
+                    const thisIdx = allKeys.indexOf(key);
+                    if (lastIdx !== -1 && thisIdx !== -1) {
+                      const [start, end] =
+                        lastIdx < thisIdx ? [lastIdx, thisIdx] : [thisIdx, lastIdx];
+                      const range = allKeys.slice(start, end + 1);
+                      const newSelection = [...new Set([...state.usageSelectedSessions, ...range])];
+                      state.usageSelectedSessions = newSelection;
+                    }
+                  } else {
+                    // Regular click: focus a single session (so details always open).
+                    // Click the focused session again to clear selection.
+                    if (
+                      state.usageSelectedSessions.length === 1 &&
+                      state.usageSelectedSessions[0] === key
+                    ) {
+                      state.usageSelectedSessions = [];
+                    } else {
+                      state.usageSelectedSessions = [key];
+                    }
+                  }
+
+                  // Load timeseries/logs only if exactly one session selected
+                  if (state.usageSelectedSessions.length === 1) {
+                    void loadSessionTimeSeries(state, state.usageSelectedSessions[0]);
+                    void loadSessionLogs(state, state.usageSelectedSessions[0]);
+                  }
+                },
+                onSelectDay: (day, shiftKey) => {
+                  if (shiftKey && state.usageSelectedDays.length > 0) {
+                    // Shift-click: select range from last selected to this day
+                    const allDays = (state.usageCostSummary?.daily ?? []).map((d) => d.date);
+                    const lastSelected =
+                      state.usageSelectedDays[state.usageSelectedDays.length - 1];
+                    const lastIdx = allDays.indexOf(lastSelected);
+                    const thisIdx = allDays.indexOf(day);
+                    if (lastIdx !== -1 && thisIdx !== -1) {
+                      const [start, end] =
+                        lastIdx < thisIdx ? [lastIdx, thisIdx] : [thisIdx, lastIdx];
+                      const range = allDays.slice(start, end + 1);
+                      // Merge with existing selection
+                      const newSelection = [...new Set([...state.usageSelectedDays, ...range])];
+                      state.usageSelectedDays = newSelection;
+                    }
+                  } else {
+                    // Regular click: toggle single day
+                    if (state.usageSelectedDays.includes(day)) {
+                      state.usageSelectedDays = state.usageSelectedDays.filter((d) => d !== day);
+                    } else {
+                      state.usageSelectedDays = [day];
+                    }
+                  }
+                },
+                onChartModeChange: (mode) => {
+                  state.usageChartMode = mode;
+                },
+                onDailyChartModeChange: (mode) => {
+                  state.usageDailyChartMode = mode;
+                },
+                onTimeSeriesModeChange: (mode) => {
+                  state.usageTimeSeriesMode = mode;
+                },
+                onTimeSeriesBreakdownChange: (mode) => {
+                  state.usageTimeSeriesBreakdownMode = mode;
+                },
+                onClearDays: () => {
+                  state.usageSelectedDays = [];
+                },
+                onClearHours: () => {
+                  state.usageSelectedHours = [];
+                },
+                onClearSessions: () => {
+                  state.usageSelectedSessions = [];
+                  state.usageTimeSeries = null;
+                  state.usageSessionLogs = null;
+                },
+                onClearFilters: () => {
+                  state.usageSelectedDays = [];
+                  state.usageSelectedHours = [];
+                  state.usageSelectedSessions = [];
+                  state.usageTimeSeries = null;
+                  state.usageSessionLogs = null;
+                },
+              })
+            : nothing
+        }
 
         ${
           state.tab === "cron"
@@ -324,9 +843,9 @@ export function renderApp(state: AppViewState) {
                 channelMeta: state.channelsSnapshot?.channelMeta ?? [],
                 runsJobId: state.cronRunsJobId,
                 runs: state.cronRuns,
-                onFormChange: (patch) =>
-                  (state.cronForm = normalizeCronFormState({ ...state.cronForm, ...patch })),
+                onFormChange: (patch) => (state.cronForm = { ...state.cronForm, ...patch }),
                 onRefresh: () => state.loadCron(),
+                onToggleSchedulerEnabled: (enabled) => state.handleCronSchedulerToggle(enabled),
                 onAdd: () => addCronJob(state),
                 onToggle: (job, enabled) => toggleCronJob(state, job, enabled),
                 onRun: (job) => runCronJob(state, job),
@@ -784,80 +1303,94 @@ export function renderApp(state: AppViewState) {
 
         ${
           state.tab === "chat"
-            ? renderChat({
-                sessionKey: state.sessionKey,
-                onSessionKeyChange: (next) => {
-                  state.sessionKey = next;
-                  state.chatMessage = "";
-                  state.chatAttachments = [];
-                  state.chatStream = null;
-                  state.chatStreamStartedAt = null;
-                  state.chatRunId = null;
-                  state.chatQueue = [];
-                  state.resetToolStream();
-                  state.resetChatScroll();
-                  state.applySettings({
-                    ...state.settings,
-                    sessionKey: next,
-                    lastActiveSessionKey: next,
-                  });
-                  void state.loadAssistantIdentity();
-                  void loadChatHistory(state);
-                  void refreshChatAvatar(state);
-                },
-                thinkingLevel: state.chatThinkingLevel,
-                showThinking,
-                loading: state.chatLoading,
-                sending: state.chatSending,
-                compactionStatus: state.compactionStatus,
-                assistantAvatarUrl: chatAvatarUrl,
-                messages: state.chatMessages,
-                toolMessages: state.chatToolMessages,
-                stream: state.chatStream,
-                streamStartedAt: state.chatStreamStartedAt,
-                draft: state.chatMessage,
-                queue: state.chatQueue,
-                connected: state.connected,
-                canSend: state.connected,
-                disabledReason: chatDisabledReason,
-                error: state.lastError,
-                sessions: state.sessionsResult,
-                focusMode: chatFocus,
-                onRefresh: () => {
-                  state.resetToolStream();
-                  return Promise.all([loadChatHistory(state), refreshChatAvatar(state)]);
-                },
-                onToggleFocusMode: () => {
-                  if (state.onboarding) {
-                    return;
-                  }
-                  state.applySettings({
-                    ...state.settings,
-                    chatFocusMode: !state.settings.chatFocusMode,
-                  });
-                },
-                onChatScroll: (event) => state.handleChatScroll(event),
-                onDraftChange: (next) => (state.chatMessage = next),
-                attachments: state.chatAttachments,
-                onAttachmentsChange: (next) => (state.chatAttachments = next),
-                onSend: () => state.handleSendChat(),
-                canAbort: Boolean(state.chatRunId),
-                onAbort: () => void state.handleAbortChat(),
-                onQueueRemove: (id) => state.removeQueuedMessage(id),
-                onNewSession: () => state.handleSendChat("/new", { restoreDraft: true }),
-                showNewMessages: state.chatNewMessagesBelow && !state.chatManualRefreshInFlight,
-                onScrollToBottom: () => state.scrollToBottom(),
-                // Sidebar props for tool output viewing
-                sidebarOpen: state.sidebarOpen,
-                sidebarContent: state.sidebarContent,
-                sidebarError: state.sidebarError,
-                splitRatio: state.splitRatio,
-                onOpenSidebar: (content: string) => state.handleOpenSidebar(content),
-                onCloseSidebar: () => state.handleCloseSidebar(),
-                onSplitRatioChange: (ratio: number) => state.handleSplitRatioChange(ratio),
-                assistantName: state.assistantName,
-                assistantAvatar: state.assistantAvatar,
-              })
+            ? html`
+                ${
+                  state.lastError
+                    ? html`<div class="callout danger content-area-run-error" role="alert">Run failed: ${state.lastError}</div>`
+                    : nothing
+                }
+                ${renderChat({
+                  sessionKey: state.sessionKey,
+                  onSessionKeyChange: (next) => {
+                    state.openChatSession(next);
+                  },
+                  thinkingLevel: state.chatThinkingLevel,
+                  showThinking,
+                  loading: state.chatLoading,
+                  sending: state.chatSending,
+                  compactionStatus: state.compactionStatus,
+                  assistantAvatarUrl: chatAvatarUrl,
+                  messages: state.chatMessages,
+                  toolMessages: state.chatToolMessages,
+                  stream: state.chatStream,
+                  streamStartedAt: state.chatStreamStartedAt,
+                  modelSelection: state.chatModelSelection,
+                  taskPlan: state.chatTaskPlan,
+                  draft: state.chatMessage,
+                  queue: state.chatQueue,
+                  connected: state.connected,
+                  canSend: state.connected,
+                  disabledReason: chatDisabledReason,
+                  error: state.lastError,
+                  sessions: state.chatThreadsResult,
+                  subagentMonitorLoading: state.subagentMonitorLoading,
+                  subagentMonitorResult: state.subagentMonitorResult,
+                  subagentMonitorError: state.subagentMonitorError,
+                  onSubagentRefresh: () => loadSubagentMonitor(state, { quiet: false }),
+                  focusMode: chatFocus,
+                  onRefresh: () => {
+                    state.resetToolStream();
+                    return Promise.all([
+                      loadChatHistory(state),
+                      loadChatThreads(state, { search: state.chatThreadsQuery }),
+                      refreshChatAvatar(state),
+                    ]);
+                  },
+                  onToggleFocusMode: () => {
+                    if (state.onboarding) {
+                      return;
+                    }
+                    state.applySettings({
+                      ...state.settings,
+                      chatFocusMode: !state.settings.chatFocusMode,
+                    });
+                  },
+                  onChatScroll: (event) => state.handleChatScroll(event),
+                  onDraftChange: (next) => (state.chatMessage = next),
+                  attachments: state.chatAttachments,
+                  onAttachmentsChange: (next) => (state.chatAttachments = next),
+                  onSend: () => state.handleSendChat(),
+                  onQueue: () => state.handleSendChat(undefined, { forceQueue: true }),
+                  canAbort: Boolean(state.chatRunId),
+                  onAbort: () => void state.handleAbortChat(),
+                  onQueueRemove: (id) => state.removeQueuedMessage(id),
+                  onNewChat: () => state.handleChatNewThread(),
+                  // Sidebar props for tool output viewing
+                  sidebarOpen: state.sidebarOpen,
+                  sidebarContent: state.sidebarContent,
+                  sidebarError: state.sidebarError,
+                  splitRatio: state.splitRatio,
+                  onOpenSidebar: (content: string) => state.handleOpenSidebar(content),
+                  onCloseSidebar: () => state.handleCloseSidebar(),
+                  onSplitRatioChange: (ratio: number) => state.handleSplitRatioChange(ratio),
+                  orchestrationExpanded: state.orchestrationExpanded,
+                  onOrchestrationExpandedChange: (expanded) =>
+                    (state.orchestrationExpanded = expanded),
+                  assistantName: state.assistantName,
+                  assistantAvatar: state.assistantAvatar,
+                  sparkVoiceAvailable: Boolean(
+                    state.sparkStatus?.enabled && state.sparkStatus?.voiceAvailable === true,
+                  ),
+                  sparkMicRecording: state.sparkMicRecording ?? false,
+                  onMicClick: () => state.handleSparkMicClick?.(),
+                  onSpeakClick: (text, messageKey) =>
+                    void state.handleSpeakText?.(text, messageKey),
+                  ttsSpeaking: state.ttsSpeaking ?? false,
+                  ttsProgress: state.ttsProgress ?? null,
+                  ttsSpeakingMessageKey: state.ttsSpeakingMessageKey ?? null,
+                  onStopSpeaking: () => state.handleStopSpeaking?.(),
+                })}
+              `
             : nothing
         }
 
@@ -947,6 +1480,25 @@ export function renderApp(state: AppViewState) {
       </main>
       ${renderExecApprovalPrompt(state)}
       ${renderGatewayUrlConfirmation(state)}
+      ${renderCommandPalette(state)}
+      ${renderVoiceBar({
+        state: state.voiceState,
+        visible: state.voiceBarVisible,
+        expanded: state.voiceBarExpanded,
+        onToggleExpanded: () => state.toggleVoiceBarExpanded(),
+        onDriveOpenClawChange: (enabled) => state.handleVoiceDriveOpenClawChange(enabled),
+        onStartConversation: () => state.handleVoiceStartConversation(),
+        onStopConversation: () => state.handleVoiceStopConversation(),
+        onClose: () => state.handleVoiceClose(),
+        onRetry: () => state.handleVoiceRetry(),
+        sparkVoices: state.sparkVoices ?? [],
+        ttsVoice: state.settings.ttsVoice || null,
+        ttsInstruct: state.settings.ttsInstruct || null,
+        ttsLanguage: state.settings.ttsLanguage || null,
+        onTtsVoiceChange: (v) => state.handleTtsVoiceChange(v),
+        onTtsInstructChange: (v) => state.handleTtsInstructChange(v),
+        onTtsLanguageChange: (v) => state.handleTtsLanguageChange(v),
+      })}
     </div>
   `;
 }

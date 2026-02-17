@@ -18,11 +18,6 @@ export type DiscordChannelInfo = {
   ownerId?: string;
 };
 
-type DiscordMessageWithChannelId = Message & {
-  channel_id?: unknown;
-  rawData?: { channel_id?: unknown };
-};
-
 type DiscordSnapshotAuthor = {
   id?: string | null;
   username?: string | null;
@@ -51,29 +46,6 @@ const DISCORD_CHANNEL_INFO_CACHE = new Map<
 
 export function __resetDiscordChannelInfoCacheForTest() {
   DISCORD_CHANNEL_INFO_CACHE.clear();
-}
-
-function normalizeDiscordChannelId(value: unknown): string {
-  if (typeof value === "string") {
-    return value.trim();
-  }
-  if (typeof value === "number" || typeof value === "bigint") {
-    return String(value).trim();
-  }
-  return "";
-}
-
-export function resolveDiscordMessageChannelId(params: {
-  message: Message;
-  eventChannelId?: string | number | null;
-}): string {
-  const message = params.message as DiscordMessageWithChannelId;
-  return (
-    normalizeDiscordChannelId(message.channelId) ||
-    normalizeDiscordChannelId(message.channel_id) ||
-    normalizeDiscordChannelId(message.rawData?.channel_id) ||
-    normalizeDiscordChannelId(params.eventChannelId)
-  );
 }
 
 export async function resolveDiscordChannelInfo(

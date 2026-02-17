@@ -6,12 +6,6 @@ const args = process.argv.slice(2);
 const env = { ...process.env };
 const cwd = process.cwd();
 const compiler = "tsdown";
-const watchSession = `${Date.now()}-${process.pid}`;
-env.OPENCLAW_WATCH_MODE = "1";
-env.OPENCLAW_WATCH_SESSION = watchSession;
-if (args.length > 0) {
-  env.OPENCLAW_WATCH_COMMAND = args.join(" ");
-}
 
 const initialBuild = spawnSync("pnpm", ["exec", compiler], {
   cwd,

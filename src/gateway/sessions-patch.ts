@@ -100,28 +100,6 @@ export async function applySessionsPatchToStore(params: {
     }
   }
 
-  if ("spawnDepth" in patch) {
-    const raw = patch.spawnDepth;
-    if (raw === null) {
-      if (typeof existing?.spawnDepth === "number") {
-        return invalid("spawnDepth cannot be cleared once set");
-      }
-    } else if (raw !== undefined) {
-      if (!isSubagentSessionKey(storeKey)) {
-        return invalid("spawnDepth is only supported for subagent:* sessions");
-      }
-      const numeric = Number(raw);
-      if (!Number.isInteger(numeric) || numeric < 0) {
-        return invalid("invalid spawnDepth (use an integer >= 0)");
-      }
-      const normalized = numeric;
-      if (typeof existing?.spawnDepth === "number" && existing.spawnDepth !== normalized) {
-        return invalid("spawnDepth cannot be changed once set");
-      }
-      next.spawnDepth = normalized;
-    }
-  }
-
   if ("label" in patch) {
     const raw = patch.label;
     if (raw === null) {
@@ -146,7 +124,6 @@ export async function applySessionsPatchToStore(params: {
   if ("thinkingLevel" in patch) {
     const raw = patch.thinkingLevel;
     if (raw === null) {
-      // Clear the override and fall back to model default
       delete next.thinkingLevel;
     } else if (raw !== undefined) {
       const normalized = normalizeThinkLevel(String(raw));
@@ -157,7 +134,11 @@ export async function applySessionsPatchToStore(params: {
           `invalid thinkingLevel (use ${formatThinkingLevels(hintProvider, hintModel, "|")})`,
         );
       }
-      next.thinkingLevel = normalized;
+      if (normalized === "off") {
+        delete next.thinkingLevel;
+      } else {
+        next.thinkingLevel = normalized;
+      }
     }
   }
 
@@ -360,14 +341,9 @@ export async function applySessionsPatchToStore(params: {
       delete next.taskPlan;
     } else if (raw !== undefined) {
       // Best-effort normalization: ensure tasks array is capped.
-      const plan = raw as { id?: unknown; tasks?: unknown } & Record<string, unknown>;
+      const plan = raw as { tasks?: unknown } & Record<string, unknown>;
       const tasks = Array.isArray(plan.tasks) ? plan.tasks.slice(0, 50) : [];
-      const id =
-        typeof plan.id === "string" && plan.id.trim()
-          ? plan.id.trim()
-          : typeof next.taskPlan?.id === "string"
-            ? next.taskPlan.id
-            : "default";
+      const id = typeof plan.id === "string" && plan.id.trim() ? plan.id.trim() : randomUUID();
       next.taskPlan = { ...plan, id, tasks };
     }
   }

@@ -1,8 +1,5 @@
-import type { SsrFPolicy } from "../infra/net/ssrf.js";
 import { fetchWithSsrFGuard } from "../infra/net/fetch-guard.js";
 import { logWarn } from "../logger.js";
-import { estimateBase64DecodedBytes } from "./base64.js";
-import { readResponseWithLimit } from "./read-response-with-limit.js";
 
 type CanvasModule = typeof import("@napi-rs/canvas");
 type PdfJsModule = typeof import("pdfjs-dist/legacy/build/pdf.mjs");
@@ -55,7 +52,6 @@ export type InputPdfLimits = {
 
 export type InputFileLimits = {
   allowUrl: boolean;
-  urlAllowlist?: string[];
   allowedMimes: Set<string>;
   maxBytes: number;
   maxChars: number;
@@ -66,7 +62,6 @@ export type InputFileLimits = {
 
 export type InputImageLimits = {
   allowUrl: boolean;
-  urlAllowlist?: string[];
   allowedMimes: Set<string>;
   maxBytes: number;
   maxRedirects: number;
@@ -112,19 +107,6 @@ export const DEFAULT_INPUT_PDF_MAX_PAGES = 4;
 export const DEFAULT_INPUT_PDF_MAX_PIXELS = 4_000_000;
 export const DEFAULT_INPUT_PDF_MIN_TEXT_CHARS = 200;
 
-function rejectOversizedBase64Payload(params: {
-  data: string;
-  maxBytes: number;
-  label: "Image" | "File";
-}): void {
-  const estimated = estimateBase64DecodedBytes(params.data);
-  if (estimated > params.maxBytes) {
-    throw new Error(
-      `${params.label} too large: ${estimated} bytes (limit: ${params.maxBytes} bytes)`,
-    );
-  }
-}
-
 export function normalizeMimeType(value: string | undefined): string | undefined {
   if (!value) {
     return undefined;
@@ -159,15 +141,11 @@ export async function fetchWithGuard(params: {
   maxBytes: number;
   timeoutMs: number;
   maxRedirects: number;
-  policy?: SsrFPolicy;
-  auditContext?: string;
 }): Promise<InputFetchResult> {
   const { response, release } = await fetchWithSsrFGuard({
     url: params.url,
     maxRedirects: params.maxRedirects,
     timeoutMs: params.timeoutMs,
-    policy: params.policy,
-    auditContext: params.auditContext,
     init: { headers: { "User-Agent": "OpenClaw-Gateway/1.0" } },
   });
 
@@ -178,13 +156,18 @@ export async function fetchWithGuard(params: {
 
     const contentLength = response.headers.get("content-length");
     if (contentLength) {
-      const size = Number(contentLength);
-      if (Number.isFinite(size) && size > params.maxBytes) {
+      const size = parseInt(contentLength, 10);
+      if (size > params.maxBytes) {
         throw new Error(`Content too large: ${size} bytes (limit: ${params.maxBytes} bytes)`);
       }
     }
 
-    const buffer = await readResponseWithLimit(response, params.maxBytes);
+    const buffer = Buffer.from(await response.arrayBuffer());
+    if (buffer.byteLength > params.maxBytes) {
+      throw new Error(
+        `Content too large: ${buffer.byteLength} bytes (limit: ${params.maxBytes} bytes)`,
+      );
+    }
 
     const contentType = response.headers.get("content-type") || undefined;
     const parsed = parseContentType(contentType);
@@ -260,7 +243,7 @@ async function extractPdfContent(params: {
     const scaled = page.getViewport({ scale: Math.max(0.1, scale) });
     const canvas = createCanvas(Math.ceil(scaled.width), Math.ceil(scaled.height));
     await page.render({
-      canvas: canvas as unknown as HTMLCanvasElement,
+      canvas: canvas as never as HTMLCanvasElement,
       viewport: scaled,
     }).promise;
     const png = canvas.toBuffer("image/png");
@@ -278,7 +261,6 @@ export async function extractImageContentFromSource(
     if (!source.data) {
       throw new Error("input_image base64 source missing 'data' field");
     }
-    rejectOversizedBase64Payload({ data: source.data, maxBytes: limits.maxBytes, label: "Image" });
     const mimeType = normalizeMimeType(source.mediaType) ?? "image/png";
     if (!limits.allowedMimes.has(mimeType)) {
       throw new Error(`Unsupported image MIME type: ${mimeType}`);
@@ -301,11 +283,6 @@ export async function extractImageContentFromSource(
       maxBytes: limits.maxBytes,
       timeoutMs: limits.timeoutMs,
       maxRedirects: limits.maxRedirects,
-      policy: {
-        allowPrivateNetwork: false,
-        hostnameAllowlist: limits.urlAllowlist,
-      },
-      auditContext: "openresponses.input_image",
     });
     if (!limits.allowedMimes.has(result.mimeType)) {
       throw new Error(`Unsupported image MIME type from URL: ${result.mimeType}`);
@@ -331,7 +308,6 @@ export async function extractFileContentFromSource(params: {
     if (!source.data) {
       throw new Error("input_file base64 source missing 'data' field");
     }
-    rejectOversizedBase64Payload({ data: source.data, maxBytes: limits.maxBytes, label: "File" });
     const parsed = parseContentType(source.mediaType);
     mimeType = parsed.mimeType;
     charset = parsed.charset;
@@ -345,11 +321,6 @@ export async function extractFileContentFromSource(params: {
       maxBytes: limits.maxBytes,
       timeoutMs: limits.timeoutMs,
       maxRedirects: limits.maxRedirects,
-      policy: {
-        allowPrivateNetwork: false,
-        hostnameAllowlist: limits.urlAllowlist,
-      },
-      auditContext: "openresponses.input_file",
     });
     const parsed = parseContentType(result.contentType);
     mimeType = parsed.mimeType ?? normalizeMimeType(result.mimeType);

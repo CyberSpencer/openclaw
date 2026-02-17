@@ -8,7 +8,6 @@ type BrowserDispatchRequest = {
   path: string;
   query?: Record<string, unknown>;
   body?: unknown;
-  signal?: AbortSignal;
 };
 
 type BrowserDispatchResponse = {
@@ -69,7 +68,6 @@ export function createBrowserRouteDispatcher(ctx: BrowserRouteContext) {
       const path = normalizePath(req.path);
       const query = req.query ?? {};
       const body = req.body;
-      const signal = req.signal;
 
       const match = registry.routes.find((route) => {
         if (route.method !== method) {
@@ -119,7 +117,6 @@ export function createBrowserRouteDispatcher(ctx: BrowserRouteContext) {
             params,
             query,
             body,
-            signal,
           },
           res,
         );

@@ -619,28 +619,31 @@ actor GatewayEndpointStore {
 }
 
 extension GatewayEndpointStore {
-    private static func normalizeDashboardPath(_ rawPath: String?) -> String {
-        let trimmed = (rawPath ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmed.isEmpty else { return "/" }
-        let withLeadingSlash = trimmed.hasPrefix("/") ? trimmed : "/" + trimmed
-        guard withLeadingSlash != "/" else { return "/" }
-        return withLeadingSlash.hasSuffix("/") ? withLeadingSlash : withLeadingSlash + "/"
+    private static func normalizeDashboardPath(_ raw: String) -> String {
+        let trimmed = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+        if trimmed.isEmpty { return "/" }
+        if trimmed.hasPrefix("/") { return trimmed }
+        return "/\(trimmed)"
     }
 
-    private static func localControlUiBasePath() -> String {
-        let root = OpenClawConfigFile.loadDict()
-        guard let gateway = root["gateway"] as? [String: Any],
-              let controlUi = gateway["controlUi"] as? [String: Any]
-        else {
-            return "/"
+    private static func buildDashboardFragment(token: String?, password: String?) -> String? {
+        var items: [URLQueryItem] = []
+        if let token = token?.trimmingCharacters(in: .whitespacesAndNewlines), !token.isEmpty {
+            items.append(URLQueryItem(name: "token", value: token))
         }
-        return self.normalizeDashboardPath(controlUi["basePath"] as? String)
+        if let password = password?.trimmingCharacters(in: .whitespacesAndNewlines), !password.isEmpty {
+            items.append(URLQueryItem(name: "password", value: password))
+        }
+        guard !items.isEmpty else { return nil }
+        var comp = URLComponents()
+        comp.queryItems = items
+        return comp.percentEncodedQuery
     }
 
     static func dashboardURL(
         for config: GatewayConnection.Config,
-        mode: AppState.ConnectionMode,
-        localBasePath: String? = nil) throws -> URL
+        path: String = "/",
+        session: String? = nil) throws -> URL
     {
         guard var components = URLComponents(url: config.url, resolvingAgainstBaseURL: false) else {
             throw NSError(domain: "Dashboard", code: 1, userInfo: [
@@ -655,20 +658,9 @@ extension GatewayEndpointStore {
         default:
             components.scheme = "http"
         }
-
-        let urlPath = self.normalizeDashboardPath(components.path)
-        if urlPath != "/" {
-            components.path = urlPath
-        } else if mode == .local {
-            let fallbackPath = localBasePath ?? self.localControlUiBasePath()
-            components.path = self.normalizeDashboardPath(fallbackPath)
-        } else {
-            components.path = "/"
-        }
-
-        var queryItems: [URLQueryItem] = []
-        if let token = config.token?.trimmingCharacters(in: .whitespacesAndNewlines),
-           !token.isEmpty
+        components.path = Self.normalizeDashboardPath(path)
+        if let session = session?.trimmingCharacters(in: .whitespacesAndNewlines),
+           !session.isEmpty
         {
             components.queryItems = [URLQueryItem(name: "session", value: session)]
         } else {

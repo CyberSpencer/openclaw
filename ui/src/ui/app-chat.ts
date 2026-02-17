@@ -1,30 +1,37 @@
-import type { OpenClawApp } from "./app.ts";
 import type { GatewayHelloOk } from "./gateway.ts";
+import type { UiSettings } from "./storage.ts";
 import type { ChatAttachment, ChatQueueItem } from "./ui-types.ts";
 import { parseAgentSessionKey } from "../../../src/sessions/session-key-utils.js";
-import { scheduleChatScroll } from "./app-scroll.ts";
+import { scheduleChatScroll, type ScrollHost } from "./app-scroll.ts";
 import { setLastActiveSessionKey } from "./app-settings.ts";
-import { resetToolStream } from "./app-tool-stream.ts";
-import { abortChatRun, loadChatHistory, sendChatMessage } from "./controllers/chat.ts";
-import { loadSessions } from "./controllers/sessions.ts";
+import { loadChatThreads, type ChatThreadsState } from "./controllers/chat-threads.ts";
+import {
+  abortChatRun,
+  loadChatHistory,
+  sendChatMessage,
+  steerChatMessage,
+  type ChatState,
+} from "./controllers/chat.ts";
 import { normalizeBasePath } from "./navigation.ts";
 import { generateUUID } from "./uuid.ts";
 
-export type ChatHost = {
-  connected: boolean;
-  chatMessage: string;
-  chatAttachments: ChatAttachment[];
-  chatQueue: ChatQueueItem[];
-  chatRunId: string | null;
-  chatSending: boolean;
-  sessionKey: string;
-  basePath: string;
-  hello: GatewayHelloOk | null;
-  chatAvatarUrl: string | null;
-  refreshSessionsAfterChat: Set<string>;
+type LastActiveSessionState = {
+  settings: UiSettings;
+  applySessionKey: string;
 };
 
-export const CHAT_SESSIONS_ACTIVE_MINUTES = 120;
+export type ChatHost = ChatState &
+  ChatThreadsState &
+  LastActiveSessionState & {
+    chatQueue: ChatQueueItem[];
+    basePath: string;
+    hello: GatewayHelloOk | null;
+    chatAvatarUrl: string | null;
+    chatThreadsQuery: string;
+    resetToolStream: () => void;
+  };
+
+type ChatHostWithScroll = ChatHost & ScrollHost;
 
 export function isChatBusy(host: ChatHost) {
   return host.chatSending || Boolean(host.chatRunId);
@@ -48,32 +55,15 @@ export function isChatStopCommand(text: string) {
   );
 }
 
-function isChatResetCommand(text: string) {
-  const trimmed = text.trim();
-  if (!trimmed) {
-    return false;
-  }
-  const normalized = trimmed.toLowerCase();
-  if (normalized === "/new" || normalized === "/reset") {
-    return true;
-  }
-  return normalized.startsWith("/new ") || normalized.startsWith("/reset ");
-}
-
 export async function handleAbortChat(host: ChatHost) {
   if (!host.connected) {
     return;
   }
   host.chatMessage = "";
-  await abortChatRun(host as unknown as OpenClawApp);
+  await abortChatRun(host);
 }
 
-function enqueueChatMessage(
-  host: ChatHost,
-  text: string,
-  attachments?: ChatAttachment[],
-  refreshSessions?: boolean,
-) {
+function enqueueChatMessage(host: ChatHost, text: string, attachments?: ChatAttachment[]) {
   const trimmed = text.trim();
   const hasAttachments = Boolean(attachments && attachments.length > 0);
   if (!trimmed && !hasAttachments) {
@@ -86,13 +76,12 @@ function enqueueChatMessage(
       text: trimmed,
       createdAt: Date.now(),
       attachments: hasAttachments ? attachments?.map((att) => ({ ...att })) : undefined,
-      refreshSessions,
     },
   ];
 }
 
 async function sendChatMessageNow(
-  host: ChatHost,
+  host: ChatHostWithScroll,
   message: string,
   opts?: {
     previousDraft?: string;
@@ -103,8 +92,8 @@ async function sendChatMessageNow(
     refreshSessions?: boolean;
   },
 ) {
-  resetToolStream(host as unknown as Parameters<typeof resetToolStream>[0]);
-  const runId = await sendChatMessage(host as unknown as OpenClawApp, message, opts?.attachments);
+  host.resetToolStream();
+  const runId = await sendChatMessage(host, message, opts?.attachments);
   const ok = Boolean(runId);
   if (!ok && opts?.previousDraft != null) {
     host.chatMessage = opts.previousDraft;
@@ -113,10 +102,7 @@ async function sendChatMessageNow(
     host.chatAttachments = opts.previousAttachments;
   }
   if (ok) {
-    setLastActiveSessionKey(
-      host as unknown as Parameters<typeof setLastActiveSessionKey>[0],
-      host.sessionKey,
-    );
+    setLastActiveSessionKey(host, host.sessionKey);
   }
   if (ok && opts?.restoreDraft && opts.previousDraft?.trim()) {
     host.chatMessage = opts.previousDraft;
@@ -124,17 +110,32 @@ async function sendChatMessageNow(
   if (ok && opts?.restoreAttachments && opts.previousAttachments?.length) {
     host.chatAttachments = opts.previousAttachments;
   }
-  scheduleChatScroll(host as unknown as Parameters<typeof scheduleChatScroll>[0]);
+  scheduleChatScroll(host);
   if (ok && !host.chatRunId) {
     void flushChatQueue(host);
-  }
-  if (ok && opts?.refreshSessions && runId) {
-    host.refreshSessionsAfterChat.add(runId);
   }
   return ok;
 }
 
-async function flushChatQueue(host: ChatHost) {
+async function steerChatMessageNow(
+  host: ChatHostWithScroll,
+  message: string,
+  opts?: { previousDraft?: string },
+) {
+  const res = await steerChatMessage(host, message);
+  const ok = Boolean(res && res.ok);
+  const status = res?.status ?? null;
+  if (ok && status && status !== "steered" && status !== "compacting") {
+    host.lastError = `Steer not delivered (${status}).`;
+  }
+  if (!ok && opts?.previousDraft != null) {
+    host.chatMessage = opts.previousDraft;
+  }
+  scheduleChatScroll(host);
+  return ok;
+}
+
+async function flushChatQueue(host: ChatHostWithScroll) {
   if (!host.connected || isChatBusy(host)) {
     return;
   }
@@ -145,7 +146,6 @@ async function flushChatQueue(host: ChatHost) {
   host.chatQueue = rest;
   const ok = await sendChatMessageNow(host, next.text, {
     attachments: next.attachments,
-    refreshSessions: next.refreshSessions,
   });
   if (!ok) {
     host.chatQueue = [next, ...host.chatQueue];
@@ -157,9 +157,9 @@ export function removeQueuedMessage(host: ChatHost, id: string) {
 }
 
 export async function handleSendChat(
-  host: ChatHost,
+  host: ChatHostWithScroll,
   messageOverride?: string,
-  opts?: { restoreDraft?: boolean },
+  opts?: { restoreDraft?: boolean; forceQueue?: boolean },
 ) {
   if (!host.connected) {
     return;
@@ -179,8 +179,6 @@ export async function handleSendChat(
     await handleAbortChat(host);
     return;
   }
-
-  const refreshSessions = isChatResetCommand(message);
   if (messageOverride == null) {
     host.chatMessage = "";
     // Clear attachments when sending
@@ -188,7 +186,17 @@ export async function handleSendChat(
   }
 
   if (isChatBusy(host)) {
-    enqueueChatMessage(host, message, attachmentsToSend, refreshSessions);
+    // While a run is active, default to steering (injecting) text-only messages so Spencer can
+    // correct/redirect mid-run. Attachments can't be steered today, so those fall back to queue.
+    const shouldQueue =
+      Boolean(opts?.forceQueue) || messageOverride != null || attachmentsToSend.length > 0;
+    if (shouldQueue) {
+      enqueueChatMessage(host, message, attachmentsToSend);
+      return;
+    }
+    await steerChatMessageNow(host, message, {
+      previousDraft: messageOverride == null ? previousDraft : undefined,
+    });
     return;
   }
 
@@ -198,20 +206,19 @@ export async function handleSendChat(
     attachments: hasAttachments ? attachmentsToSend : undefined,
     previousAttachments: messageOverride == null ? attachments : undefined,
     restoreAttachments: Boolean(messageOverride && opts?.restoreDraft),
-    refreshSessions,
   });
 }
 
-export async function refreshChat(host: ChatHost, opts?: { scheduleScroll?: boolean }) {
+export async function refreshChat(host: ChatHostWithScroll, opts?: { scheduleScroll?: boolean }) {
   await Promise.all([
-    loadChatHistory(host as unknown as OpenClawApp),
-    loadSessions(host as unknown as OpenClawApp, {
-      activeMinutes: CHAT_SESSIONS_ACTIVE_MINUTES,
+    loadChatHistory(host),
+    loadChatThreads(host, {
+      search: host.chatThreadsQuery,
     }),
     refreshChatAvatar(host),
   ]);
   if (opts?.scheduleScroll !== false) {
-    scheduleChatScroll(host as unknown as Parameters<typeof scheduleChatScroll>[0]);
+    scheduleChatScroll(host);
   }
 }
 

@@ -13,7 +13,6 @@ describe("gateway method inventory parity", () => {
       "gateway.restart",
       "doctor.run",
       "exec.approval.request",
-      "exec.approval.waitDecision",
       "exec.approval.resolve",
     ]);
 

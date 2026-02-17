@@ -4,7 +4,6 @@ import path from "node:path";
 import type { BrowserRouteContext } from "../server-context.js";
 import type { BrowserRouteRegistrar } from "./types.js";
 import { handleRouteError, readBody, requirePwAi, resolveProfileContext } from "./agent.shared.js";
-import { DEFAULT_TRACE_DIR, resolvePathWithinRoot } from "./path-output.js";
 import { toBoolean, toStringOrEmpty } from "./utils.js";
 
 export function registerBrowserAgentDebugRoutes(
@@ -132,19 +131,9 @@ export function registerBrowserAgentDebugRoutes(
         return;
       }
       const id = crypto.randomUUID();
-      const dir = DEFAULT_TRACE_DIR;
+      const dir = "/tmp/openclaw";
       await fs.mkdir(dir, { recursive: true });
-      const tracePathResult = resolvePathWithinRoot({
-        rootDir: dir,
-        requestedPath: out,
-        scopeLabel: "trace directory",
-        defaultFileName: `browser-trace-${id}.zip`,
-      });
-      if (!tracePathResult.ok) {
-        res.status(400).json({ error: tracePathResult.error });
-        return;
-      }
-      const tracePath = tracePathResult.path;
+      const tracePath = out.trim() || path.join(dir, `browser-trace-${id}.zip`);
       await pw.traceStopViaPlaywright({
         cdpUrl: profileCtx.profile.cdpUrl,
         targetId: tab.targetId,

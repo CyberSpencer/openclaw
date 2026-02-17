@@ -1,4 +1,3 @@
-import { resolveNodeIdFromCandidates } from "../../shared/node-match.js";
 import { callGatewayTool, type GatewayCallOptions } from "./gateway.js";
 
 export type NodeListNode = {
@@ -60,6 +59,14 @@ function parsePairingList(value: unknown): PairingList {
   const pending = Array.isArray(obj.pending) ? (obj.pending as PendingRequest[]) : [];
   const paired = Array.isArray(obj.paired) ? (obj.paired as PairedNode[]) : [];
   return { pending, paired };
+}
+
+function normalizeNodeKey(value: string) {
+  return value
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+/, "")
+    .replace(/-+$/, "");
 }
 
 async function loadNodes(opts: GatewayCallOptions): Promise<NodeListNode[]> {
@@ -124,7 +131,40 @@ export function resolveNodeIdFromList(
     }
     throw new Error("node required");
   }
-  return resolveNodeIdFromCandidates(nodes, q);
+
+  const qNorm = normalizeNodeKey(q);
+  const matches = nodes.filter((n) => {
+    if (n.nodeId === q) {
+      return true;
+    }
+    if (typeof n.remoteIp === "string" && n.remoteIp === q) {
+      return true;
+    }
+    const name = typeof n.displayName === "string" ? n.displayName : "";
+    if (name && normalizeNodeKey(name) === qNorm) {
+      return true;
+    }
+    if (q.length >= 6 && n.nodeId.startsWith(q)) {
+      return true;
+    }
+    return false;
+  });
+
+  if (matches.length === 1) {
+    return matches[0].nodeId;
+  }
+  if (matches.length === 0) {
+    const known = nodes
+      .map((n) => n.displayName || n.remoteIp || n.nodeId)
+      .filter(Boolean)
+      .join(", ");
+    throw new Error(`unknown node: ${q}${known ? ` (known: ${known})` : ""}`);
+  }
+  throw new Error(
+    `ambiguous node: ${q} (matches: ${matches
+      .map((n) => n.displayName || n.remoteIp || n.nodeId)
+      .join(", ")})`,
+  );
 }
 
 export async function resolveNodeId(

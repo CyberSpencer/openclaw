@@ -16,27 +16,6 @@ import { normalizeE164 } from "../../../utils.js";
 import { addWildcardAllowFrom, promptAccountId } from "./helpers.js";
 
 const channel = "signal" as const;
-const MIN_E164_DIGITS = 5;
-const MAX_E164_DIGITS = 15;
-const DIGITS_ONLY = /^\d+$/;
-const INVALID_SIGNAL_ACCOUNT_ERROR =
-  "Invalid E.164 phone number (must start with + and country code, e.g. +15555550123)";
-
-export function normalizeSignalAccountInput(value: string | null | undefined): string | null {
-  const trimmed = value?.trim();
-  if (!trimmed) {
-    return null;
-  }
-  const normalized = normalizeE164(trimmed);
-  const digits = normalized.slice(1);
-  if (!DIGITS_ONLY.test(digits)) {
-    return null;
-  }
-  if (digits.length < MIN_E164_DIGITS || digits.length > MAX_E164_DIGITS) {
-    return null;
-  }
-  return `+${digits}`;
-}
 
 function setSignalDmPolicy(cfg: OpenClawConfig, dmPolicy: DmPolicy) {
   const allowFrom =
@@ -264,36 +243,22 @@ export const signalOnboardingAdapter: ChannelOnboardingAdapter = {
 
     let account = accountConfig.account ?? "";
     if (account) {
-      const normalizedExisting = normalizeSignalAccountInput(account);
-      if (!normalizedExisting) {
-        await prompter.note(
-          "Existing Signal account isn't a valid E.164 number. Please enter it again.",
-          "Signal",
-        );
+      const keep = await prompter.confirm({
+        message: `Signal account set (${account}). Keep it?`,
+        initialValue: true,
+      });
+      if (!keep) {
         account = "";
-      } else {
-        account = normalizedExisting;
-        const keep = await prompter.confirm({
-          message: `Signal account set (${account}). Keep it?`,
-          initialValue: true,
-        });
-        if (!keep) {
-          account = "";
-        }
       }
     }
 
     if (!account) {
-      const rawAccount = String(
+      account = String(
         await prompter.text({
           message: "Signal bot number (E.164)",
-          validate: (value) =>
-            normalizeSignalAccountInput(String(value ?? ""))
-              ? undefined
-              : INVALID_SIGNAL_ACCOUNT_ERROR,
+          validate: (value) => (value?.trim() ? undefined : "Required"),
         }),
-      );
-      account = normalizeSignalAccountInput(rawAccount) ?? "";
+      ).trim();
     }
 
     if (account) {

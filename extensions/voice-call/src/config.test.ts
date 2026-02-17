@@ -47,7 +47,6 @@ describe("validateProviderConfig", () => {
     delete process.env.TWILIO_AUTH_TOKEN;
     delete process.env.TELNYX_API_KEY;
     delete process.env.TELNYX_CONNECTION_ID;
-    delete process.env.TELNYX_PUBLIC_KEY;
     delete process.env.PLIVO_AUTH_ID;
     delete process.env.PLIVO_AUTH_TOKEN;
   });
@@ -122,7 +121,7 @@ describe("validateProviderConfig", () => {
   describe("telnyx provider", () => {
     it("passes validation when credentials are in config", () => {
       const config = createBaseConfig("telnyx");
-      config.telnyx = { apiKey: "KEY123", connectionId: "CONN456", publicKey: "public-key" };
+      config.telnyx = { apiKey: "KEY123", connectionId: "CONN456" };
 
       const result = validateProviderConfig(config);
 
@@ -133,7 +132,6 @@ describe("validateProviderConfig", () => {
     it("passes validation when credentials are in environment variables", () => {
       process.env.TELNYX_API_KEY = "KEY123";
       process.env.TELNYX_CONNECTION_ID = "CONN456";
-      process.env.TELNYX_PUBLIC_KEY = "public-key";
       let config = createBaseConfig("telnyx");
       config = resolveVoiceCallConfig(config);
 
@@ -165,7 +163,7 @@ describe("validateProviderConfig", () => {
 
       expect(result.valid).toBe(false);
       expect(result.errors).toContain(
-        "plugins.entries.voice-call.config.telnyx.publicKey is required (or set TELNYX_PUBLIC_KEY env)",
+        "plugins.entries.voice-call.config.telnyx.publicKey is required for inboundPolicy allowlist/pairing",
       );
     });
 
@@ -177,17 +175,6 @@ describe("validateProviderConfig", () => {
         connectionId: "CONN456",
         publicKey: "public-key",
       };
-
-      const result = validateProviderConfig(config);
-
-      expect(result.valid).toBe(true);
-      expect(result.errors).toEqual([]);
-    });
-
-    it("passes validation when skipSignatureVerification is true (even without public key)", () => {
-      const config = createBaseConfig("telnyx");
-      config.skipSignatureVerification = true;
-      config.telnyx = { apiKey: "KEY123", connectionId: "CONN456" };
 
       const result = validateProviderConfig(config);
 

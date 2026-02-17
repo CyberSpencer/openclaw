@@ -28,18 +28,17 @@ if (typeof globalObj.document === "undefined") {
 if (typeof globalObj.self === "undefined") {
   globalObj.self = window;
 }
-
-const winGlobal = window as unknown as typeof globalThis;
+const windowObj = window as unknown as Record<string, unknown>;
 
 // Ensure the core DOM classes exist before importing anything that touches web components.
 if (typeof globalObj.HTMLElement === "undefined") {
-  globalObj.HTMLElement = winGlobal.HTMLElement;
+  globalObj.HTMLElement = windowObj.HTMLElement;
 }
 if (typeof globalObj.Element === "undefined") {
-  globalObj.Element = winGlobal.Element;
+  globalObj.Element = windowObj.Element;
 }
 if (typeof globalObj.Node === "undefined") {
-  globalObj.Node = winGlobal.Node;
+  globalObj.Node = windowObj.Node;
 }
 
 // Newer Node versions expose a read-only `navigator` on globalThis.
@@ -97,7 +96,7 @@ if (typeof globalThis.Node === "undefined") {
 
 // Keep HTMLElement wired up even if Node provides a stub.
 if (typeof globalThis.HTMLElement === "undefined") {
-  globalObj.HTMLElement = winGlobal.HTMLElement;
+  globalObj.HTMLElement = windowObj.HTMLElement;
 }
 
 if (typeof globalObj.MouseEvent !== "function") {

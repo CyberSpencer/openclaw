@@ -14,29 +14,6 @@ const { createService, shutdown, registerUnhandledRejectionHandler, logWarn, log
 const asString = (value: unknown, fallback: string) =>
   typeof value === "string" && value.trim() ? value : fallback;
 
-function mockCiaoService(params?: {
-  advertise?: ReturnType<typeof vi.fn>;
-  destroy?: ReturnType<typeof vi.fn>;
-  serviceState?: string;
-  on?: ReturnType<typeof vi.fn>;
-}) {
-  const advertise = params?.advertise ?? vi.fn().mockResolvedValue(undefined);
-  const destroy = params?.destroy ?? vi.fn().mockResolvedValue(undefined);
-  const on = params?.on ?? vi.fn();
-  createService.mockImplementation((options: Record<string, unknown>) => {
-    return {
-      advertise,
-      destroy,
-      serviceState: params?.serviceState ?? "announced",
-      on,
-      getFQDN: () => `${asString(options.type, "service")}.${asString(options.domain, "local")}.`,
-      getHostname: () => asString(options.hostname, "unknown"),
-      getPort: () => Number(options.port ?? -1),
-    };
-  });
-  return { advertise, destroy, on };
-}
-
 vi.mock("../logger.js", async () => {
   const actual = await vi.importActual<typeof import("../logger.js")>("../logger.js");
   return {
@@ -119,7 +96,18 @@ describe("gateway bonjour advertiser", () => {
           setTimeout(resolve, 250);
         }),
     );
-    mockCiaoService({ advertise, destroy });
+
+    createService.mockImplementation((options: Record<string, unknown>) => {
+      return {
+        advertise,
+        destroy,
+        serviceState: "announced",
+        on: vi.fn(),
+        getFQDN: () => `${asString(options.type, "service")}.${asString(options.domain, "local")}.`,
+        getHostname: () => asString(options.hostname, "unknown"),
+        getPort: () => Number(options.port ?? -1),
+      };
+    });
 
     const started = await startGatewayBonjourAdvertiser({
       gatewayPort: 32555,
@@ -161,7 +149,18 @@ describe("gateway bonjour advertiser", () => {
 
     const destroy = vi.fn().mockResolvedValue(undefined);
     const advertise = vi.fn().mockResolvedValue(undefined);
-    mockCiaoService({ advertise, destroy });
+
+    createService.mockImplementation((options: Record<string, unknown>) => {
+      return {
+        advertise,
+        destroy,
+        serviceState: "announced",
+        on: vi.fn(),
+        getFQDN: () => `${asString(options.type, "service")}.${asString(options.domain, "local")}.`,
+        getHostname: () => asString(options.hostname, "unknown"),
+        getPort: () => Number(options.port ?? -1),
+      };
+    });
 
     const started = await startGatewayBonjourAdvertiser({
       gatewayPort: 32555,
@@ -189,10 +188,20 @@ describe("gateway bonjour advertiser", () => {
     const advertise = vi.fn().mockResolvedValue(undefined);
     const onCalls: Array<{ event: string }> = [];
 
-    const on = vi.fn((event: string) => {
-      onCalls.push({ event });
+    createService.mockImplementation((options: Record<string, unknown>) => {
+      const on = vi.fn((event: string) => {
+        onCalls.push({ event });
+      });
+      return {
+        advertise,
+        destroy,
+        serviceState: "announced",
+        on,
+        getFQDN: () => `${asString(options.type, "service")}.${asString(options.domain, "local")}.`,
+        getHostname: () => asString(options.hostname, "unknown"),
+        getPort: () => Number(options.port ?? -1),
+      };
     });
-    mockCiaoService({ advertise, destroy, on });
 
     const started = await startGatewayBonjourAdvertiser({
       gatewayPort: 32555,
@@ -219,7 +228,18 @@ describe("gateway bonjour advertiser", () => {
     shutdown.mockImplementation(async () => {
       order.push("shutdown");
     });
-    mockCiaoService({ advertise, destroy });
+
+    createService.mockImplementation((options: Record<string, unknown>) => {
+      return {
+        advertise,
+        destroy,
+        serviceState: "announced",
+        on: vi.fn(),
+        getFQDN: () => `${asString(options.type, "service")}.${asString(options.domain, "local")}.`,
+        getHostname: () => asString(options.hostname, "unknown"),
+        getPort: () => Number(options.port ?? -1),
+      };
+    });
 
     const cleanup = vi.fn(() => {
       order.push("cleanup");
@@ -252,7 +272,18 @@ describe("gateway bonjour advertiser", () => {
       .fn()
       .mockRejectedValueOnce(new Error("boom")) // initial advertise fails
       .mockResolvedValue(undefined); // watchdog retry succeeds
-    mockCiaoService({ advertise, destroy, serviceState: "unannounced" });
+
+    createService.mockImplementation((options: Record<string, unknown>) => {
+      return {
+        advertise,
+        destroy,
+        serviceState: "unannounced",
+        on: vi.fn(),
+        getFQDN: () => `${asString(options.type, "service")}.${asString(options.domain, "local")}.`,
+        getHostname: () => asString(options.hostname, "unknown"),
+        getPort: () => Number(options.port ?? -1),
+      };
+    });
 
     const started = await startGatewayBonjourAdvertiser({
       gatewayPort: 32555,
@@ -288,7 +319,18 @@ describe("gateway bonjour advertiser", () => {
     const advertise = vi.fn(() => {
       throw new Error("sync-fail");
     });
-    mockCiaoService({ advertise, destroy, serviceState: "unannounced" });
+
+    createService.mockImplementation((options: Record<string, unknown>) => {
+      return {
+        advertise,
+        destroy,
+        serviceState: "unannounced",
+        on: vi.fn(),
+        getFQDN: () => `${asString(options.type, "service")}.${asString(options.domain, "local")}.`,
+        getHostname: () => asString(options.hostname, "unknown"),
+        getPort: () => Number(options.port ?? -1),
+      };
+    });
 
     const started = await startGatewayBonjourAdvertiser({
       gatewayPort: 32555,
@@ -310,7 +352,17 @@ describe("gateway bonjour advertiser", () => {
 
     const destroy = vi.fn().mockResolvedValue(undefined);
     const advertise = vi.fn().mockResolvedValue(undefined);
-    mockCiaoService({ advertise, destroy });
+    createService.mockImplementation((options: Record<string, unknown>) => {
+      return {
+        advertise,
+        destroy,
+        serviceState: "announced",
+        on: vi.fn(),
+        getFQDN: () => `${asString(options.type, "service")}.${asString(options.domain, "local")}.`,
+        getHostname: () => asString(options.hostname, "unknown"),
+        getPort: () => Number(options.port ?? -1),
+      };
+    });
 
     const started = await startGatewayBonjourAdvertiser({
       gatewayPort: 32555,

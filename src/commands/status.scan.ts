@@ -158,7 +158,7 @@ export async function scanStatus(
           return null;
         }
         const agentId = agentStatus.defaultId ?? "main";
-        const { manager } = await getMemorySearchManager({ cfg, agentId, purpose: "status" });
+        const { manager } = await getMemorySearchManager({ cfg, agentId });
         if (!manager) {
           return null;
         }

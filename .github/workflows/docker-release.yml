@@ -6,16 +6,6 @@ on:
       - main
     tags:
       - "v*"
-    paths-ignore:
-      - "docs/**"
-      - "**/*.md"
-      - "**/*.mdx"
-      - ".agents/**"
-      - "skills/**"
-
-concurrency:
-  group: docker-release-${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: false
 
 env:
   REGISTRY: ghcr.io
@@ -66,8 +56,8 @@ jobs:
           platforms: linux/amd64
           labels: ${{ steps.meta.outputs.labels }}
           tags: ${{ steps.meta.outputs.tags }}
-          cache-from: type=registry,ref=${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}-cache:amd64
-          cache-to: type=registry,ref=${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}-cache:amd64,mode=max
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
           provenance: false
           push: true
 
@@ -115,8 +105,8 @@ jobs:
           platforms: linux/arm64
           labels: ${{ steps.meta.outputs.labels }}
           tags: ${{ steps.meta.outputs.tags }}
-          cache-from: type=registry,ref=${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}-cache:arm64
-          cache-to: type=registry,ref=${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}-cache:arm64,mode=max
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
           provenance: false
           push: true
 

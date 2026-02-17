@@ -10,13 +10,9 @@
  * - Registry integration
  */
 
-import { describe, expect, it, vi } from "vitest";
+import type { OpenClawConfig } from "openclaw/plugin-sdk";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { sendMessageTwitchInternal } from "./send.js";
-import {
-  BASE_TWITCH_TEST_ACCOUNT,
-  installTwitchTestHooks,
-  makeTwitchTestConfig,
-} from "./test-fixtures.js";
 
 // Mock dependencies
 vi.mock("./config.js", () => ({
@@ -47,12 +43,29 @@ describe("send", () => {
   };
 
   const mockAccount = {
-    ...BASE_TWITCH_TEST_ACCOUNT,
+    username: "testbot",
     token: "oauth:test123",
+    clientId: "test-client-id",
+    channel: "#testchannel",
   };
 
-  const mockConfig = makeTwitchTestConfig(mockAccount);
-  installTwitchTestHooks();
+  const mockConfig = {
+    channels: {
+      twitch: {
+        accounts: {
+          default: mockAccount,
+        },
+      },
+    },
+  } as unknown as OpenClawConfig;
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
 
   describe("sendMessageTwitchInternal", () => {
     it("should send a message successfully", async () => {

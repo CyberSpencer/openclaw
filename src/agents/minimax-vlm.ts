@@ -1,4 +1,3 @@
-import { isRecord } from "../utils.js";
 import { normalizeSecretInput } from "../utils/normalize-secret-input.js";
 
 type MinimaxBaseResp = {
@@ -29,6 +28,10 @@ function coerceApiHost(params: {
   } catch {
     return "https://api.minimax.io";
   }
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return Boolean(value && typeof value === "object" && !Array.isArray(value));
 }
 
 function pickString(rec: Record<string, unknown>, key: string): string {

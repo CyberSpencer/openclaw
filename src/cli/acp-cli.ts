@@ -22,9 +22,9 @@ export function registerAcpCli(program: Command) {
       "after",
       () => `\n${theme.muted("Docs:")} ${formatDocsLink("/cli/acp", "docs.openclaw.ai/cli/acp")}\n`,
     )
-    .action(async (opts) => {
+    .action((opts) => {
       try {
-        await serveAcpGateway({
+        serveAcpGateway({
           gatewayUrl: opts.url as string | undefined,
           gatewayToken: opts.token as string | undefined,
           gatewayPassword: opts.password as string | undefined,

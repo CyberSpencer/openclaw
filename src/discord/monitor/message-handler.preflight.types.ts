@@ -34,7 +34,6 @@ export type DiscordMessagePreflightContext = {
   data: DiscordMessageEvent;
   client: Client;
   message: DiscordMessageEvent["message"];
-  messageChannelId: string;
   author: User;
   sender: DiscordSenderIdentity;
 

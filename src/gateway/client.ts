@@ -1,7 +1,11 @@
 import { randomUUID } from "node:crypto";
 import { WebSocket, type ClientOptions, type CertMeta } from "ws";
 import type { DeviceIdentity } from "../infra/device-identity.js";
-import { loadDeviceAuthToken, storeDeviceAuthToken } from "../infra/device-auth-store.js";
+import {
+  clearDeviceAuthToken,
+  loadDeviceAuthToken,
+  storeDeviceAuthToken,
+} from "../infra/device-auth-store.js";
 import {
   loadOrCreateDeviceIdentity,
   publicKeyRawBase64UrlFromPem,
@@ -35,9 +39,7 @@ type Pending = {
 };
 
 export type GatewayClientOptions = {
-  url?: string; // ws://127.0.0.1:18789
-  connectDelayMs?: number;
-  tickWatchMinIntervalMs?: number;
+  url?: string; // ws://127.0.0.1:32555
   token?: string;
   password?: string;
   instanceId?: string;
@@ -186,9 +188,8 @@ export class GatewayClient {
     const storedToken = this.opts.deviceIdentity
       ? loadDeviceAuthToken({ deviceId: this.opts.deviceIdentity.deviceId, role })?.token
       : null;
-    // Prefer explicitly provided credentials (e.g. CLI `--token`) over any persisted
-    // device-auth tokens. Persisted tokens are only used when no token is provided.
-    const authToken = this.opts.token ?? storedToken ?? undefined;
+    const authToken = storedToken ?? this.opts.token ?? undefined;
+    const canFallbackToShared = Boolean(storedToken && this.opts.token);
     const auth =
       authToken || this.opts.password
         ? {
@@ -267,6 +268,12 @@ export class GatewayClient {
         this.opts.onHelloOk?.(helloOk);
       })
       .catch((err) => {
+        if (canFallbackToShared && this.opts.deviceIdentity) {
+          clearDeviceAuthToken({
+            deviceId: this.opts.deviceIdentity.deviceId,
+            role,
+          });
+        }
         this.opts.onConnectError?.(err instanceof Error ? err : new Error(String(err)));
         const msg = `gateway connect failed: ${String(err)}`;
         if (this.opts.mode === GATEWAY_CLIENT_MODES.PROBE) {
@@ -331,17 +338,12 @@ export class GatewayClient {
   private queueConnect() {
     this.connectNonce = null;
     this.connectSent = false;
-    const rawConnectDelayMs = this.opts.connectDelayMs;
-    const connectDelayMs =
-      typeof rawConnectDelayMs === "number" && Number.isFinite(rawConnectDelayMs)
-        ? Math.max(0, Math.min(5_000, rawConnectDelayMs))
-        : 750;
     if (this.connectTimer) {
       clearTimeout(this.connectTimer);
     }
     this.connectTimer = setTimeout(() => {
       this.sendConnect();
-    }, connectDelayMs);
+    }, 750);
   }
 
   private scheduleReconnect() {
@@ -368,12 +370,7 @@ export class GatewayClient {
     if (this.tickTimer) {
       clearInterval(this.tickTimer);
     }
-    const rawMinInterval = this.opts.tickWatchMinIntervalMs;
-    const minInterval =
-      typeof rawMinInterval === "number" && Number.isFinite(rawMinInterval)
-        ? Math.max(1, Math.min(30_000, rawMinInterval))
-        : 1000;
-    const interval = Math.max(this.tickIntervalMs, minInterval);
+    const interval = Math.max(this.tickIntervalMs, 1000);
     this.tickTimer = setInterval(() => {
       if (this.closed) {
         return;

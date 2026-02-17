@@ -9,7 +9,6 @@ export {
   markAuthProfileGood,
   setAuthProfileOrder,
   upsertAuthProfile,
-  upsertAuthProfileWithLock,
 } from "./auth-profiles/profiles.js";
 export {
   repairOAuthProfileIdMismatch,
@@ -33,7 +32,6 @@ export type {
 export {
   calculateAuthProfileCooldownMs,
   clearAuthProfileCooldown,
-  getSoonestCooldownExpiry,
   isProfileInCooldown,
   markAuthProfileCooldown,
   markAuthProfileFailure,

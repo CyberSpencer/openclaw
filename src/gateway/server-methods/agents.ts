@@ -1,6 +1,6 @@
 import fs from "node:fs/promises";
 import path from "node:path";
-import type { GatewayRequestHandlers, RespondFn } from "./types.js";
+import type { GatewayRequestHandlers } from "./types.js";
 import {
   listAgentIds,
   resolveAgentDir,
@@ -17,7 +17,6 @@ import {
   DEFAULT_TOOLS_FILENAME,
   DEFAULT_USER_FILENAME,
   ensureAgentWorkspace,
-  isWorkspaceOnboardingCompleted,
 } from "../../agents/workspace.js";
 import { movePathToTrash } from "../../browser/trash.js";
 import {
@@ -53,44 +52,10 @@ const BOOTSTRAP_FILE_NAMES = [
   DEFAULT_HEARTBEAT_FILENAME,
   DEFAULT_BOOTSTRAP_FILENAME,
 ] as const;
-const BOOTSTRAP_FILE_NAMES_POST_ONBOARDING = BOOTSTRAP_FILE_NAMES.filter(
-  (name) => name !== DEFAULT_BOOTSTRAP_FILENAME,
-);
 
 const MEMORY_FILE_NAMES = [DEFAULT_MEMORY_FILENAME, DEFAULT_MEMORY_ALT_FILENAME] as const;
 
 const ALLOWED_FILE_NAMES = new Set<string>([...BOOTSTRAP_FILE_NAMES, ...MEMORY_FILE_NAMES]);
-
-function resolveAgentWorkspaceFileOrRespondError(
-  params: Record<string, unknown>,
-  respond: RespondFn,
-): {
-  cfg: ReturnType<typeof loadConfig>;
-  agentId: string;
-  workspaceDir: string;
-  name: string;
-} | null {
-  const cfg = loadConfig();
-  const rawAgentId = params.agentId;
-  const agentId = resolveAgentIdOrError(
-    typeof rawAgentId === "string" || typeof rawAgentId === "number" ? String(rawAgentId) : "",
-    cfg,
-  );
-  if (!agentId) {
-    respond(false, undefined, errorShape(ErrorCodes.INVALID_REQUEST, "unknown agent id"));
-    return null;
-  }
-  const rawName = params.name;
-  const name = (
-    typeof rawName === "string" || typeof rawName === "number" ? String(rawName) : ""
-  ).trim();
-  if (!ALLOWED_FILE_NAMES.has(name)) {
-    respond(false, undefined, errorShape(ErrorCodes.INVALID_REQUEST, `unsupported file "${name}"`));
-    return null;
-  }
-  const workspaceDir = resolveAgentWorkspaceDir(cfg, agentId);
-  return { cfg, agentId, workspaceDir, name };
-}
 
 type FileMeta = {
   size: number;
@@ -112,7 +77,7 @@ async function statFile(filePath: string): Promise<FileMeta | null> {
   }
 }
 
-async function listAgentFiles(workspaceDir: string, options?: { hideBootstrap?: boolean }) {
+async function listAgentFiles(workspaceDir: string) {
   const files: Array<{
     name: string;
     path: string;
@@ -121,10 +86,7 @@ async function listAgentFiles(workspaceDir: string, options?: { hideBootstrap?: 
     updatedAtMs?: number;
   }> = [];
 
-  const bootstrapFileNames = options?.hideBootstrap
-    ? BOOTSTRAP_FILE_NAMES_POST_ONBOARDING
-    : BOOTSTRAP_FILE_NAMES;
-  for (const name of bootstrapFileNames) {
+  for (const name of BOOTSTRAP_FILE_NAMES) {
     const filePath = path.join(workspaceDir, name);
     const meta = await statFile(filePath);
     if (meta) {
@@ -424,13 +386,7 @@ export const agentsHandlers: GatewayRequestHandlers = {
       return;
     }
     const workspaceDir = resolveAgentWorkspaceDir(cfg, agentId);
-    let hideBootstrap = false;
-    try {
-      hideBootstrap = await isWorkspaceOnboardingCompleted(workspaceDir);
-    } catch {
-      // Fall back to showing BOOTSTRAP if workspace state cannot be read.
-    }
-    const files = await listAgentFiles(workspaceDir, { hideBootstrap });
+    const files = await listAgentFiles(workspaceDir);
     respond(true, { agentId, workspace: workspaceDir, files }, undefined);
   },
   "agents.files.get": async ({ params, respond }) => {
@@ -447,11 +403,22 @@ export const agentsHandlers: GatewayRequestHandlers = {
       );
       return;
     }
-    const resolved = resolveAgentWorkspaceFileOrRespondError(params, respond);
-    if (!resolved) {
+    const cfg = loadConfig();
+    const agentId = resolveAgentIdOrError(String(params.agentId ?? ""), cfg);
+    if (!agentId) {
+      respond(false, undefined, errorShape(ErrorCodes.INVALID_REQUEST, "unknown agent id"));
       return;
     }
-    const { agentId, workspaceDir, name } = resolved;
+    const name = String(params.name ?? "").trim();
+    if (!ALLOWED_FILE_NAMES.has(name)) {
+      respond(
+        false,
+        undefined,
+        errorShape(ErrorCodes.INVALID_REQUEST, `unsupported file "${name}"`),
+      );
+      return;
+    }
+    const workspaceDir = resolveAgentWorkspaceDir(cfg, agentId);
     const filePath = path.join(workspaceDir, name);
     const meta = await statFile(filePath);
     if (!meta) {
@@ -498,11 +465,22 @@ export const agentsHandlers: GatewayRequestHandlers = {
       );
       return;
     }
-    const resolved = resolveAgentWorkspaceFileOrRespondError(params, respond);
-    if (!resolved) {
+    const cfg = loadConfig();
+    const agentId = resolveAgentIdOrError(String(params.agentId ?? ""), cfg);
+    if (!agentId) {
+      respond(false, undefined, errorShape(ErrorCodes.INVALID_REQUEST, "unknown agent id"));
       return;
     }
-    const { agentId, workspaceDir, name } = resolved;
+    const name = String(params.name ?? "").trim();
+    if (!ALLOWED_FILE_NAMES.has(name)) {
+      respond(
+        false,
+        undefined,
+        errorShape(ErrorCodes.INVALID_REQUEST, `unsupported file "${name}"`),
+      );
+      return;
+    }
+    const workspaceDir = resolveAgentWorkspaceDir(cfg, agentId);
     await fs.mkdir(workspaceDir, { recursive: true });
     const filePath = path.join(workspaceDir, name);
     const content = String(params.content ?? "");

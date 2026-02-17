@@ -106,7 +106,6 @@ export async function buildStatusReply(params: {
   sessionEntry?: SessionEntry;
   sessionKey: string;
   sessionScope?: SessionScope;
-  storePath?: string;
   provider: string;
   model: string;
   contextTokens: number;
@@ -125,7 +124,6 @@ export async function buildStatusReply(params: {
     sessionEntry,
     sessionKey,
     sessionScope,
-    storePath,
     provider,
     model,
     contextTokens,
@@ -224,11 +222,9 @@ export async function buildStatusReply(params: {
       verboseDefault: agentDefaults.verboseDefault,
       elevatedDefault: agentDefaults.elevatedDefault,
     },
-    agentId: statusAgentId,
     sessionEntry,
     sessionKey,
     sessionScope,
-    sessionStorePath: storePath,
     groupActivation,
     resolvedThink: resolvedThinkLevel ?? (await resolveDefaultThinkingLevel()),
     resolvedVerbose: resolvedVerboseLevel,

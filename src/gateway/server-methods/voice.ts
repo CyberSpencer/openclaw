@@ -45,6 +45,7 @@ import {
   processVoiceInput,
   processTextToVoice,
 } from "../../voice/voice.js";
+import { GATEWAY_CLIENT_CAPS, hasGatewayClientCap } from "../protocol/client-info.js";
 import { ErrorCodes, errorShape } from "../protocol/index.js";
 import { loadSessionEntry } from "../session-utils.js";
 import { formatForLog } from "../ws-log.js";
@@ -218,17 +219,21 @@ async function withTemporaryVoiceModelOverride<T>(params: {
   if (previousModel === requestedModel) {
     return params.run();
   }
+  const fallbackSessionId = entry?.sessionId ?? canonicalKey;
 
   try {
     await updateSessionStore(storePath, async (store) => {
-      const rawCurrent = (store[canonicalKey] as Partial<SessionEntry> | undefined) ?? {};
+      const rawCurrent = (store[canonicalKey] as Record<string, unknown> | undefined) ?? {};
       const current = rawCurrent && typeof rawCurrent === "object" ? rawCurrent : {};
       store[canonicalKey] = {
         ...current,
-        sessionId: current.sessionId ?? entry?.sessionId ?? canonicalKey,
+        sessionId:
+          typeof current.sessionId === "string" && current.sessionId.trim()
+            ? current.sessionId
+            : fallbackSessionId,
         modelOverride: requestedModel,
         updatedAt: Date.now(),
-      } satisfies SessionEntry;
+      };
     });
   } catch (err) {
     params.onWarn?.(`voice model override set failed: ${formatForLog(err)}`);
@@ -240,7 +245,7 @@ async function withTemporaryVoiceModelOverride<T>(params: {
   } finally {
     try {
       await updateSessionStore(storePath, async (store) => {
-        const rawCurrent = (store[canonicalKey] as Partial<SessionEntry> | undefined) ?? {};
+        const rawCurrent = (store[canonicalKey] as Record<string, unknown> | undefined) ?? {};
         const current = rawCurrent && typeof rawCurrent === "object" ? rawCurrent : {};
         const currentModel =
           typeof current.modelOverride === "string" ? current.modelOverride.trim() : "";
@@ -250,9 +255,12 @@ async function withTemporaryVoiceModelOverride<T>(params: {
           return;
         }
 
-        const next: SessionEntry = {
-          ...(current as SessionEntry),
-          sessionId: current.sessionId ?? entry?.sessionId ?? canonicalKey,
+        const next: Record<string, unknown> = {
+          ...current,
+          sessionId:
+            typeof current.sessionId === "string" && current.sessionId.trim()
+              ? current.sessionId
+              : fallbackSessionId,
           updatedAt: Date.now(),
         };
         if (previousModel) {
@@ -260,7 +268,7 @@ async function withTemporaryVoiceModelOverride<T>(params: {
         } else {
           delete next.modelOverride;
         }
-        store[canonicalKey] = next;
+        store[canonicalKey] = next as SessionEntry;
       });
     } catch (err) {
       params.onWarn?.(`voice model override restore failed: ${formatForLog(err)}`);
@@ -349,7 +357,7 @@ export const voiceHandlers: GatewayRequestHandlers = {
    * - audio: Base64-encoded audio data (WAV format)
    * - sessionKey: Optional session key for chat context
    */
-  "voice.process": async ({ params, respond, context }) => {
+  "voice.process": async ({ params, respond, context, client }) => {
     const audioBase64 = typeof params.audio === "string" ? params.audio : "";
     if (!audioBase64) {
       respond(
@@ -461,8 +469,16 @@ export const voiceHandlers: GatewayRequestHandlers = {
               replyOptions: {
                 runId,
                 disableBlockStreaming: true,
-                onAgentRunStart: () => {
+                onAgentRunStart: (agentRunId) => {
                   agentRunStarted = true;
+                  const connId = typeof client?.connId === "string" ? client.connId : undefined;
+                  const wantsToolEvents = hasGatewayClientCap(
+                    client?.connect?.caps,
+                    GATEWAY_CLIENT_CAPS.TOOL_EVENTS,
+                  );
+                  if (connId && wantsToolEvents) {
+                    context.registerToolEventRecipient(agentRunId, connId);
+                  }
                 },
                 onModelSelected: (sel) => {
                   selectedModelRef.value = {
@@ -556,7 +572,7 @@ export const voiceHandlers: GatewayRequestHandlers = {
    * - driveOpenClaw: Optional parity flag with voice.process config shaping
    * - skipTts: Optional flag to return text-only response (no local TTS synthesis)
    */
-  "voice.processText": async ({ params, respond, context }) => {
+  "voice.processText": async ({ params, respond, context, client }) => {
     const text = typeof params.text === "string" ? params.text.trim() : "";
     if (!text) {
       respond(
@@ -651,8 +667,16 @@ export const voiceHandlers: GatewayRequestHandlers = {
               replyOptions: {
                 runId,
                 disableBlockStreaming: true,
-                onAgentRunStart: () => {
+                onAgentRunStart: (agentRunId) => {
                   agentRunStarted = true;
+                  const connId = typeof client?.connId === "string" ? client.connId : undefined;
+                  const wantsToolEvents = hasGatewayClientCap(
+                    client?.connect?.caps,
+                    GATEWAY_CLIENT_CAPS.TOOL_EVENTS,
+                  );
+                  if (connId && wantsToolEvents) {
+                    context.registerToolEventRecipient(agentRunId, connId);
+                  }
                 },
                 onModelSelected: (sel) => {
                   selectedModelRef.value = {

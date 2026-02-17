@@ -1,6 +1,5 @@
 import type { SessionStatus } from "./status.types.js";
 import { formatDurationPrecise } from "../infra/format-time/format-duration.ts";
-import { formatRuntimeStatusWithDetails } from "../infra/runtime-status.ts";
 
 export const formatKTokens = (value: number) =>
   `${(value / 1000).toFixed(value >= 10_000 ? 0 : 1)}k`;
@@ -23,11 +22,8 @@ export const shortenText = (value: string, maxLen: number) => {
 export const formatTokensCompact = (
   sess: Pick<SessionStatus, "totalTokens" | "contextTokens" | "percentUsed">,
 ) => {
-  const used = sess.totalTokens;
+  const used = sess.totalTokens ?? 0;
   const ctx = sess.contextTokens;
-  if (used == null) {
-    return ctx ? `unknown/${formatKTokens(ctx)} (?%)` : "unknown used";
-  }
   if (!ctx) {
     return `${formatKTokens(used)} used`;
   }
@@ -45,17 +41,19 @@ export const formatDaemonRuntimeShort = (runtime?: {
   if (!runtime) {
     return null;
   }
+  const status = runtime.status ?? "unknown";
   const details: string[] = [];
+  if (runtime.pid) {
+    details.push(`pid ${runtime.pid}`);
+  }
+  if (runtime.state && runtime.state.toLowerCase() !== status) {
+    details.push(`state ${runtime.state}`);
+  }
   const detail = runtime.detail?.replace(/\s+/g, " ").trim() || "";
   const noisyLaunchctlDetail =
     runtime.missingUnit === true && detail.toLowerCase().includes("could not find service");
   if (detail && !noisyLaunchctlDetail) {
     details.push(detail);
   }
-  return formatRuntimeStatusWithDetails({
-    status: runtime.status,
-    pid: runtime.pid,
-    state: runtime.state,
-    details,
-  });
+  return details.length > 0 ? `${status} (${details.join(", ")})` : status;
 };

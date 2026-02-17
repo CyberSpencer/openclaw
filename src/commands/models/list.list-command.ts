@@ -1,14 +1,13 @@
 import type { Api, Model } from "@mariozechner/pi-ai";
-import type { ModelRegistry } from "../../agents/pi-model-discovery.js";
 import type { RuntimeEnv } from "../../runtime.js";
 import type { ModelRow } from "./list.types.js";
-import { resolveForwardCompatModel } from "../../agents/model-forward-compat.js";
-import { parseModelRef } from "../../agents/model-selection.js";
+import { ensureAuthProfileStore } from "../../agents/auth-profiles.js";
+import { isLocalProviderUrl, parseModelRef } from "../../agents/model-selection.js";
+import { loadConfig } from "../../config/config.js";
 import { resolveConfiguredEntries } from "./list.configured.js";
-import { formatErrorWithStack } from "./list.errors.js";
 import { loadModelRegistry, toModelRow } from "./list.registry.js";
 import { printModelTable } from "./list.table.js";
-import { DEFAULT_PROVIDER, ensureFlagCompatibility, isLocalBaseUrl, modelKey } from "./shared.js";
+import { DEFAULT_PROVIDER, ensureFlagCompatibility, modelKey } from "./shared.js";
 
 export async function modelsListCommand(
   opts: {
@@ -21,8 +20,6 @@ export async function modelsListCommand(
   runtime: RuntimeEnv,
 ) {
   ensureFlagCompatibility(opts);
-  const { loadConfig } = await import("../../config/config.js");
-  const { ensureAuthProfileStore } = await import("../../agents/auth-profiles.js");
   const cfg = loadConfig();
   const authStore = ensureAuthProfileStore();
   const providerFilter = (() => {
@@ -35,24 +32,13 @@ export async function modelsListCommand(
   })();
 
   let models: Model<Api>[] = [];
-  let modelRegistry: ModelRegistry | undefined;
   let availableKeys: Set<string> | undefined;
-  let availabilityErrorMessage: string | undefined;
   try {
     const loaded = await loadModelRegistry(cfg);
-    modelRegistry = loaded.registry;
     models = loaded.models;
     availableKeys = loaded.availableKeys;
-    availabilityErrorMessage = loaded.availabilityErrorMessage;
   } catch (err) {
-    runtime.error(`Model registry unavailable:\n${formatErrorWithStack(err)}`);
-    process.exitCode = 1;
-    return;
-  }
-  if (availabilityErrorMessage !== undefined) {
-    runtime.error(
-      `Model availability lookup failed; falling back to auth heuristics for discovered models: ${availabilityErrorMessage}`,
-    );
+    runtime.error(`Model registry unavailable: ${String(err)}`);
   }
 
   const modelByKey = new Map(models.map((model) => [modelKey(model.provider, model.id), model]));
@@ -75,7 +61,7 @@ export async function modelsListCommand(
       if (providerFilter && model.provider.toLowerCase() !== providerFilter) {
         continue;
       }
-      if (opts.local && !isLocalBaseUrl(model.baseUrl)) {
+      if (opts.local && !isLocalProviderUrl(model.baseUrl)) {
         continue;
       }
       const key = modelKey(model.provider, model.id);
@@ -97,23 +83,8 @@ export async function modelsListCommand(
       if (providerFilter && entry.ref.provider.toLowerCase() !== providerFilter) {
         continue;
       }
-      let model = modelByKey.get(entry.key);
-      if (!model && modelRegistry) {
-        const forwardCompat = resolveForwardCompatModel(
-          entry.ref.provider,
-          entry.ref.model,
-          modelRegistry,
-        );
-        if (forwardCompat) {
-          model = forwardCompat;
-          modelByKey.set(entry.key, forwardCompat);
-        }
-      }
-      if (!model) {
-        const { resolveModel } = await import("../../agents/pi-embedded-runner/model.js");
-        model = resolveModel(entry.ref.provider, entry.ref.model, undefined, cfg).model;
-      }
-      if (opts.local && model && !isLocalBaseUrl(model.baseUrl)) {
+      const model = modelByKey.get(entry.key);
+      if (opts.local && model && !isLocalProviderUrl(model.baseUrl)) {
         continue;
       }
       if (opts.local && !model) {

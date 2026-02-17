@@ -52,7 +52,7 @@ const AUDIO_FILE_EXTENSIONS = new Set([
   ".wav",
 ]);
 
-export function normalizeMimeType(mime?: string | null): string | undefined {
+function normalizeHeaderMime(mime?: string | null): string | undefined {
   if (!mime) {
     return undefined;
   }
@@ -120,7 +120,7 @@ async function detectMimeImpl(opts: {
   const ext = getFileExtension(opts.filePath);
   const extMime = ext ? MIME_BY_EXT[ext] : undefined;
 
-  const headerMime = normalizeMimeType(opts.headerMime);
+  const headerMime = normalizeHeaderMime(opts.headerMime);
   const sniffed = await sniffMime(opts.buffer);
 
   // Prefer sniffed types, but don't let generic container types override a more
@@ -145,11 +145,10 @@ async function detectMimeImpl(opts: {
 }
 
 export function extensionForMime(mime?: string | null): string | undefined {
-  const normalized = normalizeMimeType(mime);
-  if (!normalized) {
+  if (!mime) {
     return undefined;
   }
-  return EXT_BY_MIME[normalized];
+  return EXT_BY_MIME[mime.toLowerCase()];
 }
 
 export function isGifMedia(opts: {

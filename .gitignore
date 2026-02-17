@@ -7,8 +7,6 @@ pnpm-lock.yaml
 bun.lock
 bun.lockb
 coverage
-__pycache__/
-*.pyc
 .tsbuildinfo
 .pnpm-store
 .worktrees/
@@ -27,8 +25,6 @@ apps/android/.cxx/
 *.bun-build
 apps/macos/.build/
 apps/shared/MoltbotKit/.build/
-apps/shared/OpenClawKit/.build/
-apps/shared/OpenClawKit/Package.resolved
 **/ModuleCache/
 bin/
 bin/clawdbot-mac
@@ -71,11 +67,9 @@ apps/ios/*.mobileprovision
 
 # Local untracked files
 .local/
-docs/.local/
 IDENTITY.md
 USER.md
 .tgz
-.idea
 
 # local tooling
 .serena/
@@ -84,5 +78,4 @@ USER.md
 /memory/
 .agent/*.json
 !.agent/workflows/
-/local/
-package-lock.json
+local/

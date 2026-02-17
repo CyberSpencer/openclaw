@@ -16,6 +16,29 @@ vi.mock("./logger.js", () => ({
 }));
 
 let loadConfigCalls = 0;
+vi.mock("node:module", async () => {
+  const actual = await vi.importActual<typeof import("node:module")>("node:module");
+  return Object.assign({}, actual, {
+    createRequire: (url: string | URL) => {
+      const realRequire = actual.createRequire(url);
+      return (specifier: string) => {
+        if (specifier.endsWith("config.js")) {
+          return {
+            loadConfig: () => {
+              loadConfigCalls += 1;
+              if (loadConfigCalls > 5) {
+                return {};
+              }
+              console.error("config load failed");
+              return {};
+            },
+          };
+        }
+        return realRequire(specifier);
+      };
+    },
+  });
+});
 type ConsoleSnapshot = {
   log: typeof console.log;
   info: typeof console.info;
@@ -30,6 +53,7 @@ let snapshot: ConsoleSnapshot;
 
 beforeEach(() => {
   loadConfigCalls = 0;
+  vi.resetModules();
   snapshot = {
     log: console.log,
     info: console.info,
@@ -42,7 +66,7 @@ beforeEach(() => {
   Object.defineProperty(process.stdout, "isTTY", { value: false, configurable: true });
 });
 
-afterEach(async () => {
+afterEach(() => {
   console.log = snapshot.log;
   console.info = snapshot.info;
   console.warn = snapshot.warn;
@@ -50,8 +74,6 @@ afterEach(async () => {
   console.debug = snapshot.debug;
   console.trace = snapshot.trace;
   Object.defineProperty(process.stdout, "isTTY", { value: originalIsTty, configurable: true });
-  const logging = await import("../logging.js");
-  logging.setConsoleConfigLoaderForTests();
   vi.restoreAllMocks();
 });
 
@@ -59,14 +81,6 @@ async function loadLogging() {
   const logging = await import("../logging.js");
   const state = await import("./state.js");
   state.loggingState.cachedConsoleSettings = null;
-  logging.setConsoleConfigLoaderForTests(() => {
-    loadConfigCalls += 1;
-    if (loadConfigCalls > 5) {
-      return {};
-    }
-    console.error("config load failed");
-    return {};
-  });
   return { logging, state };
 }
 

@@ -100,12 +100,10 @@ export function createBlockReplyCoalescer(params: {
       return;
     }
 
-    const replyToConflict = Boolean(
+    if (
       bufferText &&
-      payload.replyToId &&
-      (!bufferReplyToId || bufferReplyToId !== payload.replyToId),
-    );
-    if (bufferText && (replyToConflict || bufferAudioAsVoice !== payload.audioAsVoice)) {
+      (bufferReplyToId !== payload.replyToId || bufferAudioAsVoice !== payload.audioAsVoice)
+    ) {
       void flush({ force: true });
     }
 

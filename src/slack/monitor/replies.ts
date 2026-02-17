@@ -89,11 +89,8 @@ function createSlackReplyReferencePlanner(params: {
   messageTs: string | undefined;
   hasReplied?: boolean;
 }) {
-  // When already inside a Slack thread, always stay in it regardless of
-  // replyToMode — thread_ts is required to keep messages in the thread.
-  const effectiveMode = params.incomingThreadTs ? "all" : params.replyToMode;
   return createReplyReferencePlanner({
-    replyToMode: effectiveMode,
+    replyToMode: params.replyToMode,
     existingId: params.incomingThreadTs,
     startId: params.messageTs,
     hasReplied: params.hasReplied,

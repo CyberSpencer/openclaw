@@ -171,20 +171,19 @@ function normalizeRun(value: unknown): OrchestrationCardRun | undefined {
       ? statusRaw
       : "idle";
   const createdAt = readNumber(value.createdAt) ?? Date.now();
-  const cleanup = isRecord(value.cleanup)
-    ? (() => {
-        const statusRaw = readString(value.cleanup.status);
-        let status: "pending" | "done" | "error" | undefined;
-        if (statusRaw === "pending" || statusRaw === "done" || statusRaw === "error") {
-          status = statusRaw;
-        }
-        return {
-          mode: normalizeCleanupMode(value.cleanup.mode),
-          status,
-          error: typeof value.cleanup.error === "string" ? value.cleanup.error : undefined,
-        };
-      })()
-    : undefined;
+  let cleanup: OrchestrationCardRun["cleanup"] = undefined;
+  if (isRecord(value.cleanup)) {
+    const statusRaw = readString(value.cleanup.status);
+    const status: "pending" | "done" | "error" | undefined =
+      statusRaw === "pending" || statusRaw === "done" || statusRaw === "error"
+        ? statusRaw
+        : undefined;
+    cleanup = {
+      mode: normalizeCleanupMode(value.cleanup.mode),
+      status,
+      error: typeof value.cleanup.error === "string" ? value.cleanup.error : undefined,
+    };
+  }
   return {
     runId,
     sessionKey,
@@ -252,24 +251,24 @@ function normalizeBoard(value: unknown): OrchestrationBoard | null {
   const createdAt = readNumber(value.createdAt) ?? now;
   const updatedAt = readNumber(value.updatedAt) ?? createdAt;
 
-  const lanes =
-    Array.isArray(value.lanes) && value.lanes.length
-      ? value.lanes
-          .map((lane) => {
-            if (!isRecord(lane)) {
-              return null;
-            }
-            const laneId = normalizeLaneId(lane.id);
-            const laneTitle = readString(lane.title).trim() || String(laneId);
-            const desc = typeof lane.description === "string" ? lane.description : undefined;
-            return {
-              id: laneId,
-              title: laneTitle,
-              ...(desc ? { description: desc } : {}),
-            } satisfies OrchestrationLane;
-          })
-          .filter((lane): lane is OrchestrationLane => lane !== null)
-      : DEFAULT_LANES.map((lane) => ({ ...lane }));
+  const lanes: OrchestrationLane[] = [];
+  if (Array.isArray(value.lanes) && value.lanes.length) {
+    for (const lane of value.lanes) {
+      if (!isRecord(lane)) {
+        continue;
+      }
+      const laneId = normalizeLaneId(lane.id);
+      const laneTitle = readString(lane.title).trim() || String(laneId);
+      const desc = typeof lane.description === "string" ? lane.description : undefined;
+      lanes.push({
+        id: laneId,
+        title: laneTitle,
+        ...(desc ? { description: desc } : {}),
+      });
+    }
+  } else {
+    lanes.push(...DEFAULT_LANES.map((lane) => ({ ...lane })));
+  }
 
   const seenLaneIds = new Set<string>();
   const uniqueLanes = lanes.filter((lane) => {
