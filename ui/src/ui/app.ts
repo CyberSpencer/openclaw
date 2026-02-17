@@ -50,6 +50,10 @@ import {
 import { DEFAULT_CRON_FORM, DEFAULT_LOG_LEVEL_FILTERS } from "./app-defaults.ts";
 import { connectGateway as connectGatewayInternal } from "./app-gateway.ts";
 import {
+  handleGlobalKeydown as handleGlobalKeydownRuntime,
+  type KeyboardHost,
+} from "./app-keyboard.ts";
+import {
   handleConnected,
   handleDisconnected,
   handleFirstUpdated,
@@ -57,7 +61,6 @@ import {
 } from "./app-lifecycle.ts";
 import { renderApp } from "./app-render.ts";
 import {
-  chunkTextForTts,
   hasRecentSubagentActivity,
   isTaskPlanIncomplete,
   resolveMemorySearchEnabled,
@@ -74,7 +77,6 @@ import {
   type SessionSpawnResult,
   type SessionsSubagentsResult,
   type SparkStatusResult,
-  type SparkVoiceTtsResult,
 } from "./app-runtime-utils.ts";
 import {
   exportLogs as exportLogsInternal,
@@ -99,6 +101,19 @@ import {
   type ModelSelectionInfo,
   type ToolStreamEntry,
 } from "./app-tool-stream.ts";
+import {
+  finishSparkMicWorkletRecording as finishSparkMicWorkletRecordingRuntime,
+  getTtsRequestParams as getTtsRequestParamsRuntime,
+  handleSpeakText as handleSpeakTextRuntime,
+  handleSparkMicAudio as handleSparkMicAudioRuntime,
+  handleStopSpeaking as handleStopSpeakingRuntime,
+  playTtsChunksWithAudioElement as playTtsChunksWithAudioElementRuntime,
+  startSparkMicMediaRecorder as startSparkMicMediaRecorderRuntime,
+  startSparkMicRecording as startSparkMicRecordingRuntime,
+  stopSparkMicRecording as stopSparkMicRecordingRuntime,
+  tryStartSparkMicWorklet as tryStartSparkMicWorkletRuntime,
+  type VoiceRuntimeHost,
+} from "./app-voice-runtime.ts";
 import { resolveInjectedAssistantIdentity } from "./assistant-identity.ts";
 import {
   buildCommandPaletteActions,
@@ -106,7 +121,6 @@ import {
   type CommandPaletteAction,
 } from "./command-palette.ts";
 import { loadAssistantIdentity as loadAssistantIdentityInternal } from "./controllers/assistant-identity.ts";
-import { pcmFramesToWavBlob } from "./controllers/audio-capture.ts";
 import { loadChatThreads } from "./controllers/chat-threads.ts";
 import { loadSubagentMonitor } from "./controllers/subagent-monitor.ts";
 import {
@@ -127,7 +141,6 @@ import {
   type OrchestrationLaneId,
 } from "./orchestrator-store.ts";
 import { loadSettings, type UiSettings } from "./storage.ts";
-import { normalizeTextForTts } from "./text-normalization.ts";
 import {
   type ChatAttachment,
   type ChatQueueItem,
@@ -145,9 +158,7 @@ declare global {
 
 const WORKLET_VERSION = "20260210-v1";
 const SPARK_STATUS_FAILURE_STOP_THRESHOLD = 3;
-
 const injectedAssistantIdentity = resolveInjectedAssistantIdentity();
-
 function unsafeHostCast<T>(value: unknown): T {
   return value as T;
 }
@@ -2126,52 +2137,7 @@ export class OpenClawApp extends LitElement {
   }
 
   private handleGlobalKeydown(event: KeyboardEvent) {
-    const isToggle =
-      (event.metaKey || event.ctrlKey) && event.key && event.key.toLowerCase() === "k";
-    if (isToggle) {
-      event.preventDefault();
-      if (this.commandPaletteOpen) {
-        this.closeCommandPalette();
-      } else {
-        void this.openCommandPalette();
-      }
-      return;
-    }
-
-    if (!this.commandPaletteOpen) {
-      return;
-    }
-
-    if (event.key === "Escape") {
-      event.preventDefault();
-      this.closeCommandPalette();
-      return;
-    }
-
-    const actions = this.getCommandPaletteActions();
-    if (!actions.length) {
-      return;
-    }
-
-    if (event.key === "ArrowDown") {
-      event.preventDefault();
-      this.commandPaletteIndex = (this.commandPaletteIndex + 1) % actions.length;
-      return;
-    }
-
-    if (event.key === "ArrowUp") {
-      event.preventDefault();
-      this.commandPaletteIndex = (this.commandPaletteIndex - 1 + actions.length) % actions.length;
-      return;
-    }
-
-    if (event.key === "Enter") {
-      event.preventDefault();
-      const action = actions[this.commandPaletteIndex];
-      if (action) {
-        this.runCommandPaletteAction(action);
-      }
-    }
+    handleGlobalKeydownRuntime(unsafeHostCast<KeyboardHost>(this), event);
   }
 
   async handleAbortChat() {
@@ -2796,7 +2762,7 @@ export class OpenClawApp extends LitElement {
       return;
     }
     if (this.sparkMicRecording) {
-      this.stopSparkMicRecording();
+      void this.stopSparkMicRecording();
     } else {
       await this.startSparkMicRecording();
     }
@@ -2865,546 +2831,45 @@ export class OpenClawApp extends LitElement {
     format: string;
     sampleRate?: number;
   }) {
-    if (!this.client || !this.connected) {
-      return;
-    }
-
-    try {
-      const result = await this.client.request("spark.voice.stt", {
-        audio_base64: params.audioBase64,
-        format: params.format,
-        sample_rate: params.sampleRate,
-      });
-      const text = (result as Record<string, unknown>)?.text;
-      if (typeof text === "string" && text.trim()) {
-        const existing = this.chatMessage?.trim() ?? "";
-        this.chatMessage = existing ? `${existing} ${text.trim()}` : text.trim();
-      } else {
-        const msg = "No speech detected. Try again.";
-        this.lastError = msg;
-        this.requestUpdate();
-        setTimeout(() => {
-          if (this.lastError === msg) {
-            this.lastError = null;
-            this.requestUpdate();
-          }
-        }, 3000);
-      }
-    } catch (err) {
-      console.error("[spark-mic] STT request failed:", err);
-      this.lastError = `Voice input failed: ${err instanceof Error ? err.message : String(err)}`;
-    }
+    await handleSparkMicAudioRuntime(unsafeHostCast<VoiceRuntimeHost>(this), params);
   }
 
   private async startSparkMicRecording() {
-    if (!this.isSparkVoiceAvailable()) {
-      this.lastError = "Spark voice unavailable. Recording blocked.";
-      this.sparkMicRecording = false;
-      this.requestUpdate();
-      return;
-    }
-    let stream: MediaStream | null = null;
-    try {
-      stream = await navigator.mediaDevices.getUserMedia({
-        audio: {
-          echoCancellation: true,
-          noiseSuppression: true,
-          autoGainControl: false,
-        },
-      });
-
-      const shouldTryWorklet =
-        this.supportsAudioWorklet() && !this.sparkMicWorkletDisabledForSession;
-      if (shouldTryWorklet) {
-        const started = await this.tryStartSparkMicWorklet(stream);
-        if (started) {
-          this.requestUpdate();
-          return;
-        }
-      }
-
-      this.startSparkMicMediaRecorder(stream);
-      this.requestUpdate();
-    } catch (err) {
-      if (stream) {
-        for (const track of stream.getTracks()) {
-          track.stop();
-        }
-      }
-      console.error("[spark-mic] Failed to start recording:", err);
-      this.sparkMicRecording = false;
-      this.lastError =
-        err instanceof Error && err.name === "NotAllowedError"
-          ? "Microphone access denied. Allow mic in browser or system settings."
-          : `Recording failed: ${err instanceof Error ? err.message : String(err)}`;
-      this.requestUpdate();
-    }
+    await startSparkMicRecordingRuntime(unsafeHostCast<VoiceRuntimeHost>(this));
   }
 
   private async tryStartSparkMicWorklet(stream: MediaStream): Promise<boolean> {
-    let audioContext: AudioContext | null = null;
-    let source: MediaStreamAudioSourceNode | null = null;
-    let captureWorklet: AudioWorkletNode | null = null;
-    let zeroGain: GainNode | null = null;
-    try {
-      audioContext = new AudioContext({ sampleRate: this.sparkMicSampleRate });
-      if (audioContext.state === "suspended") {
-        await audioContext.resume().catch(() => undefined);
-      }
-
-      const workletUrl = buildWorkletModuleUrl(
-        "capture-processor.js",
-        WORKLET_VERSION,
-        this.basePath,
-      );
-      await audioContext.audioWorklet.addModule(workletUrl);
-
-      source = audioContext.createMediaStreamSource(stream);
-      captureWorklet = new AudioWorkletNode(audioContext, "capture-processor", {
-        processorOptions: {
-          targetSampleRate: this.sparkMicSampleRate,
-          frameSize: 480,
-        },
-      });
-
-      zeroGain = audioContext.createGain();
-      zeroGain.gain.value = 0;
-      captureWorklet.connect(zeroGain);
-      zeroGain.connect(audioContext.destination);
-
-      this.sparkMicPcmFrames = [];
-      captureWorklet.port.addEventListener("message", (event) => {
-        if (event.data?.type === "audio" && event.data?.pcm16) {
-          this.sparkMicPcmFrames.push(event.data.pcm16 as Int16Array);
-        }
-      });
-      captureWorklet.port.start();
-      source.connect(captureWorklet);
-
-      this.sparkMicStream = stream;
-      this.sparkMicAudioContext = audioContext;
-      this.sparkMicCaptureWorklet = captureWorklet;
-      this.sparkMicUsingWorklet = true;
-      this.sparkMicRecording = true;
-      this.sparkMicRecordingTimer = setTimeout(() => {
-        this.stopSparkMicRecording();
-      }, 30_000);
-
-      return true;
-    } catch (err) {
-      console.warn("[spark-mic] Worklet capture unavailable; falling back to MediaRecorder", err);
-      this.sparkMicWorkletDisabledForSession = true;
-      this.sparkMicUsingWorklet = false;
-      this.sparkMicStream = null;
-      this.sparkMicAudioContext = null;
-      this.sparkMicCaptureWorklet = null;
-      this.sparkMicPcmFrames = [];
-      try {
-        source?.disconnect();
-      } catch {
-        // ignore
-      }
-      try {
-        captureWorklet?.disconnect();
-      } catch {
-        // ignore
-      }
-      try {
-        zeroGain?.disconnect();
-      } catch {
-        // ignore
-      }
-      try {
-        await audioContext?.close();
-      } catch {
-        // ignore
-      }
-      return false;
-    }
+    return await tryStartSparkMicWorkletRuntime(unsafeHostCast<VoiceRuntimeHost>(this), stream);
   }
 
   private startSparkMicMediaRecorder(stream: MediaStream): void {
-    if (typeof MediaRecorder === "undefined") {
-      throw new Error("MediaRecorder not supported in this browser.");
-    }
-
-    this.sparkMicChunks = [];
-    const mimeType = MediaRecorder.isTypeSupported("audio/webm;codecs=opus")
-      ? "audio/webm;codecs=opus"
-      : "audio/webm";
-
-    const recorder = new MediaRecorder(stream, { mimeType });
-    this.sparkMicMediaRecorder = recorder;
-    this.sparkMicUsingWorklet = false;
-
-    recorder.ondataavailable = (event: BlobEvent) => {
-      if (event.data.size > 0) {
-        this.sparkMicChunks.push(event.data);
-      }
-    };
-
-    recorder.onstop = async () => {
-      for (const track of stream.getTracks()) {
-        track.stop();
-      }
-      if (this.sparkMicRecordingTimer) {
-        clearTimeout(this.sparkMicRecordingTimer);
-        this.sparkMicRecordingTimer = null;
-      }
-
-      try {
-        if (this.sparkMicChunks.length > 0) {
-          const blob = new Blob(this.sparkMicChunks, { type: mimeType });
-          this.sparkMicChunks = [];
-          const audioBase64 = await this.blobToBase64(blob);
-          await this.handleSparkMicAudio({ audioBase64, format: "webm" });
-        }
-      } catch (err) {
-        console.error("[spark-mic] Failed while processing MediaRecorder audio:", err);
-        this.lastError = `Recording failed: ${err instanceof Error ? err.message : String(err)}`;
-      } finally {
-        this.sparkMicRecording = false;
-        this.requestUpdate();
-      }
-    };
-
-    recorder.start();
-    this.sparkMicRecording = true;
-    this.sparkMicRecordingTimer = setTimeout(() => {
-      this.stopSparkMicRecording();
-    }, 30_000);
+    startSparkMicMediaRecorderRuntime(unsafeHostCast<VoiceRuntimeHost>(this), stream);
   }
 
-  private stopSparkMicRecording() {
-    if (this.sparkMicRecordingTimer) {
-      clearTimeout(this.sparkMicRecordingTimer);
-      this.sparkMicRecordingTimer = null;
-    }
-
-    if (this.sparkMicUsingWorklet) {
-      void this.finishSparkMicWorkletRecording();
-      return;
-    }
-
-    if (this.sparkMicMediaRecorder && this.sparkMicMediaRecorder.state !== "inactive") {
-      this.sparkMicMediaRecorder.stop();
-    }
-    this.sparkMicMediaRecorder = null;
-    // sparkMicRecording will be set to false in the onstop handler
+  private async stopSparkMicRecording() {
+    await stopSparkMicRecordingRuntime(unsafeHostCast<VoiceRuntimeHost>(this));
   }
 
   private async finishSparkMicWorkletRecording() {
-    if (!this.sparkMicUsingWorklet) {
-      return;
-    }
-
-    // Snapshot frames and reset state early to avoid re-entrancy.
-    const frames = this.sparkMicPcmFrames;
-    this.sparkMicPcmFrames = [];
-    this.sparkMicUsingWorklet = false;
-
-    const stream = this.sparkMicStream;
-    const audioContext = this.sparkMicAudioContext;
-    const capture = this.sparkMicCaptureWorklet;
-
-    this.sparkMicStream = null;
-    this.sparkMicAudioContext = null;
-    this.sparkMicCaptureWorklet = null;
-
-    // Stop inputs
-    try {
-      capture?.disconnect();
-    } catch {
-      // ignore
-    }
-    try {
-      if (stream) {
-        for (const track of stream.getTracks()) {
-          track.stop();
-        }
-      }
-    } catch {
-      // ignore
-    }
-    try {
-      await audioContext?.close();
-    } catch {
-      // ignore
-    }
-
-    if (!frames.length) {
-      this.sparkMicRecording = false;
-      this.requestUpdate();
-      return;
-    }
-
-    const { blob } = pcmFramesToWavBlob(frames, this.sparkMicSampleRate);
-    if (!blob) {
-      this.sparkMicRecording = false;
-      this.requestUpdate();
-      return;
-    }
-
-    const audioBase64 = await this.blobToBase64(blob);
-    await this.handleSparkMicAudio({
-      audioBase64,
-      format: "wav",
-      sampleRate: this.sparkMicSampleRate,
-    });
-
-    this.sparkMicRecording = false;
-    this.requestUpdate();
+    await finishSparkMicWorkletRecordingRuntime(unsafeHostCast<VoiceRuntimeHost>(this));
   }
 
   /** Returns optional TTS params (voice, instruct, language) for spark.voice.tts. Only includes defined values. */
   /** Returns optional TTS params (voice, instruct, language) from persisted settings. Only includes non-empty values. */
   private getTtsRequestParams(): { voice?: string; instruct?: string; language?: string } {
-    const out: { voice?: string; instruct?: string; language?: string } = {};
-    const v = this.settings.ttsVoice?.trim();
-    const i = this.settings.ttsInstruct?.trim();
-    const l = this.settings.ttsLanguage?.trim();
-    if (v) {
-      out.voice = v;
-    }
-    if (i) {
-      out.instruct = i;
-    }
-    if (l) {
-      out.language = l;
-    }
-    return out;
+    return getTtsRequestParamsRuntime(unsafeHostCast<VoiceRuntimeHost>(this));
   }
 
   handleStopSpeaking() {
-    if (this.ttsAbortController) {
-      this.ttsAbortController.abort();
-    }
-    if (this.ttsPlaybackWorklet) {
-      this.ttsPlaybackWorklet.port.postMessage({ type: "clear" });
-    }
-    if (this.ttsCurrentAudio) {
-      this.ttsCurrentAudio.pause();
-      this.ttsCurrentAudio.currentTime = 0;
-      this.ttsCurrentAudio = null;
-    }
-    this.ttsSpeaking = false;
-    this.ttsProgress = null;
-    this.ttsSpeakingMessageKey = null;
-    this.ttsAbortController = null;
-    this.requestUpdate();
+    handleStopSpeakingRuntime(unsafeHostCast<VoiceRuntimeHost>(this));
   }
 
   async handleSpeakText(text: string, messageKey?: string) {
-    if (!text.trim() || !this.client || !this.connected) {
-      return;
-    }
-    this.lastError = null;
-    const trimmed = normalizeTextForTts(text.trim());
-    const chunks = chunkTextForTts(trimmed);
-    if (chunks.length === 0) {
-      return;
-    }
-
-    this.ttsAbortController = new AbortController();
-    this.ttsSpeaking = true;
-    this.ttsProgress = `Speaking 1/${chunks.length}...`;
-    this.ttsSpeakingMessageKey = messageKey ?? null;
-    this.requestUpdate();
-
-    console.log("[spark-tts] request", {
-      textLength: trimmed.length,
-      chunkCount: chunks.length,
-      textPreview: trimmed.slice(0, 50),
-    });
-
-    const useWorklet = await this.ensureTtsPlaybackWorklet();
-    console.log("[spark-tts] playback path:", useWorklet ? "worklet" : "audio-element");
-
-    if (useWorklet && this.ttsPlaybackWorklet && this.ttsPlaybackContext) {
-      const worklet = this.ttsPlaybackWorklet;
-      const ctx = this.ttsPlaybackContext;
-
-      worklet.port.postMessage({ type: "clear" });
-
-      const playbackCompletePromise = new Promise<void>((resolve) => {
-        const handler = (e: MessageEvent) => {
-          if (e.data?.type === "playback_complete") {
-            worklet.port.removeEventListener("message", handler);
-            resolve();
-          }
-        };
-        worklet.port.addEventListener("message", handler);
-        this.ttsAbortController?.signal.addEventListener(
-          "abort",
-          () => {
-            worklet.port.removeEventListener("message", handler);
-            resolve();
-          },
-          { once: true },
-        );
-      });
-
-      const fetchChunkForWorklet = async (idx: number): Promise<Float32Array> => {
-        const result = await this.client!.request<SparkVoiceTtsResult>("spark.voice.tts", {
-          text: chunks[idx],
-          ...this.getTtsRequestParams(),
-        });
-        const b64 = result?.audio_base64;
-        if (typeof b64 !== "string" || !b64) {
-          throw new Error(`Chunk ${idx + 1}: no audio`);
-        }
-        const buffer = this.base64ToArrayBuffer(b64);
-        const arrayBuffer = await ctx.decodeAudioData(buffer);
-        const chan = arrayBuffer.getChannelData(0);
-        return new Float32Array(chan);
-      };
-
-      try {
-        let nextPromise = fetchChunkForWorklet(0);
-
-        for (let i = 0; i < chunks.length; i++) {
-          if (this.ttsAbortController?.signal.aborted) {
-            break;
-          }
-
-          const float32 = await nextPromise;
-          if (i + 1 < chunks.length) {
-            nextPromise = fetchChunkForWorklet(i + 1);
-          }
-
-          if (this.ttsAbortController?.signal.aborted) {
-            break;
-          }
-
-          this.ttsProgress = `Speaking ${i + 1}/${chunks.length}...`;
-          this.requestUpdate();
-
-          worklet.port.postMessage({ type: "audio", data: float32, seq: i + 1 });
-        }
-
-        if (!this.ttsAbortController?.signal.aborted) {
-          worklet.port.postMessage({ type: "server_audio_complete" });
-          await playbackCompletePromise;
-        }
-        console.log("[spark-tts] worklet playback ok");
-      } catch (err) {
-        if (this.ttsAbortController?.signal.aborted) {
-          console.log("[spark-tts] stopped by user");
-        } else {
-          console.warn("[spark-tts] worklet path failed, falling back to audio element:", err);
-          try {
-            await this.playTtsChunksWithAudioElement(chunks);
-          } catch (fallbackErr) {
-            console.error("[spark-tts] audio element fallback failed:", fallbackErr);
-            this.lastError = `Speech failed: ${fallbackErr instanceof Error ? fallbackErr.message : String(fallbackErr)}`;
-          }
-        }
-      } finally {
-        this.ttsSpeaking = false;
-        this.ttsProgress = null;
-        this.ttsSpeakingMessageKey = null;
-        this.ttsAbortController = null;
-        this.ttsCurrentAudio = null;
-        this.requestUpdate();
-      }
-      return;
-    }
-
-    try {
-      await this.playTtsChunksWithAudioElement(chunks);
-    } catch (err) {
-      if (this.ttsAbortController?.signal.aborted) {
-        console.log("[spark-tts] stopped by user");
-      } else {
-        console.error("[spark-tts] Failed:", err);
-        this.lastError = `Speech failed: ${err instanceof Error ? err.message : String(err)}`;
-      }
-    } finally {
-      this.ttsSpeaking = false;
-      this.ttsProgress = null;
-      this.ttsSpeakingMessageKey = null;
-      this.ttsAbortController = null;
-      this.ttsCurrentAudio = null;
-      this.requestUpdate();
-    }
+    await handleSpeakTextRuntime(unsafeHostCast<VoiceRuntimeHost>(this), text, messageKey);
   }
 
   private async playTtsChunksWithAudioElement(chunks: string[]): Promise<void> {
-    if (!this.client) {
-      return;
-    }
-
-    const fetchChunkAudio = async (idx: number): Promise<HTMLAudioElement> => {
-      const result = await this.client!.request<SparkVoiceTtsResult>("spark.voice.tts", {
-        text: chunks[idx],
-        ...this.getTtsRequestParams(),
-      });
-      const b64 = result?.audio_base64;
-      if (typeof b64 !== "string" || !b64) {
-        throw new Error(`Chunk ${idx + 1}: no audio`);
-      }
-      const fmt = (result?.format as string) ?? "webm";
-      const mime = fmt === "webm" ? "audio/webm" : `audio/${fmt}`;
-      return new Audio(`data:${mime};base64,${b64}`);
-    };
-
-    const playAudio = (audio: HTMLAudioElement): Promise<void> =>
-      new Promise((resolve, reject) => {
-        const onError = () => {
-          cleanup();
-          reject(new Error("Audio playback failed"));
-        };
-        const onEnded = () => {
-          cleanup();
-          resolve();
-        };
-        const onCanPlay = () => {
-          audio.removeEventListener("canplaythrough", onCanPlay);
-          audio.play().catch(onError);
-        };
-        const cleanup = () => {
-          audio.removeEventListener("ended", onEnded);
-          audio.removeEventListener("error", onError);
-          audio.removeEventListener("canplaythrough", onCanPlay);
-        };
-
-        audio.addEventListener("ended", onEnded);
-        audio.addEventListener("error", onError);
-        if (audio.readyState >= 2) {
-          onCanPlay();
-        } else {
-          audio.addEventListener("canplaythrough", onCanPlay);
-        }
-      });
-
-    let nextPromise = fetchChunkAudio(0);
-
-    for (let i = 0; i < chunks.length; i++) {
-      if (this.ttsAbortController?.signal.aborted) {
-        break;
-      }
-
-      const audio = await nextPromise;
-      if (i + 1 < chunks.length) {
-        nextPromise = fetchChunkAudio(i + 1);
-      }
-
-      if (this.ttsAbortController?.signal.aborted) {
-        break;
-      }
-
-      this.ttsProgress = `Speaking ${i + 1}/${chunks.length}...`;
-      this.ttsCurrentAudio = audio;
-      this.requestUpdate();
-
-      await playAudio(audio);
-
-      this.ttsCurrentAudio = null;
-      if (this.ttsAbortController?.signal.aborted) {
-        break;
-      }
-    }
-    console.log("[spark-tts] play() ok");
+    await playTtsChunksWithAudioElementRuntime(unsafeHostCast<VoiceRuntimeHost>(this), chunks);
   }
 
   async refreshTopbarControls() {

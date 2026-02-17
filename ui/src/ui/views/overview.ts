@@ -17,8 +17,7 @@ function readControlUiBuildMeta(): ControlUiBuildMeta | null {
   if (typeof window === "undefined") {
     return null;
   }
-  const value = (window as unknown as { __OPENCLAW_CONTROL_UI_META__?: unknown })
-    .__OPENCLAW_CONTROL_UI_META__;
+  const value = (window as { __OPENCLAW_CONTROL_UI_META__?: unknown }).__OPENCLAW_CONTROL_UI_META__;
   if (!value || typeof value !== "object") {
     return null;
   }

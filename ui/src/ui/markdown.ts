@@ -56,8 +56,8 @@ function getDOMPurify(): DOMPurifyInstance {
   if (dompurify) {
     return dompurify;
   }
-  const w = (globalThis as unknown as { window?: unknown }).window ?? globalThis;
-  dompurify = createDOMPurify(w as unknown as Parameters<typeof createDOMPurify>[0]);
+  const w = (globalThis as { window?: unknown }).window ?? globalThis;
+  dompurify = createDOMPurify(w as Parameters<typeof createDOMPurify>[0]);
   return dompurify;
 }
 
@@ -65,7 +65,7 @@ function supportsDOMPurify(instance: DOMPurifyInstance): boolean {
   if (dompurifySupport !== null) {
     return dompurifySupport;
   }
-  const explicit = (instance as unknown as { isSupported?: unknown }).isSupported;
+  const explicit = (instance as { isSupported?: unknown }).isSupported;
   if (explicit === false) {
     dompurifySupport = false;
     return dompurifySupport;
@@ -194,8 +194,8 @@ function sanitizeHtmlFallback(html: string): string {
   // Prefer using `document.createElement` over `DOMParser`, since some DOM shims implement
   // DOMParser inconsistently.
   const doc =
-    (globalThis as unknown as { document?: Document; window?: { document?: Document } }).document ??
-    (globalThis as unknown as { window?: { document?: Document } }).window?.document;
+    (globalThis as { document?: Document; window?: { document?: Document } }).document ??
+    (globalThis as { window?: { document?: Document } }).window?.document;
   if (!doc) {
     return "";
   }

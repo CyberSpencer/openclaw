@@ -1,6 +1,5 @@
 import { html } from "lit";
 import type { AppViewState } from "./app-view-state.ts";
-import type { OpenClawApp } from "./app.ts";
 import type { ThemeTransitionContext } from "./theme-transition.ts";
 import type { ThemeMode } from "./theme.ts";
 import { refreshChat } from "./app-chat.ts";
@@ -80,13 +79,13 @@ export function renderChatControls(state: AppViewState) {
         class="btn btn--sm btn--icon"
         ?disabled=${state.chatLoading || !state.connected}
         @click=${async () => {
-          const app = state as unknown as OpenClawApp;
+          const app = state;
           app.chatManualRefreshInFlight = true;
           app.chatNewMessagesBelow = false;
           await app.updateComplete;
           app.resetToolStream();
           try {
-            await refreshChat(state as unknown as Parameters<typeof refreshChat>[0], {
+            await refreshChat(app as never as Parameters<typeof refreshChat>[0], {
               scheduleScroll: false,
             });
             app.scrollToBottom({ smooth: true });

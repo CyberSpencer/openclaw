@@ -243,7 +243,7 @@ async function extractPdfContent(params: {
     const scaled = page.getViewport({ scale: Math.max(0.1, scale) });
     const canvas = createCanvas(Math.ceil(scaled.width), Math.ceil(scaled.height));
     await page.render({
-      canvas: canvas as unknown as HTMLCanvasElement,
+      canvas: canvas as never as HTMLCanvasElement,
       viewport: scaled,
     }).promise;
     const png = canvas.toBuffer("image/png");

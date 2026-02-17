@@ -61,7 +61,7 @@ export function renderSettings(state: AppViewState) {
     };
     state.applySettings(next);
     // Keep the live split ratio state in sync with the saved setting.
-    (state as unknown as { splitRatio?: number }).splitRatio = next.splitRatio;
+    (state as { splitRatio?: number }).splitRatio = next.splitRatio;
   };
 
   return html`
@@ -139,7 +139,7 @@ export function renderSettings(state: AppViewState) {
                 @input=${(e: Event) => {
                   const next = Number((e.target as HTMLInputElement).value);
                   (
-                    state as unknown as { handleSplitRatioChange?: (ratio: number) => void }
+                    state as { handleSplitRatioChange?: (ratio: number) => void }
                   ).handleSplitRatioChange?.(next);
                 }}
               />
@@ -372,7 +372,7 @@ export function renderSettings(state: AppViewState) {
 function renderSparkTtsSettings(state: AppViewState) {
   // Trigger voice list fetch on first render when connected
   if (state.connected && (state.sparkVoices?.length ?? 0) === 0) {
-    void (state as unknown as { loadSparkVoices?: () => Promise<void> }).loadSparkVoices?.();
+    void (state as { loadSparkVoices?: () => Promise<void> }).loadSparkVoices?.();
   }
 
   const voices: { id: string; name: string; description?: string }[] = state.sparkVoices ?? [];
