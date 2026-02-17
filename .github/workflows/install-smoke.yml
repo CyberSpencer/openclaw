@@ -1,9 +1,7 @@
 name: Install Smoke
 
 on:
-  push:
-    branches: [main]
-  pull_request:
+  # Cost-control mode: run install smoke on demand only.
   workflow_dispatch:
 
 concurrency:

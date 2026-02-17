@@ -1,9 +1,9 @@
 name: CI
 
 on:
-  push:
-    branches: [main]
-  pull_request:
+  # Cost-control mode: run CI only on explicit manual trigger.
+  # Daily development validation should run locally via `pnpm ci:local`.
+  workflow_dispatch:
 
 concurrency:
   group: ci-${{ github.event.pull_request.number || github.sha }}
