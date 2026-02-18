@@ -127,6 +127,10 @@ declare global {
 const MAX_TTS_CHARS = 250;
 const WORKLET_VERSION = "20260210-v1";
 const SPARK_STATUS_FAILURE_STOP_THRESHOLD = 3;
+const SPARK_MIC_CHUNK_MS = 4_000;
+const SPARK_MIC_LONG_RECORDING_NOTICE_MS = 55_000;
+const SPARK_MIC_MAX_AUDIO_BASE64_CHARS = 2_300_000;
+const SPARK_MIC_STT_TIMEOUT_MS = 10_000;
 
 /**
  * Chunk text for TTS to avoid DGX timeouts. Long text (~1270 chars) takes 60–78s;
@@ -733,6 +737,7 @@ export class OpenClawApp extends LitElement {
   @state() debugCallParams = "{}";
   @state() debugCallResult: string | null = null;
   @state() debugCallError: string | null = null;
+  @state() sparkMicTelemetryLog: Array<Record<string, unknown>> = [];
 
   // Voice mode state
   @state() voiceBarVisible = false;
@@ -765,7 +770,23 @@ export class OpenClawApp extends LitElement {
   private ttsPlaybackContext: AudioContext | null = null;
   private ttsPlaybackWorklet: AudioWorkletNode | null = null;
   private sparkMicChunks: Blob[] = [];
-  private sparkMicRecordingTimer: ReturnType<typeof setTimeout> | null = null;
+  private sparkMicLongRecordingTimer: ReturnType<typeof setTimeout> | null = null;
+  private sparkMicWorkletChunkInterval: ReturnType<typeof setInterval> | null = null;
+  private sparkMicSessionId: string | null = null;
+  private sparkMicChunkSeq = 0;
+  private sparkMicChunkQueue: Array<{
+    chunkId: string;
+    chunkIndex: number;
+    enqueuedAt: number;
+    source: "worklet" | "mediarecorder" | "final";
+    audioBase64: string;
+    format: "wav" | "webm";
+    sampleRate?: number;
+    durationMs?: number;
+    bytes?: number;
+  }> = [];
+  private sparkMicChunkProcessing = false;
+  private sparkMicStopRequested = false;
   private sparkMicWorkletDisabledForSession = false;
   private sparkStatusPollInterval: number | null = null;
   private sparkStatusConsecutivePollFailures = 0;
@@ -811,6 +832,7 @@ export class OpenClawApp extends LitElement {
 
   connectedCallback() {
     super.connectedCallback();
+    this.loadSparkMicTelemetryFromStorage();
     window.addEventListener("keydown", this.globalKeydownHandler);
     this.rebuildOrchRunIndex();
     handleConnected(this as unknown as Parameters<typeof handleConnected>[0]);
@@ -2806,6 +2828,10 @@ export class OpenClawApp extends LitElement {
     this.voiceState.error = null;
     this.voiceState.transcription = null;
     this.voiceState.response = null;
+    this.voiceState.lastRoute = null;
+    this.voiceState.lastModel = null;
+    this.voiceState.lastThinkingLevel = null;
+    this.voiceState.routeModelWarning = null;
     this.requestUpdate();
   }
 
@@ -3133,26 +3159,302 @@ export class OpenClawApp extends LitElement {
     });
   }
 
-  private async handleSparkMicAudio(params: {
+  private clearSparkMicLongRecordingTimer(): void {
+    if (this.sparkMicLongRecordingTimer) {
+      clearTimeout(this.sparkMicLongRecordingTimer);
+      this.sparkMicLongRecordingTimer = null;
+    }
+  }
+
+  private scheduleSparkMicLongRecordingNotice(): void {
+    this.clearSparkMicLongRecordingTimer();
+    this.sparkMicLongRecordingTimer = setTimeout(() => {
+      if (!this.sparkMicRecording) {
+        return;
+      }
+      this.lastError =
+        "Long dictation is active and being processed in chunks. You can keep speaking or tap mic to stop.";
+      this.requestUpdate();
+    }, SPARK_MIC_LONG_RECORDING_NOTICE_MS);
+  }
+
+  private clearSparkMicWorkletChunkInterval(): void {
+    if (this.sparkMicWorkletChunkInterval) {
+      clearInterval(this.sparkMicWorkletChunkInterval);
+      this.sparkMicWorkletChunkInterval = null;
+    }
+  }
+
+  private loadSparkMicTelemetryFromStorage(): void {
+    try {
+      const raw = localStorage.getItem("openclaw.sparkMicTelemetry");
+      if (!raw) {
+        return;
+      }
+      const parsed = JSON.parse(raw);
+      if (!Array.isArray(parsed)) {
+        return;
+      }
+      this.sparkMicTelemetryLog = parsed
+        .filter((item) => item && typeof item === "object")
+        .slice(0, 200) as Array<Record<string, unknown>>;
+    } catch {
+      // ignore local cache parse errors
+    }
+  }
+
+  private persistSparkMicTelemetryToStorage(): void {
+    try {
+      localStorage.setItem(
+        "openclaw.sparkMicTelemetry",
+        JSON.stringify(this.sparkMicTelemetryLog.slice(0, 120)),
+      );
+    } catch {
+      // ignore storage quota/access issues
+    }
+  }
+
+  private logSparkMicTelemetry(event: string, detail: Record<string, unknown> = {}): void {
+    const entry: Record<string, unknown> = {
+      event,
+      ts: Date.now(),
+      sessionId: this.sparkMicSessionId,
+      ...detail,
+    };
+    this.sparkMicTelemetryLog = [entry, ...this.sparkMicTelemetryLog].slice(0, 200);
+    this.persistSparkMicTelemetryToStorage();
+    console.info("[spark-mic/telemetry]", entry);
+  }
+
+  private nextSparkMicChunkMeta(source: "worklet" | "mediarecorder" | "final") {
+    this.sparkMicChunkSeq += 1;
+    return {
+      chunkId: generateUUID(),
+      chunkIndex: this.sparkMicChunkSeq,
+      enqueuedAt: Date.now(),
+      source,
+    } as const;
+  }
+
+  private mergeSparkMicTranscript(existing: string, incoming: string): string {
+    const base = existing.trim();
+    const next = incoming.trim();
+    if (!base) {
+      return next;
+    }
+    if (!next) {
+      return base;
+    }
+
+    const baseWords = base.split(/\s+/);
+    const nextWords = next.split(/\s+/);
+    const maxOverlap = Math.min(8, baseWords.length, nextWords.length);
+
+    for (let overlap = maxOverlap; overlap >= 1; overlap -= 1) {
+      const baseSuffix = baseWords.slice(-overlap).join(" ").toLowerCase();
+      const nextPrefix = nextWords.slice(0, overlap).join(" ").toLowerCase();
+      if (baseSuffix === nextPrefix) {
+        const tail = nextWords.slice(overlap).join(" ").trim();
+        return tail ? `${base} ${tail}` : base;
+      }
+    }
+
+    return `${base} ${next}`;
+  }
+
+  private async processSparkMicChunkQueue(): Promise<void> {
+    if (this.sparkMicChunkProcessing) {
+      return;
+    }
+    this.sparkMicChunkProcessing = true;
+    try {
+      while (this.sparkMicChunkQueue.length > 0) {
+        const chunk = this.sparkMicChunkQueue.shift();
+        if (!chunk) {
+          continue;
+        }
+        this.logSparkMicTelemetry("chunk.dequeue", {
+          chunkId: chunk.chunkId,
+          chunkIndex: chunk.chunkIndex,
+          queueDepth: this.sparkMicChunkQueue.length,
+          source: chunk.source,
+        });
+        await this.handleSparkMicAudio(chunk);
+      }
+    } finally {
+      this.sparkMicChunkProcessing = false;
+      if (this.sparkMicStopRequested && this.sparkMicChunkQueue.length === 0) {
+        this.sparkMicStopRequested = false;
+        this.sparkMicRecording = false;
+        this.logSparkMicTelemetry("recording.stopped", { reason: "queue-drained" });
+        this.requestUpdate();
+      }
+    }
+  }
+
+  private enqueueSparkMicChunk(params: {
+    source: "worklet" | "mediarecorder" | "final";
+    audioBase64: string;
+    format: "wav" | "webm";
+    sampleRate?: number;
+    durationMs?: number;
+    bytes?: number;
+  }): void {
+    if (!params.audioBase64) {
+      return;
+    }
+    if (params.audioBase64.length > SPARK_MIC_MAX_AUDIO_BASE64_CHARS) {
+      this.lastError = "Voice chunk exceeded safe size. Try shorter phrases.";
+      this.logSparkMicTelemetry("chunk.rejected_too_large", {
+        source: params.source,
+        base64Chars: params.audioBase64.length,
+      });
+      this.requestUpdate();
+      return;
+    }
+
+    const meta = this.nextSparkMicChunkMeta(params.source);
+    this.sparkMicChunkQueue.push({
+      ...meta,
+      audioBase64: params.audioBase64,
+      format: params.format,
+      sampleRate: params.sampleRate,
+      durationMs: params.durationMs,
+      bytes: params.bytes,
+    });
+    this.logSparkMicTelemetry("chunk.enqueued", {
+      chunkId: meta.chunkId,
+      chunkIndex: meta.chunkIndex,
+      source: params.source,
+      format: params.format,
+      sampleRate: params.sampleRate,
+      durationMs: params.durationMs,
+      bytes: params.bytes,
+      base64Chars: params.audioBase64.length,
+      queueDepth: this.sparkMicChunkQueue.length,
+    });
+    void this.processSparkMicChunkQueue();
+  }
+
+  private async flushSparkMicWorkletChunk(): Promise<void> {
+    if (!this.sparkMicUsingWorklet || this.sparkMicPcmFrames.length === 0) {
+      return;
+    }
+
+    const frames = this.sparkMicPcmFrames;
+    this.sparkMicPcmFrames = [];
+    const sampleCount = frames.reduce((sum, frame) => sum + frame.length, 0);
+    const durationMs = Math.round((sampleCount / this.sparkMicSampleRate) * 1000);
+    const { blob } = pcmFramesToWavBlob(frames, this.sparkMicSampleRate);
+    if (!blob) {
+      return;
+    }
+    const audioBase64 = await this.blobToBase64(blob);
+    this.enqueueSparkMicChunk({
+      source: "worklet",
+      audioBase64,
+      format: "wav",
+      sampleRate: this.sparkMicSampleRate,
+      durationMs,
+      bytes: blob.size,
+    });
+  }
+
+  private async requestSparkMicStt(params: {
     audioBase64: string;
     format: string;
     sampleRate?: number;
+  }): Promise<Record<string, unknown>> {
+    if (!this.client || !this.connected) {
+      throw new Error("gateway disconnected");
+    }
+
+    const requestPromise = this.client.request("spark.voice.stt", {
+      audio_base64: params.audioBase64,
+      format: params.format,
+      sample_rate: params.sampleRate,
+    }) as Promise<Record<string, unknown>>;
+    requestPromise.catch(() => undefined);
+
+    let timeoutHandle: ReturnType<typeof setTimeout> | null = null;
+    const timeoutPromise = new Promise<never>((_, reject) => {
+      timeoutHandle = setTimeout(() => {
+        reject(new Error("STT_TIMEOUT"));
+      }, SPARK_MIC_STT_TIMEOUT_MS);
+    });
+
+    try {
+      return await Promise.race([requestPromise, timeoutPromise]);
+    } finally {
+      if (timeoutHandle) {
+        clearTimeout(timeoutHandle);
+      }
+    }
+  }
+
+  private async handleSparkMicAudio(params: {
+    chunkId: string;
+    chunkIndex: number;
+    enqueuedAt: number;
+    source: "worklet" | "mediarecorder" | "final";
+    audioBase64: string;
+    format: string;
+    sampleRate?: number;
+    durationMs?: number;
+    bytes?: number;
   }) {
     if (!this.client || !this.connected) {
       return;
     }
 
+    const startedAt = Date.now();
+    const queuedMs = Math.max(0, startedAt - params.enqueuedAt);
+
     try {
-      const result = await this.client.request("spark.voice.stt", {
-        audio_base64: params.audioBase64,
+      const result = await this.requestSparkMicStt({
+        audioBase64: params.audioBase64,
         format: params.format,
-        sample_rate: params.sampleRate,
+        sampleRate: params.sampleRate,
       });
-      const text = (result as Record<string, unknown>)?.text;
+      const latencyMs = Math.max(0, Date.now() - startedAt);
+      const text = result?.text;
+      const requestId = typeof result?.request_id === "string" ? result.request_id : undefined;
+      const timings =
+        result?.timings_ms && typeof result.timings_ms === "object"
+          ? (result.timings_ms as Record<string, unknown>)
+          : undefined;
+
       if (typeof text === "string" && text.trim()) {
         const existing = this.chatMessage?.trim() ?? "";
-        this.chatMessage = existing ? `${existing} ${text.trim()}` : text.trim();
+        this.chatMessage = this.mergeSparkMicTranscript(existing, text.trim());
+        this.logSparkMicTelemetry("chunk.success", {
+          chunkId: params.chunkId,
+          chunkIndex: params.chunkIndex,
+          source: params.source,
+          format: params.format,
+          queuedMs,
+          latencyMs,
+          textLen: text.trim().length,
+          durationMs: params.durationMs,
+          bytes: params.bytes,
+          requestId,
+          gatewayTotalMs: timings?.gateway_total_ms,
+          dgxTotalMs: timings?.dgx_total_ms,
+        });
       } else {
+        this.logSparkMicTelemetry("chunk.no_speech", {
+          chunkId: params.chunkId,
+          chunkIndex: params.chunkIndex,
+          source: params.source,
+          format: params.format,
+          queuedMs,
+          latencyMs,
+          durationMs: params.durationMs,
+          bytes: params.bytes,
+          requestId,
+          gatewayTotalMs: timings?.gateway_total_ms,
+          dgxTotalMs: timings?.dgx_total_ms,
+        });
         const msg = "No speech detected. Try again.";
         this.lastError = msg;
         this.requestUpdate();
@@ -3164,8 +3466,26 @@ export class OpenClawApp extends LitElement {
         }, 3000);
       }
     } catch (err) {
-      console.error("[spark-mic] STT request failed:", err);
-      this.lastError = `Voice input failed: ${err instanceof Error ? err.message : String(err)}`;
+      const latencyMs = Math.max(0, Date.now() - startedAt);
+      const message = err instanceof Error ? err.message : String(err);
+      this.logSparkMicTelemetry("chunk.error", {
+        chunkId: params.chunkId,
+        chunkIndex: params.chunkIndex,
+        source: params.source,
+        format: params.format,
+        queuedMs,
+        latencyMs,
+        durationMs: params.durationMs,
+        bytes: params.bytes,
+        error: message,
+      });
+      if (message === "STT_TIMEOUT") {
+        this.lastError = "Speech recognition timed out. Try a shorter phrase.";
+      } else {
+        console.error("[spark-mic] STT request failed:", err);
+        this.lastError = `Voice input failed: ${message}`;
+      }
+      this.requestUpdate();
     }
   }
 
@@ -3176,6 +3496,20 @@ export class OpenClawApp extends LitElement {
       this.requestUpdate();
       return;
     }
+
+    this.sparkMicSessionId = generateUUID();
+    this.sparkMicChunkSeq = 0;
+    this.sparkMicStopRequested = false;
+    this.sparkMicChunkQueue = [];
+    this.sparkMicChunkProcessing = false;
+    this.sparkMicChunks = [];
+    this.clearSparkMicWorkletChunkInterval();
+    this.clearSparkMicLongRecordingTimer();
+    this.logSparkMicTelemetry("recording.start", {
+      chunkMs: SPARK_MIC_CHUNK_MS,
+      timeoutMs: SPARK_MIC_STT_TIMEOUT_MS,
+    });
+
     let stream: MediaStream | null = null;
     try {
       stream = await navigator.mediaDevices.getUserMedia({
@@ -3259,9 +3593,10 @@ export class OpenClawApp extends LitElement {
       this.sparkMicCaptureWorklet = captureWorklet;
       this.sparkMicUsingWorklet = true;
       this.sparkMicRecording = true;
-      this.sparkMicRecordingTimer = setTimeout(() => {
-        this.stopSparkMicRecording();
-      }, 30_000);
+      this.scheduleSparkMicLongRecordingNotice();
+      this.sparkMicWorkletChunkInterval = setInterval(() => {
+        void this.flushSparkMicWorkletChunk();
+      }, SPARK_MIC_CHUNK_MS);
 
       return true;
     } catch (err) {
@@ -3272,6 +3607,8 @@ export class OpenClawApp extends LitElement {
       this.sparkMicAudioContext = null;
       this.sparkMicCaptureWorklet = null;
       this.sparkMicPcmFrames = [];
+      this.clearSparkMicWorkletChunkInterval();
+      this.clearSparkMicLongRecordingTimer();
       try {
         source?.disconnect();
       } catch {
@@ -3311,48 +3648,56 @@ export class OpenClawApp extends LitElement {
     this.sparkMicUsingWorklet = false;
 
     recorder.ondataavailable = (event: BlobEvent) => {
-      if (event.data.size > 0) {
-        this.sparkMicChunks.push(event.data);
+      if (!event.data || event.data.size <= 0) {
+        return;
       }
+      this.sparkMicChunks.push(event.data);
+      void (async () => {
+        try {
+          const audioBase64 = await this.blobToBase64(event.data);
+          this.enqueueSparkMicChunk({
+            source: "mediarecorder",
+            audioBase64,
+            format: "webm",
+            durationMs: SPARK_MIC_CHUNK_MS,
+            bytes: event.data.size,
+          });
+        } catch (err) {
+          console.error("[spark-mic] Failed while processing media chunk:", err);
+          this.lastError = `Recording failed: ${err instanceof Error ? err.message : String(err)}`;
+          this.requestUpdate();
+        }
+      })();
     };
 
-    recorder.onstop = async () => {
+    recorder.onstop = () => {
       for (const track of stream.getTracks()) {
         track.stop();
       }
-      if (this.sparkMicRecordingTimer) {
-        clearTimeout(this.sparkMicRecordingTimer);
-        this.sparkMicRecordingTimer = null;
-      }
+      this.clearSparkMicLongRecordingTimer();
+      this.sparkMicMediaRecorder = null;
 
-      try {
-        if (this.sparkMicChunks.length > 0) {
-          const blob = new Blob(this.sparkMicChunks, { type: mimeType });
-          this.sparkMicChunks = [];
-          const audioBase64 = await this.blobToBase64(blob);
-          await this.handleSparkMicAudio({ audioBase64, format: "webm" });
-        }
-      } catch (err) {
-        console.error("[spark-mic] Failed while processing MediaRecorder audio:", err);
-        this.lastError = `Recording failed: ${err instanceof Error ? err.message : String(err)}`;
-      } finally {
+      if (!this.sparkMicChunkProcessing && this.sparkMicChunkQueue.length === 0) {
+        this.sparkMicStopRequested = false;
         this.sparkMicRecording = false;
+        this.logSparkMicTelemetry("recording.stopped", { reason: "mediarecorder-onstop" });
         this.requestUpdate();
       }
     };
 
-    recorder.start();
+    recorder.start(SPARK_MIC_CHUNK_MS);
     this.sparkMicRecording = true;
-    this.sparkMicRecordingTimer = setTimeout(() => {
-      this.stopSparkMicRecording();
-    }, 30_000);
+    this.scheduleSparkMicLongRecordingNotice();
   }
 
   private stopSparkMicRecording() {
-    if (this.sparkMicRecordingTimer) {
-      clearTimeout(this.sparkMicRecordingTimer);
-      this.sparkMicRecordingTimer = null;
-    }
+    this.sparkMicStopRequested = true;
+    this.logSparkMicTelemetry("recording.stop_requested", {
+      queueDepth: this.sparkMicChunkQueue.length,
+      processing: this.sparkMicChunkProcessing,
+    });
+    this.clearSparkMicLongRecordingTimer();
+    this.clearSparkMicWorkletChunkInterval();
 
     if (this.sparkMicUsingWorklet) {
       void this.finishSparkMicWorkletRecording();
@@ -3361,15 +3706,23 @@ export class OpenClawApp extends LitElement {
 
     if (this.sparkMicMediaRecorder && this.sparkMicMediaRecorder.state !== "inactive") {
       this.sparkMicMediaRecorder.stop();
+      return;
     }
-    this.sparkMicMediaRecorder = null;
-    // sparkMicRecording will be set to false in the onstop handler
+
+    if (!this.sparkMicChunkProcessing && this.sparkMicChunkQueue.length === 0) {
+      this.sparkMicStopRequested = false;
+      this.sparkMicRecording = false;
+      this.logSparkMicTelemetry("recording.stopped", { reason: "stop-with-empty-queue" });
+      this.requestUpdate();
+    }
   }
 
   private async finishSparkMicWorkletRecording() {
     if (!this.sparkMicUsingWorklet) {
       return;
     }
+
+    this.clearSparkMicWorkletChunkInterval();
 
     // Snapshot frames and reset state early to avoid re-entrancy.
     const frames = this.sparkMicPcmFrames;
@@ -3405,28 +3758,29 @@ export class OpenClawApp extends LitElement {
       // ignore
     }
 
-    if (!frames.length) {
-      this.sparkMicRecording = false;
-      this.requestUpdate();
-      return;
+    if (frames.length) {
+      const sampleCount = frames.reduce((sum, frame) => sum + frame.length, 0);
+      const durationMs = Math.round((sampleCount / this.sparkMicSampleRate) * 1000);
+      const { blob } = pcmFramesToWavBlob(frames, this.sparkMicSampleRate);
+      if (blob) {
+        const audioBase64 = await this.blobToBase64(blob);
+        this.enqueueSparkMicChunk({
+          source: "final",
+          audioBase64,
+          format: "wav",
+          sampleRate: this.sparkMicSampleRate,
+          durationMs,
+          bytes: blob.size,
+        });
+      }
     }
 
-    const { blob } = pcmFramesToWavBlob(frames, this.sparkMicSampleRate);
-    if (!blob) {
+    if (!this.sparkMicChunkProcessing && this.sparkMicChunkQueue.length === 0) {
+      this.sparkMicStopRequested = false;
       this.sparkMicRecording = false;
+      this.logSparkMicTelemetry("recording.stopped", { reason: "worklet-finish" });
       this.requestUpdate();
-      return;
     }
-
-    const audioBase64 = await this.blobToBase64(blob);
-    await this.handleSparkMicAudio({
-      audioBase64,
-      format: "wav",
-      sampleRate: this.sparkMicSampleRate,
-    });
-
-    this.sparkMicRecording = false;
-    this.requestUpdate();
   }
 
   /** Returns optional TTS params (voice, instruct, language) for spark.voice.tts. Only includes defined values. */

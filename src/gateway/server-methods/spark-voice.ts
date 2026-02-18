@@ -5,6 +5,7 @@
  * when Spark is enabled and reachable. Fails cleanly when Spark is down.
  */
 
+import { randomUUID } from "node:crypto";
 import type { GatewayRequestHandlers } from "./types.js";
 import { loadConfig } from "../../config/config.js";
 import { ErrorCodes, errorShape } from "../protocol/index.js";
@@ -24,7 +25,7 @@ const DEFAULT_TTS_PORT = 9002;
 const REQUEST_TIMEOUT_MS = 10_000;
 const DEFAULT_TTS_TIMEOUT_MS = 60_000;
 const MIN_TTS_TIMEOUT_MS = 30_000;
-const MAX_STT_AUDIO_BASE64_CHARS = 2_600_000;
+const DEFAULT_STT_MAX_BODY_BYTES = 2 * 1024 * 1024;
 const MAX_TTS_TEXT_CHARS = 12_000;
 
 function resolveTtsTimeoutMs(env: Record<string, string>): number {
@@ -38,6 +39,20 @@ function resolveTtsTimeoutMs(env: Record<string, string>): number {
     return DEFAULT_TTS_TIMEOUT_MS;
   }
   return Math.max(MIN_TTS_TIMEOUT_MS, parsed);
+}
+
+function resolveSttMaxBodyBytes(env: Record<string, string>): number {
+  const raw =
+    parseStringLike(env.VOICE_STT_MAX_BODY_BYTES) ??
+    parseStringLike(process.env.VOICE_STT_MAX_BODY_BYTES);
+  if (!raw) {
+    return DEFAULT_STT_MAX_BODY_BYTES;
+  }
+  const parsed = Number(raw);
+  if (!Number.isFinite(parsed) || parsed <= 0) {
+    return DEFAULT_STT_MAX_BODY_BYTES;
+  }
+  return Math.max(1, Math.trunc(parsed));
 }
 
 function resolvePort(raw: string | undefined, fallback: number): number {
@@ -89,6 +104,64 @@ function asTrimmedString(value: unknown): string | undefined {
   return normalized || undefined;
 }
 
+function normalizeTimingNumber(value: unknown): number | undefined {
+  if (typeof value === "number" && Number.isFinite(value)) {
+    return Math.max(0, Number(value));
+  }
+  if (typeof value === "string" && value.trim()) {
+    const parsed = Number(value);
+    if (Number.isFinite(parsed)) {
+      return Math.max(0, parsed);
+    }
+  }
+  return undefined;
+}
+
+function toWholeMs(value: number): number {
+  return Math.max(0, Math.round(value));
+}
+
+function extractDgxTotalMs(result: Record<string, unknown>): number | undefined {
+  const timings = result.timings_ms;
+  if (!timings || typeof timings !== "object") {
+    return undefined;
+  }
+  return normalizeTimingNumber((timings as Record<string, unknown>).total_ms);
+}
+
+function resolveRequestId(
+  outboundRequestId: string,
+  response: Response,
+  result: Record<string, unknown>,
+): string {
+  const fromBody = asTrimmedString(result.request_id);
+  if (fromBody) {
+    return fromBody;
+  }
+  const fromHeader = asTrimmedString(response.headers.get("x-request-id") ?? undefined);
+  if (fromHeader) {
+    return fromHeader;
+  }
+  return outboundRequestId;
+}
+
+function resolvePayloadTooLargeError(
+  maxBytes: number,
+  receivedBytes: number,
+): {
+  code: "VOICE_STT_PAYLOAD_TOO_LARGE";
+  max_bytes: number;
+  received_bytes: number;
+  message: string;
+} {
+  return {
+    code: "VOICE_STT_PAYLOAD_TOO_LARGE",
+    max_bytes: maxBytes,
+    received_bytes: Math.max(0, Math.trunc(receivedBytes)),
+    message: "Audio payload exceeds max size.",
+  };
+}
+
 function resolveSparkTtsDefaults(env: Record<string, string>): {
   voice?: string;
   speaker?: string;
@@ -117,10 +190,24 @@ export const sparkVoiceHandlers: GatewayRequestHandlers = {
   /**
    * Speech-to-text via Spark.
    * Request: { audio_base64: string; format?: string; sample_rate?: number; language?: string }
-   * Response: { text: string; confidence?: number; language_detected?: string }
+   * Response: {
+   *   text: string;
+   *   confidence?: number;
+   *   language_detected?: string;
+   *   request_id?: string;
+   *   timings_ms?: {
+   *     gateway_receive_ms: number;
+   *     gateway_proxy_outbound_ms: number;
+   *     gateway_wait_dgx_ms: number;
+   *     gateway_serialize_send_ms: number;
+   *     gateway_total_ms: number;
+   *     dgx_total_ms?: number;
+   *   };
+   * }
    */
   "spark.voice.stt": async ({ respond, params }) => {
     try {
+      const gatewayStartedAt = Date.now();
       const env = resolveEffectiveEnv();
       if (!resolveDgxEnabled(env)) {
         respond(false, undefined, errorShape(ErrorCodes.UNAVAILABLE, "Spark is not enabled"));
@@ -156,17 +243,6 @@ export const sparkVoiceHandlers: GatewayRequestHandlers = {
         );
         return;
       }
-      if (audioBase64.length > MAX_STT_AUDIO_BASE64_CHARS) {
-        respond(
-          false,
-          undefined,
-          errorShape(
-            ErrorCodes.INVALID_REQUEST,
-            `audio_base64 exceeds max size (${MAX_STT_AUDIO_BASE64_CHARS} chars)`,
-          ),
-        );
-        return;
-      }
 
       const body = {
         audio_base64: audioBase64,
@@ -178,36 +254,114 @@ export const sparkVoiceHandlers: GatewayRequestHandlers = {
         language: asTrimmedString(params?.language) ?? "en",
       };
 
+      const serializedBody = JSON.stringify(body);
+      const payloadBytes = Buffer.byteLength(serializedBody, "utf8");
+      const maxBodyBytes = resolveSttMaxBodyBytes(env);
+      if (payloadBytes > maxBodyBytes) {
+        const tooLarge = resolvePayloadTooLargeError(maxBodyBytes, payloadBytes);
+        respond(
+          false,
+          undefined,
+          errorShape(ErrorCodes.INVALID_REQUEST, tooLarge.message, {
+            details: tooLarge,
+          }),
+        );
+        return;
+      }
+
+      const requestId = randomUUID();
       const controller = new AbortController();
       const timer = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
 
       const formatLog = body.format ?? "webm";
       const sampleRateLog = body.sample_rate ?? 16_000;
       console.warn(
-        `[spark-voice] STT request: format=${formatLog} sample_rate=${sampleRateLog} audio_base64_len=${audioBase64.length}`,
+        `[spark-voice] STT request: request_id=${requestId} format=${formatLog} sample_rate=${sampleRateLog} payload_bytes=${payloadBytes}`,
       );
 
       try {
-        const response = await fetch(urls.sttUrl, {
+        const gatewayReceiveMs = Date.now() - gatewayStartedAt;
+        const proxyStartedAt = Date.now();
+        const responsePromise = fetch(urls.sttUrl, {
           method: "POST",
           headers: mergeDgxRequestHeaders(access.context, {
             "content-type": "application/json",
             accept: "application/json",
+            "x-request-id": requestId,
           }),
-          body: JSON.stringify(body),
+          body: serializedBody,
           signal: controller.signal,
         });
+        const proxyDispatchedAt = Date.now();
+        const response = await responsePromise;
+        const gatewayWaitDgxMs = Date.now() - proxyDispatchedAt;
 
         if (!response.ok) {
           const bodyText = await response.text().catch(() => "");
-          console.warn(`[spark-voice] STT HTTP ${response.status}: ${bodyText.slice(0, 200)}`);
-          let detail = "";
+          console.warn(
+            `[spark-voice] STT HTTP ${response.status}: request_id=${requestId} ${bodyText.slice(0, 200)}`,
+          );
+
+          let parsedJson: Record<string, unknown> | null = null;
           try {
-            const parsed = JSON.parse(bodyText) as Record<string, unknown>;
-            detail = typeof parsed?.detail === "string" ? parsed.detail : "";
+            parsedJson = JSON.parse(bodyText) as Record<string, unknown>;
           } catch {
-            /* not JSON */
+            parsedJson = null;
           }
+
+          const detail =
+            typeof parsedJson?.detail === "string"
+              ? parsedJson.detail
+              : parsedJson && typeof parsedJson.error === "object"
+                ? asTrimmedString((parsedJson.error as Record<string, unknown>).message)
+                : "";
+
+          if (response.status === 413) {
+            const parsedError =
+              parsedJson && parsedJson.error && typeof parsedJson.error === "object"
+                ? (parsedJson.error as Record<string, unknown>)
+                : null;
+            const maxBytes =
+              normalizeTimingNumber(parsedError?.max_bytes) ??
+              normalizeTimingNumber(parsedJson?.max_bytes) ??
+              maxBodyBytes;
+            const receivedBytes =
+              normalizeTimingNumber(parsedError?.received_bytes) ??
+              normalizeTimingNumber(parsedJson?.received_bytes) ??
+              payloadBytes;
+
+            const tooLarge = resolvePayloadTooLargeError(maxBytes, receivedBytes);
+            respond(
+              false,
+              undefined,
+              errorShape(ErrorCodes.INVALID_REQUEST, tooLarge.message, {
+                details: tooLarge,
+              }),
+            );
+            return;
+          }
+
+          if (response.status === 400) {
+            const parsedError =
+              parsedJson && parsedJson.error && typeof parsedJson.error === "object"
+                ? (parsedJson.error as Record<string, unknown>)
+                : null;
+            const message =
+              (parsedError ? asTrimmedString(parsedError.message) : undefined) ??
+              detail ??
+              "Spark STT request is invalid.";
+            respond(
+              false,
+              undefined,
+              errorShape(
+                ErrorCodes.INVALID_REQUEST,
+                message,
+                parsedError ? { details: parsedError } : {},
+              ),
+            );
+            return;
+          }
+
           const msg = detail
             ? `Spark STT (${response.status}): ${detail}`
             : `Spark STT returned HTTP ${response.status}`;
@@ -215,15 +369,32 @@ export const sparkVoiceHandlers: GatewayRequestHandlers = {
           return;
         }
 
+        const serializeStartedAt = Date.now();
         const result = (await response.json()) as Record<string, unknown>;
         const text = result.text ?? "";
+        const dgxTotalMs = extractDgxTotalMs(result);
+        const mergedRequestId = resolveRequestId(requestId, response, result);
+
+        const gatewaySerializeSendMs = Date.now() - serializeStartedAt;
+        const gatewayTotalMs = Date.now() - gatewayStartedAt;
+        const gatewayProxyOutboundMs = proxyDispatchedAt - proxyStartedAt;
+
         console.warn(
-          `[spark-voice] STT success: text_len=${typeof text === "string" ? text.length : 0}`,
+          `[spark-voice] STT success: request_id=${mergedRequestId} text_len=${typeof text === "string" ? text.length : 0} gateway_total_ms=${gatewayTotalMs}`,
         );
         respond(true, {
           text,
           confidence: result.confidence,
           language_detected: result.language_detected,
+          request_id: mergedRequestId,
+          timings_ms: {
+            gateway_receive_ms: toWholeMs(gatewayReceiveMs),
+            gateway_proxy_outbound_ms: toWholeMs(gatewayProxyOutboundMs),
+            gateway_wait_dgx_ms: toWholeMs(gatewayWaitDgxMs),
+            gateway_serialize_send_ms: toWholeMs(gatewaySerializeSendMs),
+            gateway_total_ms: toWholeMs(gatewayTotalMs),
+            ...(dgxTotalMs != null ? { dgx_total_ms: toWholeMs(dgxTotalMs) } : {}),
+          },
         });
       } finally {
         clearTimeout(timer);

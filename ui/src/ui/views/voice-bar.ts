@@ -165,6 +165,49 @@ function renderResponse(response: string | null) {
   `;
 }
 
+function renderAttribution(state: VoiceState) {
+  if (!state.lastRoute && !state.lastModel && !state.lastThinkingLevel) {
+    return nothing;
+  }
+
+  return html`
+    <div class="voice-bar__response-meta">
+      <span class="voice-bar__label">Response attribution</span>
+      <div class="voice-bar__meta-grid">
+        ${
+          state.lastRoute
+            ? html`
+              <span class="voice-bar__meta-key">Route</span>
+              <span class="voice-bar__meta-val mono">${state.lastRoute}</span>
+            `
+            : nothing
+        }
+        ${
+          state.lastModel
+            ? html`
+              <span class="voice-bar__meta-key">Model</span>
+              <span class="voice-bar__meta-val mono">${state.lastModel}</span>
+            `
+            : nothing
+        }
+        ${
+          state.lastThinkingLevel
+            ? html`
+              <span class="voice-bar__meta-key">Thinking</span>
+              <span class="voice-bar__meta-val mono">${state.lastThinkingLevel}</span>
+            `
+            : nothing
+        }
+      </div>
+      ${
+        state.routeModelWarning
+          ? html`<div class="voice-bar__meta-warning">${state.routeModelWarning}</div>`
+          : nothing
+      }
+    </div>
+  `;
+}
+
 function renderError(error: string | null, onRetry: () => void) {
   if (!error) {
     return nothing;
@@ -323,6 +366,7 @@ export function renderVoiceBar(props: VoiceBarProps) {
               ${renderTimings(state.timings)}
               ${renderTranscription(state.transcription)}
               ${renderResponse(state.response)}
+              ${renderAttribution(state)}
               ${renderError(state.error, onRetry)}
             </div>
           `
@@ -718,6 +762,38 @@ export const voiceBarStyles = `
 
 .voice-bar__play-btn {
   margin-top: 0.5rem;
+}
+
+.voice-bar__response-meta {
+  margin-bottom: 1rem;
+}
+
+.voice-bar__meta-grid {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  column-gap: 0.5rem;
+  row-gap: 0.25rem;
+  margin-top: 0.25rem;
+  padding: 0.5rem;
+  background: var(--bg-secondary, #f5f5f5);
+  border-radius: 4px;
+}
+
+.voice-bar__meta-key {
+  font-size: 0.75rem;
+  color: var(--text-muted, #666);
+}
+
+.voice-bar__meta-val {
+  min-width: 0;
+  overflow-wrap: anywhere;
+  font-size: 0.75rem;
+}
+
+.voice-bar__meta-warning {
+  margin-top: 0.5rem;
+  font-size: 0.75rem;
+  color: #8a6d3b;
 }
 
 .voice-bar__error {
