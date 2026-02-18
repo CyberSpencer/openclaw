@@ -13,6 +13,19 @@ const OriginalIsSecureContext = window.isSecureContext;
 type FakeTrack = { stop: ReturnType<typeof vi.fn> };
 type FakeStream = MediaStream & { __track: FakeTrack };
 
+async function flushMicrotasks(times = 4): Promise<void> {
+  for (let i = 0; i < times; i += 1) {
+    await Promise.resolve();
+  }
+}
+
+async function flushAsync(times = 4): Promise<void> {
+  for (let i = 0; i < times; i += 1) {
+    await flushMicrotasks();
+    await new Promise((resolve) => setTimeout(resolve, 0));
+  }
+}
+
 function createFakeStream(): FakeStream {
   const track: FakeTrack = { stop: vi.fn() };
   return {
@@ -274,6 +287,163 @@ describe("spark mic worklet fallback", () => {
     expect(addModule.mock.calls.length).toBeLessThanOrEqual(1);
     expect(app.sparkMicRecording).toBe(false);
     expect(app.lastError).toContain("Recording failed:");
+  });
+});
+
+describe("spark mic chunked interim updates", () => {
+  it("updates chat message from chunked MediaRecorder events before stop", async () => {
+    const getUserMedia = vi.fn(async () => createFakeStream());
+
+    class FakeMediaRecorder {
+      static lastInstance: FakeMediaRecorder | null = null;
+      static isTypeSupported() {
+        return true;
+      }
+      state: RecordingState = "inactive";
+      ondataavailable: ((event: BlobEvent) => void) | null = null;
+      onstop: (() => void) | null = null;
+      startTimeslice: number | undefined;
+      constructor(_stream: MediaStream, _opts?: MediaRecorderOptions) {
+        FakeMediaRecorder.lastInstance = this;
+      }
+      start(timeslice?: number) {
+        this.startTimeslice = timeslice;
+        this.state = "recording";
+      }
+      stop() {
+        this.state = "inactive";
+        this.onstop?.();
+      }
+      emitChunk(text: string) {
+        const blob = new Blob([text], { type: "audio/webm" });
+        this.ondataavailable?.({ data: blob } as BlobEvent);
+      }
+    }
+
+    globalThis.MediaRecorder = FakeMediaRecorder as unknown as typeof MediaRecorder;
+    Object.defineProperty(navigator, "mediaDevices", {
+      configurable: true,
+      value: { getUserMedia },
+    });
+    Object.defineProperty(window, "isSecureContext", { configurable: true, value: false });
+
+    const app = mountApp("/chat");
+    await app.updateComplete;
+    setSparkAvailable(app);
+
+    let sttCall = 0;
+    const request = vi.fn(async (method: string) => {
+      if (method === "spark.status") {
+        return { enabled: true, voiceAvailable: true };
+      }
+      if (method === "spark.voice.stt") {
+        sttCall += 1;
+        if (sttCall === 1) {
+          return { text: "hello there" };
+        }
+        return { text: "there friend" };
+      }
+      return {};
+    });
+    app.client = { request } as unknown as typeof app.client;
+
+    await app.handleSparkMicClick();
+
+    const rec = FakeMediaRecorder.lastInstance;
+    expect(rec).toBeTruthy();
+    expect(rec?.startTimeslice).toBe(4000);
+
+    rec?.emitChunk("chunk-one");
+    await flushAsync();
+    expect(app.chatMessage).toBe("hello there");
+
+    rec?.emitChunk("chunk-two");
+    await flushAsync();
+    expect(app.chatMessage).toBe("hello there friend");
+
+    await app.handleSparkMicClick();
+    await flushAsync();
+    expect(app.sparkMicRecording).toBe(false);
+  });
+
+  it("processes queued chunks without overlapping STT requests", async () => {
+    const getUserMedia = vi.fn(async () => createFakeStream());
+
+    let resolveFirst: (() => void) | null = null;
+
+    class FakeMediaRecorder {
+      static lastInstance: FakeMediaRecorder | null = null;
+      static isTypeSupported() {
+        return true;
+      }
+      state: RecordingState = "inactive";
+      ondataavailable: ((event: BlobEvent) => void) | null = null;
+      onstop: (() => void) | null = null;
+      constructor(_stream: MediaStream, _opts?: MediaRecorderOptions) {
+        FakeMediaRecorder.lastInstance = this;
+      }
+      start() {
+        this.state = "recording";
+      }
+      stop() {
+        this.state = "inactive";
+        this.onstop?.();
+      }
+      emitChunk(text: string) {
+        const blob = new Blob([text], { type: "audio/webm" });
+        this.ondataavailable?.({ data: blob } as BlobEvent);
+      }
+    }
+
+    globalThis.MediaRecorder = FakeMediaRecorder as unknown as typeof MediaRecorder;
+    Object.defineProperty(navigator, "mediaDevices", {
+      configurable: true,
+      value: { getUserMedia },
+    });
+    Object.defineProperty(window, "isSecureContext", { configurable: true, value: false });
+
+    let sttCalls = 0;
+    const request = vi.fn(async (method: string) => {
+      if (method === "spark.status") {
+        return { enabled: true, voiceAvailable: true };
+      }
+      if (method === "spark.voice.stt") {
+        sttCalls += 1;
+        if (sttCalls === 1) {
+          await new Promise<void>((resolve) => {
+            resolveFirst = resolve;
+          });
+          return { text: "first" };
+        }
+        return { text: "second" };
+      }
+      return {};
+    });
+
+    const app = mountApp("/chat");
+    await app.updateComplete;
+    setSparkAvailable(app);
+    app.client = { request } as unknown as typeof app.client;
+
+    await app.handleSparkMicClick();
+    const rec = FakeMediaRecorder.lastInstance;
+    expect(rec).toBeTruthy();
+
+    rec?.emitChunk("chunk-a");
+    rec?.emitChunk("chunk-b");
+    await flushAsync();
+
+    expect(sttCalls).toBe(1);
+
+    resolveFirst?.();
+    await flushAsync(8);
+
+    expect(sttCalls).toBe(2);
+    expect(app.chatMessage).toContain("first");
+
+    await app.handleSparkMicClick();
+    await flushAsync();
+    expect(app.sparkMicRecording).toBe(false);
   });
 });
 

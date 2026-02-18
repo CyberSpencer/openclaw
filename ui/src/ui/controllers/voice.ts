@@ -23,6 +23,9 @@ const BARGE_IN_SPEECH_THRESHOLD = 30;
 const BARGE_IN_MIN_SPEECH_MS = 220;
 
 const WORKLET_VERSION = "20260210-v1";
+const SPARK_STT_TIMEOUT_MS = 10_000;
+const SPARK_LLM_TIMEOUT_MS = 120_000;
+const SPARK_TTS_TIMEOUT_MS = 60_000;
 
 export type ConversationPhase = "idle" | "listening" | "processing" | "speaking";
 
@@ -85,6 +88,10 @@ export type VoiceState = {
   error: string | null;
   capabilities: VoiceCapabilities | null;
   timings: VoiceTimings | null;
+  lastRoute: string | null;
+  lastModel: string | null;
+  lastThinkingLevel: string | null;
+  routeModelWarning: string | null;
 
   // Optional TTS steering (voice = who, instruct = mood/style, language = hint)
   ttsVoice: string | null;
@@ -245,6 +252,10 @@ export function createVoiceState(): VoiceState {
     error: null,
     capabilities: null,
     timings: null,
+    lastRoute: null,
+    lastModel: null,
+    lastThinkingLevel: null,
+    routeModelWarning: null,
 
     // TTS steering (synced from app when starting conversation)
     ttsVoice: null,
@@ -906,6 +917,82 @@ export async function audioToBase64(blob: Blob): Promise<string> {
   });
 }
 
+function inferRouteHosting(route: string | null | undefined): "local" | "cloud" | null {
+  if (!route) {
+    return null;
+  }
+  const normalized = route.toLowerCase();
+  if (normalized.includes("local")) {
+    return "local";
+  }
+  if (normalized.includes("cloud")) {
+    return "cloud";
+  }
+  return null;
+}
+
+function inferModelHosting(model: string | null | undefined): "local" | "cloud" | null {
+  if (!model) {
+    return null;
+  }
+  const normalized = model.toLowerCase();
+  if (normalized.startsWith("ollama/") || normalized.startsWith("spark-ollama/")) {
+    return "local";
+  }
+  return "cloud";
+}
+
+function setVoiceAttribution(
+  state: VoiceState,
+  source: string,
+  route: string | null | undefined,
+  model: string | null | undefined,
+  thinkingLevel: string | null | undefined,
+): void {
+  const resolvedRoute = route?.trim() ? route.trim() : null;
+  const resolvedModel = model?.trim() ? model.trim() : null;
+  const resolvedThinking = thinkingLevel?.trim() ? thinkingLevel.trim() : null;
+
+  state.lastRoute = resolvedRoute;
+  state.lastModel = resolvedModel;
+  state.lastThinkingLevel = resolvedThinking;
+  state.routeModelWarning = null;
+
+  if (!resolvedRoute && !resolvedModel && !resolvedThinking) {
+    return;
+  }
+
+  const routeHosting = inferRouteHosting(resolvedRoute);
+  const modelHosting = inferModelHosting(resolvedModel);
+
+  if (routeHosting && modelHosting && routeHosting !== modelHosting) {
+    const warning = `route/model mismatch: route=${resolvedRoute}, model=${resolvedModel}`;
+    state.routeModelWarning = warning;
+    console.warn("[voice/attribution]", {
+      event: "route_model_mismatch",
+      source,
+      route: resolvedRoute,
+      model: resolvedModel,
+      routeHosting,
+      modelHosting,
+      thinkingLevel: resolvedThinking,
+      ts: Date.now(),
+    });
+    return;
+  }
+
+  console.info("[voice/attribution]", {
+    event: "route_model",
+    source,
+    route: resolvedRoute,
+    model: resolvedModel,
+    routeHosting,
+    modelHosting,
+    thinkingLevel: resolvedThinking,
+    ts: Date.now(),
+  });
+}
+
 /**
  * Process voice input through full pipeline.
  */
@@ -949,12 +1036,35 @@ export async function processVoiceInput(
     state.response =
       typeof result.response === "string" ? normalizeTextForDisplay(result.response) : null;
     state.timings = result.timings ?? null;
+    setVoiceAttribution(state, "voice.process", result.route, result.model, result.thinkingLevel);
 
     return result;
   } catch (err) {
     console.error("[Voice] Processing error:", err);
     state.error = String(err);
     return null;
+  }
+}
+
+async function requestWithTimeout<T>(
+  requestPromise: Promise<T>,
+  timeoutMs: number,
+  timeoutCode: string,
+): Promise<T> {
+  requestPromise.catch(() => undefined);
+  let timeoutHandle: ReturnType<typeof setTimeout> | null = null;
+  const timeoutPromise = new Promise<never>((_, reject) => {
+    timeoutHandle = setTimeout(() => {
+      reject(new Error(timeoutCode));
+    }, timeoutMs);
+  });
+
+  try {
+    return await Promise.race([requestPromise, timeoutPromise]);
+  } finally {
+    if (timeoutHandle) {
+      clearTimeout(timeoutHandle);
+    }
   }
 }
 
@@ -987,13 +1097,29 @@ export async function processVoiceInputSpark(
     // 1) STT
     console.log("[Voice/Spark] Sending audio to spark.voice.stt...");
     const sttStart = Date.now();
-    const sttResult = await state.client.request("spark.voice.stt", {
-      audio_base64: audioBase64,
-      format,
-    });
+    let sttResult: Record<string, unknown>;
+    try {
+      sttResult = await requestWithTimeout(
+        state.client.request("spark.voice.stt", {
+          audio_base64: audioBase64,
+          format,
+        }) as Promise<Record<string, unknown>>,
+        SPARK_STT_TIMEOUT_MS,
+        "SPARK_STT_TIMEOUT",
+      );
+    } catch (sttErr) {
+      const code = sttErr instanceof Error ? sttErr.message : String(sttErr);
+      if (code === "SPARK_STT_TIMEOUT") {
+        state.error = "Speech recognition timed out. Try a shorter phrase.";
+      } else {
+        state.error = `STT failed: ${code}`;
+      }
+      state.timings = { sttMs: Date.now() - sttStart, totalMs: Date.now() - startedAt };
+      return null;
+    }
     const sttMs = Date.now() - sttStart;
 
-    const text = (sttResult as Record<string, unknown>)?.text ?? "";
+    const text = sttResult?.text ?? "";
     state.transcription = typeof text === "string" ? normalizeTextForDisplay(text) : "";
 
     console.log("[Voice/Spark] STT result:", { text: state.transcription, sttMs });
@@ -1011,15 +1137,34 @@ export async function processVoiceInputSpark(
 
     // 2) Generate assistant reply text via normal OpenClaw chat pipeline (no local TTS)
     const llmStart = Date.now();
-    const reply = await state.client.request("voice.processText", {
-      text: state.transcription,
-      sessionKey: state.sessionKey ?? undefined,
-      driveOpenClaw: state.driveOpenClaw,
-      skipTts: true,
-    });
+    let reply: Record<string, unknown>;
+    try {
+      reply = await requestWithTimeout(
+        state.client.request("voice.processText", {
+          text: state.transcription,
+          sessionKey: state.sessionKey ?? undefined,
+          driveOpenClaw: state.driveOpenClaw,
+          skipTts: true,
+        }) as Promise<Record<string, unknown>>,
+        SPARK_LLM_TIMEOUT_MS,
+        "SPARK_LLM_TIMEOUT",
+      );
+    } catch (llmErr) {
+      const code = llmErr instanceof Error ? llmErr.message : String(llmErr);
+      state.error =
+        code === "SPARK_LLM_TIMEOUT"
+          ? "Response generation timed out. Try a shorter request."
+          : `LLM failed: ${code}`;
+      state.timings = {
+        sttMs,
+        llmMs: Date.now() - llmStart,
+        totalMs: Date.now() - startedAt,
+      };
+      return null;
+    }
     const llmMs = Date.now() - llmStart;
 
-    const responseTextRaw = (reply as Record<string, unknown>)?.response;
+    const responseTextRaw = reply?.response;
     const responseText =
       typeof responseTextRaw === "string" ? normalizeTextForDisplay(responseTextRaw) : "";
     state.response = responseText;
@@ -1048,6 +1193,14 @@ export async function processVoiceInputSpark(
           ? ((reply as Record<string, unknown>).runId as string)
           : undefined,
     };
+
+    setVoiceAttribution(
+      state,
+      "voice.processText",
+      baseResult.route,
+      baseResult.model,
+      baseResult.thinkingLevel,
+    );
 
     if (!responseText.trim()) {
       state.timings = {
@@ -1088,10 +1241,19 @@ export async function processVoiceInputSpark(
       ttsParams.language = state.ttsLanguage.trim();
     }
     try {
-      ttsResult = await state.client.request("spark.voice.tts", ttsParams);
+      ttsResult = await requestWithTimeout(
+        state.client.request("spark.voice.tts", ttsParams) as Promise<Record<string, unknown>>,
+        SPARK_TTS_TIMEOUT_MS,
+        "SPARK_TTS_TIMEOUT",
+      );
     } catch (ttsErr) {
-      console.error("[Voice/Spark] TTS error:", ttsErr);
-      state.error = `TTS failed: ${ttsErr instanceof Error ? ttsErr.message : String(ttsErr)}`;
+      const code = ttsErr instanceof Error ? ttsErr.message : String(ttsErr);
+      if (code === "SPARK_TTS_TIMEOUT") {
+        state.error = "TTS timed out. Returning text response only.";
+      } else {
+        console.error("[Voice/Spark] TTS error:", ttsErr);
+        state.error = `TTS failed: ${code}`;
+      }
     }
     const ttsMs = Date.now() - ttsStart;
 
@@ -1144,6 +1306,13 @@ export async function processTextToVoice(
     state.response =
       typeof result.response === "string" ? normalizeTextForDisplay(result.response) : null;
     state.timings = result.timings ?? null;
+    setVoiceAttribution(
+      state,
+      "voice.processText",
+      result.route,
+      result.model,
+      result.thinkingLevel,
+    );
 
     return result;
   } catch (err) {
@@ -1385,6 +1554,10 @@ export async function startConversation(
   state.error = null;
   state.transcription = null;
   state.response = null;
+  state.lastRoute = null;
+  state.lastModel = null;
+  state.lastThinkingLevel = null;
+  state.routeModelWarning = null;
   onUpdate();
 
   // Conversation loop - continues until user clicks stop

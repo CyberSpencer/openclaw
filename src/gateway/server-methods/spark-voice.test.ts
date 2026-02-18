@@ -130,10 +130,10 @@ describe("spark voice gateway handlers", () => {
     );
   });
 
-  it("rejects oversized STT payloads", async () => {
+  it("rejects oversized STT payloads with stable 2MB contract details", async () => {
     const respond = vi.fn<GatewayResponder>();
     await sparkVoiceHandlers["spark.voice.stt"]?.(
-      makeInvocation(respond, { audio_base64: "a".repeat(20_000_001) }),
+      makeInvocation(respond, { audio_base64: "a".repeat(3_000_000) }),
     );
 
     expect(respond).toHaveBeenCalledWith(
@@ -141,7 +141,12 @@ describe("spark voice gateway handlers", () => {
       undefined,
       expect.objectContaining({
         code: "INVALID_REQUEST",
-        message: expect.stringContaining("audio_base64 exceeds max size"),
+        message: "Audio payload exceeds max size.",
+        details: expect.objectContaining({
+          code: "VOICE_STT_PAYLOAD_TOO_LARGE",
+          max_bytes: 2_097_152,
+          message: "Audio payload exceeds max size.",
+        }),
       }),
     );
   });
@@ -164,7 +169,87 @@ describe("spark voice gateway handlers", () => {
     );
   });
 
-  it("routes STT to WAN endpoint and sends WAN auth headers in WAN mode", async () => {
+  it("maps DGX 413 payload-too-large to stable invalid-request details", async () => {
+    const fetchMock = vi.fn(async () => ({
+      ok: false,
+      status: 413,
+      text: async () =>
+        JSON.stringify({
+          error: {
+            code: "VOICE_STT_PAYLOAD_TOO_LARGE",
+            max_bytes: 2_097_152,
+            received_bytes: 2_301_120,
+            message: "Audio payload exceeds max size.",
+          },
+        }),
+    }));
+    vi.stubGlobal("fetch", fetchMock);
+
+    const respond = vi.fn<GatewayResponder>();
+    await sparkVoiceHandlers["spark.voice.stt"]?.(
+      makeInvocation(respond, {
+        audio_base64: "AAAA",
+        format: "wav",
+        sample_rate: 16000,
+      }),
+    );
+
+    expect(respond).toHaveBeenCalledWith(
+      false,
+      undefined,
+      expect.objectContaining({
+        code: "INVALID_REQUEST",
+        message: "Audio payload exceeds max size.",
+        details: {
+          code: "VOICE_STT_PAYLOAD_TOO_LARGE",
+          max_bytes: 2_097_152,
+          received_bytes: 2_301_120,
+          message: "Audio payload exceeds max size.",
+        },
+      }),
+    );
+  });
+
+  it("maps DGX structured 400 STT errors to invalid-request with passthrough details", async () => {
+    const fetchMock = vi.fn(async () => ({
+      ok: false,
+      status: 400,
+      text: async () =>
+        JSON.stringify({
+          error: {
+            code: "VOICE_STT_AUDIO_TOO_SHORT",
+            message: "Audio shorter than minimum duration (100 ms).",
+            min_duration_ms: 100,
+          },
+        }),
+    }));
+    vi.stubGlobal("fetch", fetchMock);
+
+    const respond = vi.fn<GatewayResponder>();
+    await sparkVoiceHandlers["spark.voice.stt"]?.(
+      makeInvocation(respond, {
+        audio_base64: "AAAA",
+        format: "wav",
+        sample_rate: 16000,
+      }),
+    );
+
+    expect(respond).toHaveBeenCalledWith(
+      false,
+      undefined,
+      expect.objectContaining({
+        code: "INVALID_REQUEST",
+        message: "Audio shorter than minimum duration (100 ms).",
+        details: {
+          code: "VOICE_STT_AUDIO_TOO_SHORT",
+          message: "Audio shorter than minimum duration (100 ms).",
+          min_duration_ms: 100,
+        },
+      }),
+    );
+  });
+
+  it("routes STT to WAN endpoint, forwards request id, and returns merged timing fields", async () => {
     process.env.DGX_ACCESS_MODE = "wan";
     process.env.DGX_WAN_BASE_URL = "https://abc123.ngrok-free.dev";
     process.env.DGX_WAN_TOKEN = "wan-token";
@@ -175,10 +260,20 @@ describe("spark voice gateway handlers", () => {
       const headers = (init?.headers ?? {}) as Record<string, string>;
       expect(headers["ngrok-skip-browser-warning"]).toBe("true");
       expect(headers["X-OpenClaw-Token"]).toBe("wan-token");
+      expect(typeof headers["x-request-id"]).toBe("string");
+      expect(headers["x-request-id"]?.length).toBeGreaterThan(0);
       return {
         ok: true,
         status: 200,
-        json: async () => ({ text: "hello from wan" }),
+        headers: {
+          get: (name: string) =>
+            name.toLowerCase() === "x-request-id" ? headers["x-request-id"] : null,
+        },
+        json: async () => ({
+          text: "hello from wan",
+          request_id: headers["x-request-id"],
+          timings_ms: { total_ms: 408.4 },
+        }),
       };
     });
     vi.stubGlobal("fetch", fetchMock);
@@ -194,6 +289,20 @@ describe("spark voice gateway handlers", () => {
     );
 
     expect(fetchMock).toHaveBeenCalledTimes(1);
-    expect(respond).toHaveBeenCalledWith(true, expect.objectContaining({ text: "hello from wan" }));
+    expect(respond).toHaveBeenCalledWith(
+      true,
+      expect.objectContaining({
+        text: "hello from wan",
+        request_id: expect.any(String),
+        timings_ms: expect.objectContaining({
+          gateway_receive_ms: expect.any(Number),
+          gateway_proxy_outbound_ms: expect.any(Number),
+          gateway_wait_dgx_ms: expect.any(Number),
+          gateway_serialize_send_ms: expect.any(Number),
+          gateway_total_ms: expect.any(Number),
+          dgx_total_ms: 408,
+        }),
+      }),
+    );
   });
 });

@@ -9,6 +9,7 @@ export type DebugProps = {
   models: unknown[];
   heartbeat: unknown;
   eventLog: EventLogEntry[];
+  sparkMicTelemetry: Array<Record<string, unknown>>;
   callMethod: string;
   callParams: string;
   callResult: string | null;
@@ -116,6 +117,22 @@ export function renderDebug(props: DebugProps) {
         null,
         2,
       )}</pre>
+    </section>
+
+    <section class="card" style="margin-top: 18px;">
+      <div class="card-title">Spark mic telemetry</div>
+      <div class="card-sub">Recent client-side chunk telemetry (persisted in local storage).</div>
+      ${
+        props.sparkMicTelemetry.length === 0
+          ? html`
+              <div class="muted" style="margin-top: 12px">No spark mic telemetry yet.</div>
+            `
+          : html`<pre class="code-block" style="margin-top: 12px;">${JSON.stringify(
+              props.sparkMicTelemetry,
+              null,
+              2,
+            )}</pre>`
+      }
     </section>
 
     <section class="card" style="margin-top: 18px;">

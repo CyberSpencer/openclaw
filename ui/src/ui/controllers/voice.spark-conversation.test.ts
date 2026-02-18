@@ -1,5 +1,9 @@
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { createVoiceState, processVoiceInputSpark } from "./voice.ts";
+
+afterEach(() => {
+  vi.useRealTimers();
+});
 
 describe("processVoiceInputSpark", () => {
   it("runs STT -> voice.processText(skipTts) -> Spark TTS sequence", async () => {
@@ -53,6 +57,52 @@ describe("processVoiceInputSpark", () => {
       model: "openai-codex/gpt-5.3-codex",
       runId: "run-1",
     });
+    expect(state.lastRoute).toBe("cloud");
+    expect(state.lastModel).toBe("openai-codex/gpt-5.3-codex");
+    expect(state.lastThinkingLevel).toBe("medium");
+    expect(state.routeModelWarning).toBeNull();
+  });
+
+  it("emits warning telemetry when route/model hosting classification mismatches", async () => {
+    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+
+    const request = vi.fn(async (method: string) => {
+      if (method === "spark.voice.stt") {
+        return { text: "hello world" };
+      }
+      if (method === "voice.processText") {
+        return {
+          sessionId: "voice-session",
+          response: "assistant reply",
+          route: "local",
+          model: "openai-codex/gpt-5.3-codex",
+          thinkingLevel: "low",
+        };
+      }
+      if (method === "spark.voice.tts") {
+        return { audio_base64: "tts64", format: "webm" };
+      }
+      throw new Error(`unexpected method: ${method}`);
+    });
+
+    const state = createVoiceState();
+    state.connected = true;
+    state.client = { request } as unknown as typeof state.client;
+
+    const result = await processVoiceInputSpark(state, "audio64");
+
+    expect(result?.response).toBe("assistant reply");
+    expect(state.routeModelWarning).toContain("route/model mismatch");
+    expect(warnSpy).toHaveBeenCalledWith(
+      "[voice/attribution]",
+      expect.objectContaining({
+        event: "route_model_mismatch",
+        route: "local",
+        model: "openai-codex/gpt-5.3-codex",
+      }),
+    );
+
+    warnSpy.mockRestore();
   });
 
   it("skips Spark TTS when reply text is empty", async () => {
@@ -104,5 +154,90 @@ describe("processVoiceInputSpark", () => {
     const result = await processVoiceInputSpark(state, "audio64", "wav");
 
     expect(result?.audioBase64).toBe("tts64");
+  });
+
+  it("surfaces STT timeout with stage-specific message", async () => {
+    vi.useFakeTimers();
+
+    const request = vi.fn(async (method: string) => {
+      if (method === "spark.voice.stt") {
+        return await new Promise<Record<string, unknown>>(() => {
+          // never resolves
+        });
+      }
+      throw new Error(`unexpected method: ${method}`);
+    });
+
+    const state = createVoiceState();
+    state.connected = true;
+    state.client = { request } as unknown as typeof state.client;
+
+    const pending = processVoiceInputSpark(state, "audio64", "wav");
+    await vi.advanceTimersByTimeAsync(10_001);
+    const result = await pending;
+
+    expect(result).toBeNull();
+    expect(state.error).toBe("Speech recognition timed out. Try a shorter phrase.");
+    expect(request).toHaveBeenCalledTimes(1);
+  });
+
+  it("surfaces LLM timeout with stage-specific message", async () => {
+    vi.useFakeTimers();
+
+    const request = vi.fn(async (method: string) => {
+      if (method === "spark.voice.stt") {
+        return { text: "hello world" };
+      }
+      if (method === "voice.processText") {
+        return await new Promise<Record<string, unknown>>(() => {
+          // never resolves
+        });
+      }
+      throw new Error(`unexpected method: ${method}`);
+    });
+
+    const state = createVoiceState();
+    state.connected = true;
+    state.client = { request } as unknown as typeof state.client;
+
+    const pending = processVoiceInputSpark(state, "audio64", "wav");
+    await vi.advanceTimersByTimeAsync(120_001);
+    const result = await pending;
+
+    expect(result).toBeNull();
+    expect(state.error).toBe("Response generation timed out. Try a shorter request.");
+    expect(request).toHaveBeenCalledTimes(2);
+  });
+
+  it("degrades to text-only when TTS times out", async () => {
+    vi.useFakeTimers();
+
+    const request = vi.fn(async (method: string) => {
+      if (method === "spark.voice.stt") {
+        return { text: "hello world" };
+      }
+      if (method === "voice.processText") {
+        return { sessionId: "voice-session", response: "assistant reply" };
+      }
+      if (method === "spark.voice.tts") {
+        return await new Promise<Record<string, unknown>>(() => {
+          // never resolves
+        });
+      }
+      throw new Error(`unexpected method: ${method}`);
+    });
+
+    const state = createVoiceState();
+    state.connected = true;
+    state.client = { request } as unknown as typeof state.client;
+
+    const pending = processVoiceInputSpark(state, "audio64", "wav");
+    await vi.advanceTimersByTimeAsync(60_001);
+    const result = await pending;
+
+    expect(result?.response).toBe("assistant reply");
+    expect(result?.audioBase64).toBeUndefined();
+    expect(state.error).toBe("TTS timed out. Returning text response only.");
+    expect(request).toHaveBeenCalledTimes(3);
   });
 });
