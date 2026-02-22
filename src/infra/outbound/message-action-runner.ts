@@ -560,13 +560,27 @@ function parseCardParam(params: Record<string, unknown>): void {
   }
 }
 
-async function resolveChannel(cfg: OpenClawConfig, params: Record<string, unknown>) {
-  const channelHint = readStringParam(params, "channel");
+async function resolveChannel(params: {
+  cfg: OpenClawConfig;
+  action: ChannelMessageActionName;
+  args: Record<string, unknown>;
+}): Promise<{
+  channel: ChannelId;
+  decision?: Awaited<ReturnType<typeof resolveMessageChannelSelection>>["decision"];
+}> {
+  const channelHint = readStringParam(params.args, "channel");
   const selection = await resolveMessageChannelSelection({
-    cfg,
+    cfg: params.cfg,
     channel: channelHint,
+    intent: {
+      action: params.action,
+      params: params.args,
+    },
   });
-  return selection.channel;
+  return {
+    channel: selection.channel,
+    decision: selection.decision,
+  };
 }
 
 async function resolveActionTarget(params: {
@@ -624,6 +638,7 @@ type ResolvedActionContext = {
   input: RunMessageActionParams;
   agentId?: string;
   resolvedTarget?: ResolvedMessagingTarget;
+  routingDecision?: Awaited<ReturnType<typeof resolveMessageChannelSelection>>["decision"];
   abortSignal?: AbortSignal;
 };
 function resolveGateway(input: RunMessageActionParams): MessageActionRunnerGateway | undefined {
@@ -660,7 +675,15 @@ async function handleBroadcastAction(
   }
   const targetChannels =
     channelHint && channelHint.trim().toLowerCase() !== "all"
-      ? [await resolveChannel(input.cfg, { channel: channelHint })]
+      ? [
+          (
+            await resolveChannel({
+              cfg: input.cfg,
+              action: "send",
+              args: { channel: channelHint, target: rawTargets[0], message: params.message },
+            })
+          ).channel,
+        ]
       : configured;
   const results: Array<{
     channel: ChannelId;
@@ -732,6 +755,7 @@ async function handleSendAction(ctx: ResolvedActionContext): Promise<MessageActi
     input,
     agentId,
     resolvedTarget,
+    routingDecision,
     abortSignal,
   } = ctx;
   throwIfAborted(abortSignal);
@@ -804,6 +828,8 @@ async function handleSendAction(ctx: ResolvedActionContext): Promise<MessageActi
   const mediaUrl = readStringParam(params, "media", { trim: false });
   const gifPlayback = readBooleanParam(params, "gifPlayback") ?? false;
   const bestEffort = readBooleanParam(params, "bestEffort");
+  const idempotencyKey = readStringParam(params, "idempotencyKey");
+  const urgency = readStringParam(params, "urgency") ?? readStringParam(params, "priority");
 
   const replyToId = readStringParam(params, "replyTo");
   const threadId = readStringParam(params, "threadId");
@@ -875,6 +901,9 @@ async function handleSendAction(ctx: ResolvedActionContext): Promise<MessageActi
     mediaUrls: mergedMediaUrls.length ? mergedMediaUrls : undefined,
     gifPlayback,
     bestEffort: bestEffort ?? undefined,
+    idempotencyKey: idempotencyKey ?? undefined,
+    urgency: urgency ?? undefined,
+    routingDecision,
   });
 
   return {
@@ -1051,7 +1080,12 @@ export async function runMessageAction(
     }
   }
 
-  const channel = await resolveChannel(cfg, params);
+  const channelSelection = await resolveChannel({
+    cfg,
+    action,
+    args: params,
+  });
+  const channel = channelSelection.channel;
   const accountId = readStringParam(params, "accountId") ?? input.defaultAccountId;
   if (accountId) {
     params.accountId = accountId;
@@ -1110,6 +1144,7 @@ export async function runMessageAction(
       input,
       agentId: resolvedAgentId,
       resolvedTarget,
+      routingDecision: channelSelection.decision,
       abortSignal: input.abortSignal,
     });
   }

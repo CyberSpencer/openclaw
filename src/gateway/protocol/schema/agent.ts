@@ -31,7 +31,40 @@ export const SendParamsSchema = Type.Object(
     accountId: Type.Optional(Type.String()),
     /** Optional session key for mirroring delivered output back into the transcript. */
     sessionKey: Type.Optional(Type.String()),
+    urgency: Type.Optional(
+      Type.Union([
+        Type.Literal("low"),
+        Type.Literal("normal"),
+        Type.Literal("high"),
+        Type.Literal("critical"),
+      ]),
+    ),
     idempotencyKey: NonEmptyString,
+  },
+  { additionalProperties: false },
+);
+
+export const SendLedgerGetParamsSchema = Type.Object(
+  {
+    id: NonEmptyString,
+  },
+  { additionalProperties: false },
+);
+
+export const SendLedgerListParamsSchema = Type.Object(
+  {
+    limit: Type.Optional(Type.Integer({ minimum: 1, maximum: 500 })),
+    state: Type.Optional(
+      Type.Union([
+        Type.Literal("queued"),
+        Type.Literal("sent"),
+        Type.Literal("failed"),
+        Type.Literal("retrying"),
+        Type.Literal("acknowledged"),
+      ]),
+    ),
+    channel: Type.Optional(Type.String()),
+    idempotencyKey: Type.Optional(Type.String()),
   },
   { additionalProperties: false },
 );

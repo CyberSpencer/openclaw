@@ -1,5 +1,6 @@
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import type { GatewayRequestContext } from "./types.js";
+import { resetDeliveryLedgerForTests } from "../../infra/outbound/delivery-ledger.js";
 import { sendHandlers } from "./send.js";
 
 const mocks = vi.hoisted(() => ({
@@ -45,6 +46,11 @@ const makeContext = (): GatewayRequestContext =>
   ({
     dedupe: new Map(),
   }) as unknown as GatewayRequestContext;
+
+afterEach(() => {
+  resetDeliveryLedgerForTests();
+  vi.clearAllMocks();
+});
 
 describe("gateway send mirroring", () => {
   it("does not mirror when delivery returns no results", async () => {
@@ -191,5 +197,61 @@ describe("gateway send mirroring", () => {
         }),
       }),
     );
+  });
+
+  it("exposes delivery ledger entries over gateway methods", async () => {
+    mocks.deliverOutboundPayloads
+      .mockRejectedValueOnce(new Error("temporary timeout"))
+      .mockResolvedValueOnce([{ messageId: "m-ledger", channel: "slack" }]);
+
+    const context = makeContext();
+    const sendRespond = vi.fn();
+    await sendHandlers.send({
+      params: {
+        to: "channel:C1",
+        message: "hello",
+        channel: "slack",
+        idempotencyKey: "idem-ledger",
+        urgency: "high",
+      },
+      respond: sendRespond,
+      context,
+      req: { type: "req", id: "1", method: "send" },
+      client: null,
+      isWebchatConnect: () => false,
+    });
+
+    const listRespond = vi.fn();
+    await sendHandlers["send.ledger.list"]({
+      params: { idempotencyKey: "idem-ledger", limit: 5 },
+      respond: listRespond,
+      context,
+      req: { type: "req", id: "2", method: "send.ledger.list" },
+      client: null,
+      isWebchatConnect: () => false,
+    });
+
+    const listPayload = listRespond.mock.calls[0]?.[1] as {
+      entries?: Array<{ id: string; state: string; events: Array<{ state: string }> }>;
+    };
+    const entry = listPayload?.entries?.[0];
+    expect(entry?.state).toBe("sent");
+    expect(entry?.events.map((event) => event.state)).toContain("retrying");
+
+    const getRespond = vi.fn();
+    await sendHandlers["send.ledger.get"]({
+      params: { id: entry?.id },
+      respond: getRespond,
+      context,
+      req: { type: "req", id: "3", method: "send.ledger.get" },
+      client: null,
+      isWebchatConnect: () => false,
+    });
+
+    const getPayload = getRespond.mock.calls[0]?.[1] as {
+      entry?: { id: string; idempotencyKey?: string };
+    };
+    expect(getPayload.entry?.id).toBe(entry?.id);
+    expect(getPayload.entry?.idempotencyKey).toBe("idem-ledger");
   });
 });

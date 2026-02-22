@@ -88,6 +88,8 @@ const READ_METHODS = new Set([
   "node.list",
   "node.describe",
   "chat.history",
+  "send.ledger.get",
+  "send.ledger.list",
 ]);
 const WRITE_METHODS = new Set([
   "send",

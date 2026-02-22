@@ -22,6 +22,8 @@ export function registerMessageSendCommand(message: Command, helpers: MessageCli
         .option("--card <json>", "Adaptive Card JSON object (when supported by the channel)")
         .option("--reply-to <id>", "Reply-to message id")
         .option("--thread-id <id>", "Thread id (Telegram forum thread)")
+        .option("--urgency <level>", "Urgency hint: low|normal|high|critical", "normal")
+        .option("--idempotency-key <key>", "Idempotency key for safe retries/dedupe")
         .option("--gif-playback", "Treat video media as GIF playback (WhatsApp only).", false)
         .option("--silent", "Send message silently without notification (Telegram only)", false),
     )

@@ -16,6 +16,7 @@ import {
   type OutboundDeliveryResult,
   type OutboundSendDeps,
 } from "./deliver.js";
+import { normalizeMessageUrgency } from "./intent-router.js";
 import { normalizeReplyPayloadsForDelivery } from "./payloads.js";
 import { resolveOutboundTarget } from "./targets.js";
 
@@ -48,6 +49,7 @@ type MessageSendParams = {
     text?: string;
     mediaUrls?: string[];
   };
+  urgency?: string;
   abortSignal?: AbortSignal;
 };
 
@@ -110,7 +112,21 @@ export async function sendMessage(params: MessageSendParams): Promise<MessageSen
   const cfg = params.cfg ?? loadConfig();
   const channel = params.channel?.trim()
     ? normalizeChannelId(params.channel)
-    : (await resolveMessageChannelSelection({ cfg })).channel;
+    : (
+        await resolveMessageChannelSelection({
+          cfg,
+          intent: {
+            action: "send",
+            params: {
+              to: params.to,
+              message: params.content,
+              media: params.mediaUrl,
+              mediaUrls: params.mediaUrls,
+              urgency: normalizeMessageUrgency(params.urgency),
+            },
+          },
+        })
+      ).channel;
   if (!channel) {
     throw new Error(`Unknown channel: ${params.channel}`);
   }
@@ -224,7 +240,19 @@ export async function sendPoll(params: MessagePollParams): Promise<MessagePollRe
   const cfg = params.cfg ?? loadConfig();
   const channel = params.channel?.trim()
     ? normalizeChannelId(params.channel)
-    : (await resolveMessageChannelSelection({ cfg })).channel;
+    : (
+        await resolveMessageChannelSelection({
+          cfg,
+          intent: {
+            action: "poll",
+            params: {
+              to: params.to,
+              pollQuestion: params.question,
+              pollOption: params.options,
+            },
+          },
+        })
+      ).channel;
   if (!channel) {
     throw new Error(`Unknown channel: ${params.channel}`);
   }
