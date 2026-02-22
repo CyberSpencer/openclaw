@@ -5,6 +5,8 @@ import type {
   AgentIdentityResultSchema,
   AgentWaitParamsSchema,
   PollParamsSchema,
+  SendLedgerGetParamsSchema,
+  SendLedgerListParamsSchema,
   WakeParamsSchema,
 } from "./agent.js";
 import type {
@@ -146,6 +148,8 @@ export type AgentEvent = Static<typeof AgentEventSchema>;
 export type AgentIdentityParams = Static<typeof AgentIdentityParamsSchema>;
 export type AgentIdentityResult = Static<typeof AgentIdentityResultSchema>;
 export type PollParams = Static<typeof PollParamsSchema>;
+export type SendLedgerGetParams = Static<typeof SendLedgerGetParamsSchema>;
+export type SendLedgerListParams = Static<typeof SendLedgerListParamsSchema>;
 export type AgentWaitParams = Static<typeof AgentWaitParamsSchema>;
 export type WakeParams = Static<typeof WakeParamsSchema>;
 export type NodePairRequestParams = Static<typeof NodePairRequestParamsSchema>;

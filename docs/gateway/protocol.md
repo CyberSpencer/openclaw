@@ -132,6 +132,11 @@ When a device token is issued, `hello-ok` also includes:
 
 Side-effecting methods require **idempotency keys** (see schema).
 
+Delivery observability methods:
+
+- `send.ledger.list` (read scope): list recent delivery ledger entries (`queued`, `retrying`, `sent`, `failed`, `acknowledged`).
+- `send.ledger.get` (read scope): fetch one ledger entry by `id`.
+
 ## Roles + scopes
 
 ### Roles

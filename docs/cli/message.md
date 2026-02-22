@@ -19,9 +19,9 @@ openclaw message <subcommand> [flags]
 
 Channel selection:
 
-- `--channel` required if more than one channel is configured.
-- If exactly one channel is configured, it becomes the default.
-- Values: `whatsapp|telegram|discord|googlechat|slack|mattermost|signal|imessage|msteams` (Mattermost requires plugin)
+- Explicit `--channel` always wins (backward compatible behavior).
+- If omitted for `send`/`poll`, OpenClaw now uses a deterministic intent router (recipient + payload type + urgency), with **Beeper/Matrix-first** defaults when available.
+- Values: `whatsapp|telegram|discord|googlechat|slack|mattermost|signal|imessage|msteams|matrix` (plugin channels depend on your install)
 
 Target formats (`--target`):
 
@@ -40,6 +40,14 @@ Name lookup:
 - For supported providers (Discord/Slack/etc), channel names like `Help` or `#help` are resolved via the directory cache.
 - On cache miss, OpenClaw will attempt a live directory lookup when the provider supports it.
 
+Intent router precedence (`send`/`poll` when `--channel` is omitted):
+
+1. **Explicit override** (`--channel`) always wins.
+2. **Recipient/provider hint** (for example `telegram:`, `matrix:`, Beeper/Matrix-style ids) is used when resolvable.
+3. **Payload capability match** (poll/media capability checks) narrows/chooses candidates.
+4. **Urgency ordering** applies deterministic priority.
+5. **Fallback default** is deterministic, with Beeper/Matrix-first when available.
+
 ## Common flags
 
 - `--channel <name>`
@@ -57,7 +65,7 @@ Name lookup:
 - `send`
   - Channels: WhatsApp/Telegram/Discord/Google Chat/Slack/Mattermost (plugin)/Signal/iMessage/MS Teams
   - Required: `--target`, plus `--message` or `--media`
-  - Optional: `--media`, `--reply-to`, `--thread-id`, `--gif-playback`
+  - Optional: `--media`, `--reply-to`, `--thread-id`, `--urgency`, `--idempotency-key`, `--gif-playback`
   - Telegram only: `--buttons` (requires `channels.telegram.capabilities.inlineButtons` to allow it)
   - Telegram only: `--thread-id` (forum topic id)
   - Slack only: `--thread-id` (thread timestamp; `--reply-to` uses the same field)

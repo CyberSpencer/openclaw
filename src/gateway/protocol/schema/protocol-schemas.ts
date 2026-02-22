@@ -6,6 +6,8 @@ import {
   AgentParamsSchema,
   AgentWaitParamsSchema,
   PollParamsSchema,
+  SendLedgerGetParamsSchema,
+  SendLedgerListParamsSchema,
   SendParamsSchema,
   WakeParamsSchema,
 } from "./agent.js";
@@ -152,6 +154,8 @@ export const ProtocolSchemas: Record<string, TSchema> = {
   ErrorShape: ErrorShapeSchema,
   AgentEvent: AgentEventSchema,
   SendParams: SendParamsSchema,
+  SendLedgerGetParams: SendLedgerGetParamsSchema,
+  SendLedgerListParams: SendLedgerListParamsSchema,
   PollParams: PollParamsSchema,
   AgentParams: AgentParamsSchema,
   AgentIdentityParams: AgentIdentityParamsSchema,

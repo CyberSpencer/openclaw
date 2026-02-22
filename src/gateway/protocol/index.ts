@@ -151,6 +151,10 @@ import {
   NodeRenameParamsSchema,
   type PollParams,
   PollParamsSchema,
+  type SendLedgerGetParams,
+  SendLedgerGetParamsSchema,
+  type SendLedgerListParams,
+  SendLedgerListParamsSchema,
   PROTOCOL_VERSION,
   type PresenceEntry,
   PresenceEntrySchema,
@@ -236,6 +240,11 @@ export const validateRequestFrame = ajv.compile<RequestFrame>(RequestFrameSchema
 export const validateResponseFrame = ajv.compile<ResponseFrame>(ResponseFrameSchema);
 export const validateEventFrame = ajv.compile<EventFrame>(EventFrameSchema);
 export const validateSendParams = ajv.compile(SendParamsSchema);
+export const validateSendLedgerGetParams =
+  ajv.compile<SendLedgerGetParams>(SendLedgerGetParamsSchema);
+export const validateSendLedgerListParams = ajv.compile<SendLedgerListParams>(
+  SendLedgerListParamsSchema,
+);
 export const validatePollParams = ajv.compile<PollParams>(PollParamsSchema);
 export const validateAgentParams = ajv.compile(AgentParamsSchema);
 export const validateAgentIdentityParams =
@@ -424,6 +433,8 @@ export {
   AgentEventSchema,
   ChatEventSchema,
   SendParamsSchema,
+  SendLedgerGetParamsSchema,
+  SendLedgerListParamsSchema,
   PollParamsSchema,
   AgentParamsSchema,
   AgentIdentityParamsSchema,
@@ -601,6 +612,8 @@ export type {
   ExecApprovalsSnapshot,
   LogsTailParams,
   LogsTailResult,
+  SendLedgerGetParams,
+  SendLedgerListParams,
   PollParams,
   UpdateRunParams,
   ChatInjectParams,

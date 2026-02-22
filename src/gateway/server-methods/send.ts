@@ -6,17 +6,35 @@ import { createOutboundSendDeps } from "../../cli/deps.js";
 import { loadConfig } from "../../config/config.js";
 import { deliverOutboundPayloads } from "../../infra/outbound/deliver.js";
 import {
+  getDeliveryById,
+  getDeliveryByIdempotencyKey,
+  listDeliveries,
+  markDeliveryAcknowledged,
+  markDeliveryFailed,
+  markDeliveryRetrying,
+  markDeliverySent,
+  registerDelivery,
+} from "../../infra/outbound/delivery-ledger.js";
+import {
+  isRetryableDeliveryError,
+  resolveDeliveryRetryPolicy,
+  resolveRetryAfterMs,
+} from "../../infra/outbound/delivery-retry.js";
+import {
   ensureOutboundSessionEntry,
   resolveOutboundSessionRoute,
 } from "../../infra/outbound/outbound-session.js";
 import { normalizeReplyPayloadsForDelivery } from "../../infra/outbound/payloads.js";
 import { resolveOutboundTarget } from "../../infra/outbound/targets.js";
+import { retryAsync } from "../../infra/retry.js";
 import { normalizePollInput } from "../../polls.js";
 import {
   ErrorCodes,
   errorShape,
   formatValidationErrors,
   validatePollParams,
+  validateSendLedgerGetParams,
+  validateSendLedgerListParams,
   validateSendParams,
 } from "../protocol/index.js";
 import { formatForLog } from "../ws-log.js";
@@ -65,12 +83,17 @@ export const sendHandlers: GatewayRequestHandlers = {
       channel?: string;
       accountId?: string;
       sessionKey?: string;
+      urgency?: string;
       idempotencyKey: string;
     };
     const idem = request.idempotencyKey;
     const dedupeKey = `send:${idem}`;
     const cached = context.dedupe.get(dedupeKey);
     if (cached) {
+      const existing = getDeliveryByIdempotencyKey(idem);
+      if (existing) {
+        markDeliveryAcknowledged({ id: existing.id, note: "gateway dedupe cache hit" });
+      }
       respond(cached.ok, cached.payload, cached.error, {
         cached: true,
       });
@@ -80,6 +103,10 @@ export const sendHandlers: GatewayRequestHandlers = {
     const inflight = inflightMap.get(dedupeKey);
     if (inflight) {
       const result = await inflight;
+      const existing = getDeliveryByIdempotencyKey(idem);
+      if (existing) {
+        markDeliveryAcknowledged({ id: existing.id, note: "gateway inflight dedupe hit" });
+      }
       const meta = result.meta ? { ...result.meta, cached: true } : { cached: true };
       respond(result.ok, result.payload, result.error, meta);
       return;
@@ -104,6 +131,21 @@ export const sendHandlers: GatewayRequestHandlers = {
         : undefined;
     const outboundChannel = channel;
     const plugin = getChannelPlugin(channel);
+    const urgencyRaw =
+      typeof request.urgency === "string" ? request.urgency.trim().toLowerCase() : "normal";
+    const urgency =
+      urgencyRaw === "low" ||
+      urgencyRaw === "normal" ||
+      urgencyRaw === "high" ||
+      urgencyRaw === "critical"
+        ? urgencyRaw
+        : "normal";
+    const payloadType =
+      (request.mediaUrl || (mediaUrls?.length ?? 0) > 0) && message
+        ? "mixed"
+        : request.mediaUrl || (mediaUrls?.length ?? 0) > 0
+          ? "media"
+          : "text";
     if (!plugin) {
       respond(
         false,
@@ -130,6 +172,36 @@ export const sendHandlers: GatewayRequestHandlers = {
             meta: { channel },
           };
         }
+
+        const existing = getDeliveryByIdempotencyKey(idem);
+        if (existing && (existing.state === "sent" || existing.state === "acknowledged")) {
+          markDeliveryAcknowledged({ id: existing.id, note: "gateway idempotency replay" });
+          const cachedPayload = existing.result?.gatewayPayload;
+          if (cachedPayload && typeof cachedPayload.messageId === "string") {
+            context.dedupe.set(dedupeKey, {
+              ts: Date.now(),
+              ok: true,
+              payload: cachedPayload,
+            });
+            return {
+              ok: true,
+              payload: cachedPayload,
+              meta: { channel, cached: true },
+            };
+          }
+        }
+
+        const ledgerEntry = registerDelivery({
+          idempotencyKey: idem,
+          action: "send",
+          channel,
+          to: resolved.to,
+          payloadType,
+          urgency,
+          explicitChannel: Boolean(channelInput?.trim()),
+          routeReason: channelInput?.trim() ? "explicit-channel" : "gateway-default",
+        });
+
         const outboundDeps = context.deps ? createOutboundSendDeps(context.deps) : undefined;
         const mirrorPayloads = normalizeReplyPayloadsForDelivery([
           { text: message, mediaUrl: request.mediaUrl, mediaUrls },
@@ -146,7 +218,6 @@ export const sendHandlers: GatewayRequestHandlers = {
             ? request.sessionKey.trim().toLowerCase()
             : undefined;
         const derivedAgentId = resolveSessionAgentId({ config: cfg });
-        // If callers omit sessionKey, derive a target session key from the outbound route.
         const derivedRoute = !providedSessionKey
           ? await resolveOutboundSessionRoute({
               cfg,
@@ -165,52 +236,80 @@ export const sendHandlers: GatewayRequestHandlers = {
             route: derivedRoute,
           });
         }
-        const results = await deliverOutboundPayloads({
-          cfg,
-          channel: outboundChannel,
-          to: resolved.to,
-          accountId,
-          payloads: [{ text: message, mediaUrl: request.mediaUrl, mediaUrls }],
-          gifPlayback: request.gifPlayback,
-          deps: outboundDeps,
-          mirror: providedSessionKey
-            ? {
-                sessionKey: providedSessionKey,
-                agentId: resolveSessionAgentId({ sessionKey: providedSessionKey, config: cfg }),
-                text: mirrorText || message,
-                mediaUrls: mirrorMediaUrls.length > 0 ? mirrorMediaUrls : undefined,
-              }
-            : derivedRoute
+
+        const deliverOnce = async () => {
+          const results = await deliverOutboundPayloads({
+            cfg,
+            channel: outboundChannel,
+            to: resolved.to,
+            accountId,
+            payloads: [{ text: message, mediaUrl: request.mediaUrl, mediaUrls }],
+            gifPlayback: request.gifPlayback,
+            deps: outboundDeps,
+            mirror: providedSessionKey
               ? {
-                  sessionKey: derivedRoute.sessionKey,
-                  agentId: derivedAgentId,
+                  sessionKey: providedSessionKey,
+                  agentId: resolveSessionAgentId({ sessionKey: providedSessionKey, config: cfg }),
                   text: mirrorText || message,
                   mediaUrls: mirrorMediaUrls.length > 0 ? mirrorMediaUrls : undefined,
                 }
-              : undefined,
+              : derivedRoute
+                ? {
+                    sessionKey: derivedRoute.sessionKey,
+                    agentId: derivedAgentId,
+                    text: mirrorText || message,
+                    mediaUrls: mirrorMediaUrls.length > 0 ? mirrorMediaUrls : undefined,
+                  }
+                : undefined,
+          });
+
+          const result = results.at(-1);
+          if (!result) {
+            throw new Error("No delivery result");
+          }
+          const payload: Record<string, unknown> = {
+            runId: idem,
+            messageId: result.messageId,
+            channel,
+          };
+          if ("chatId" in result) {
+            payload.chatId = result.chatId;
+          }
+          if ("channelId" in result) {
+            payload.channelId = result.channelId;
+          }
+          if ("toJid" in result) {
+            payload.toJid = result.toJid;
+          }
+          if ("conversationId" in result) {
+            payload.conversationId = result.conversationId;
+          }
+          return payload;
+        };
+
+        const retryPolicy = resolveDeliveryRetryPolicy(cfg);
+        const payload =
+          retryPolicy.enabled && retryPolicy.attempts > 1
+            ? await retryAsync(deliverOnce, {
+                ...retryPolicy,
+                label: "gateway-send",
+                shouldRetry: (err) => isRetryableDeliveryError(err),
+                retryAfterMs: (err) => resolveRetryAfterMs(err),
+                onRetry: (info) => {
+                  markDeliveryRetrying({
+                    id: ledgerEntry.id,
+                    error: info.err instanceof Error ? info.err.message : String(info.err),
+                    delayMs: info.delayMs,
+                  });
+                },
+              })
+            : await deliverOnce();
+
+        markDeliverySent({
+          id: ledgerEntry.id,
+          result: { gatewayPayload: payload },
         });
 
-        const result = results.at(-1);
-        if (!result) {
-          throw new Error("No delivery result");
-        }
-        const payload: Record<string, unknown> = {
-          runId: idem,
-          messageId: result.messageId,
-          channel,
-        };
-        if ("chatId" in result) {
-          payload.chatId = result.chatId;
-        }
-        if ("channelId" in result) {
-          payload.channelId = result.channelId;
-        }
-        if ("toJid" in result) {
-          payload.toJid = result.toJid;
-        }
-        if ("conversationId" in result) {
-          payload.conversationId = result.conversationId;
-        }
         context.dedupe.set(dedupeKey, {
           ts: Date.now(),
           ok: true,
@@ -222,6 +321,13 @@ export const sendHandlers: GatewayRequestHandlers = {
           meta: { channel },
         };
       } catch (err) {
+        const existing = getDeliveryByIdempotencyKey(idem);
+        if (existing && (existing.state === "queued" || existing.state === "retrying")) {
+          markDeliveryFailed({
+            id: existing.id,
+            error: err instanceof Error ? err.message : String(err),
+          });
+        }
         const error = errorShape(ErrorCodes.UNAVAILABLE, String(err));
         context.dedupe.set(dedupeKey, {
           ts: Date.now(),
@@ -360,5 +466,51 @@ export const sendHandlers: GatewayRequestHandlers = {
         error: formatForLog(err),
       });
     }
+  },
+  "send.ledger.get": ({ params, respond }) => {
+    if (!validateSendLedgerGetParams(params)) {
+      respond(
+        false,
+        undefined,
+        errorShape(
+          ErrorCodes.INVALID_REQUEST,
+          `invalid send.ledger.get params: ${formatValidationErrors(validateSendLedgerGetParams.errors)}`,
+        ),
+      );
+      return;
+    }
+    const id = String((params as { id: string }).id ?? "").trim();
+    const entry = getDeliveryById(id);
+    if (!entry) {
+      respond(false, undefined, errorShape(ErrorCodes.INVALID_REQUEST, `unknown ledger id: ${id}`));
+      return;
+    }
+    respond(true, { entry }, undefined);
+  },
+  "send.ledger.list": ({ params, respond }) => {
+    if (!validateSendLedgerListParams(params)) {
+      respond(
+        false,
+        undefined,
+        errorShape(
+          ErrorCodes.INVALID_REQUEST,
+          `invalid send.ledger.list params: ${formatValidationErrors(validateSendLedgerListParams.errors)}`,
+        ),
+      );
+      return;
+    }
+    const p = params as {
+      limit?: number;
+      state?: "queued" | "sent" | "failed" | "retrying" | "acknowledged";
+      channel?: string;
+      idempotencyKey?: string;
+    };
+    const entries = listDeliveries({
+      limit: p.limit,
+      state: p.state,
+      channel: p.channel,
+      idempotencyKey: p.idempotencyKey,
+    });
+    respond(true, { entries, count: entries.length }, undefined);
   },
 };

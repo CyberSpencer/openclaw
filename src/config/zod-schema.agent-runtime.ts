@@ -582,6 +582,27 @@ export const ToolsSchema = z
           })
           .strict()
           .optional(),
+        intentRouter: z
+          .object({
+            enabled: z.boolean().optional(),
+          })
+          .strict()
+          .optional(),
+        delivery: z
+          .object({
+            retry: z
+              .object({
+                enabled: z.boolean().optional(),
+                attempts: z.number().int().positive().optional(),
+                minDelayMs: z.number().int().nonnegative().optional(),
+                maxDelayMs: z.number().int().nonnegative().optional(),
+                jitter: z.number().min(0).max(1).optional(),
+              })
+              .strict()
+              .optional(),
+          })
+          .strict()
+          .optional(),
       })
       .strict()
       .optional(),

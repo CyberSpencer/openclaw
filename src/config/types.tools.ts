@@ -500,6 +500,24 @@ export type ToolsConfig = {
       /** Enable broadcast action (default: true). */
       enabled?: boolean;
     };
+    intentRouter?: {
+      /** Enable deterministic send/poll routing when channel is omitted (default: true). */
+      enabled?: boolean;
+    };
+    delivery?: {
+      retry?: {
+        /** Enable outbound send retries (default: true). */
+        enabled?: boolean;
+        /** Max attempts including the first attempt (default: 3). */
+        attempts?: number;
+        /** Initial retry delay in milliseconds (default: 300). */
+        minDelayMs?: number;
+        /** Max retry delay in milliseconds (default: 5000). */
+        maxDelayMs?: number;
+        /** Jitter factor 0-1 (default: 0.2). */
+        jitter?: number;
+      };
+    };
   };
   agentToAgent?: {
     /** Enable agent-to-agent messaging tools. Default: false. */

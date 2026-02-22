@@ -80,6 +80,12 @@ function buildSendSchema(options: { includeButtons: boolean; includeCards: boole
       Type.String({ description: "Quote text for Telegram reply_parameters" }),
     ),
     bestEffort: Type.Optional(Type.Boolean()),
+    urgency: Type.Optional(
+      Type.String({ description: "Delivery urgency hint: low, normal, high, critical." }),
+    ),
+    idempotencyKey: Type.Optional(
+      Type.String({ description: "Idempotency key to safely dedupe retries/replays." }),
+    ),
     gifPlayback: Type.Optional(Type.Boolean()),
     buttons: Type.Optional(
       Type.Array(
