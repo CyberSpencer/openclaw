@@ -109,6 +109,8 @@ import {
   type ExecApprovalsSnapshot,
   type ExecApprovalRequestParams,
   ExecApprovalRequestParamsSchema,
+  type ExecutiveBriefGetParams,
+  ExecutiveBriefGetParamsSchema,
   type ExecApprovalResolveParams,
   ExecApprovalResolveParamsSchema,
   ErrorCodes,
@@ -242,6 +244,9 @@ export const validateAgentIdentityParams =
   ajv.compile<AgentIdentityParams>(AgentIdentityParamsSchema);
 export const validateAgentWaitParams = ajv.compile<AgentWaitParams>(AgentWaitParamsSchema);
 export const validateWakeParams = ajv.compile<WakeParams>(WakeParamsSchema);
+export const validateExecutiveBriefGetParams = ajv.compile<ExecutiveBriefGetParams>(
+  ExecutiveBriefGetParamsSchema,
+);
 export const validateAgentsListParams = ajv.compile<AgentsListParams>(AgentsListParamsSchema);
 export const validateAgentsCreateParams = ajv.compile<AgentsCreateParams>(AgentsCreateParamsSchema);
 export const validateAgentsUpdateParams = ajv.compile<AgentsUpdateParams>(AgentsUpdateParamsSchema);
@@ -429,6 +434,7 @@ export {
   AgentIdentityParamsSchema,
   AgentIdentityResultSchema,
   WakeParamsSchema,
+  ExecutiveBriefGetParamsSchema,
   NodePairRequestParamsSchema,
   NodePairListParamsSchema,
   NodePairApproveParamsSchema,
@@ -524,6 +530,7 @@ export type {
   TickEvent,
   ShutdownEvent,
   WakeParams,
+  ExecutiveBriefGetParams,
   NodePairRequestParams,
   NodePairListParams,
   NodePairApproveParams,

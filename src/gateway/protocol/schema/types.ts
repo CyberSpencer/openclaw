@@ -77,6 +77,7 @@ import type {
   ExecApprovalRequestParamsSchema,
   ExecApprovalResolveParamsSchema,
 } from "./exec-approvals.js";
+import type { ExecutiveBriefGetParamsSchema } from "./executive-brief.js";
 import type {
   ConnectParamsSchema,
   ErrorShapeSchema,
@@ -148,6 +149,7 @@ export type AgentIdentityResult = Static<typeof AgentIdentityResultSchema>;
 export type PollParams = Static<typeof PollParamsSchema>;
 export type AgentWaitParams = Static<typeof AgentWaitParamsSchema>;
 export type WakeParams = Static<typeof WakeParamsSchema>;
+export type ExecutiveBriefGetParams = Static<typeof ExecutiveBriefGetParamsSchema>;
 export type NodePairRequestParams = Static<typeof NodePairRequestParamsSchema>;
 export type NodePairListParams = Static<typeof NodePairListParamsSchema>;
 export type NodePairApproveParams = Static<typeof NodePairApproveParamsSchema>;
