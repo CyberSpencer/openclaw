@@ -42,6 +42,7 @@ const BASE_METHODS = [
   "agents.list",
   "orchestrator.get",
   "orchestrator.set",
+  "ops.snapshot",
   "orchestrator.reset",
   "skills.status",
   "skills.bins",

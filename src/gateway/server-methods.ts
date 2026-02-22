@@ -14,6 +14,7 @@ import { healthHandlers } from "./server-methods/health.js";
 import { logsHandlers } from "./server-methods/logs.js";
 import { modelsHandlers } from "./server-methods/models.js";
 import { nodeHandlers } from "./server-methods/nodes.js";
+import { opsHandlers } from "./server-methods/ops.js";
 import { orchestratorHandlers } from "./server-methods/orchestrator.js";
 import { routerStatusHandlers } from "./server-methods/router-status.js";
 import { sendHandlers } from "./server-methods/send.js";
@@ -73,6 +74,7 @@ const READ_METHODS = new Set([
   "sessions.subagents",
   "sessions.preview",
   "orchestrator.get",
+  "ops.snapshot",
   "router.status",
   "spark.status",
   "spark.voice.voices",
@@ -209,6 +211,7 @@ export const coreGatewayHandlers: GatewayRequestHandlers = {
   ...routerStatusHandlers,
   ...systemHandlers,
   ...updateHandlers,
+  ...opsHandlers,
   ...nodeHandlers,
   ...sendHandlers,
   ...usageHandlers,

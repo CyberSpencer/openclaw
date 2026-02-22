@@ -27,6 +27,7 @@ import type {
   SkillStatusReport,
   StatusSummary,
   NostrProfile,
+  OpsCommandCenterSnapshot,
 } from "./types.ts";
 import type { NostrProfileFormState } from "./views/channels.nostr-profile-form.ts";
 import {
@@ -751,6 +752,9 @@ export class OpenClawApp extends LitElement {
   @state() nvidiaRouterBusy = false;
   @state() sparkStatus: SparkStatusResult | null = null;
   @state() sparkBusy = false;
+  @state() opsSnapshot: OpsCommandCenterSnapshot | null = null;
+  @state() opsSnapshotLoading = false;
+  @state() opsSnapshotError: string | null = null;
   @state() sparkMicRecording = false;
   private sparkMicMediaRecorder: MediaRecorder | null = null;
   private sparkMicStream: MediaStream | null = null;
@@ -3085,6 +3089,23 @@ export class OpenClawApp extends LitElement {
     }
   }
 
+  async refreshOpsCommandCenter() {
+    if (!this.client || !this.connected || this.opsSnapshotLoading) {
+      return;
+    }
+    this.opsSnapshotLoading = true;
+    this.opsSnapshotError = null;
+    try {
+      const snapshot = await this.client.request<OpsCommandCenterSnapshot>("ops.snapshot", {});
+      this.opsSnapshot = snapshot;
+    } catch (err) {
+      this.opsSnapshot = null;
+      this.opsSnapshotError = String(err);
+    } finally {
+      this.opsSnapshotLoading = false;
+    }
+  }
+
   // ---------------------------------------------------------------------------
   // Spark voice mic (standalone, NOT PersonaPlex)
   // ---------------------------------------------------------------------------
@@ -4042,6 +4063,7 @@ export class OpenClawApp extends LitElement {
       this.refreshMemoryToggleState(),
       this.refreshNvidiaRouterStatus(),
       this.refreshSparkStatus(),
+      this.refreshOpsCommandCenter(),
     ]);
   }
 
