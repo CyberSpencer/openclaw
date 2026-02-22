@@ -546,4 +546,29 @@ describe("spark status polling resilience", () => {
     expect(app.voiceState.conversationActive).toBe(false);
     expect(app.voiceState.error).toBe("Spark voice became unavailable. Conversation stopped.");
   });
+
+  it("propagates spark voice degrade reason into stop messaging", async () => {
+    const app = mountApp("/chat");
+    await app.updateComplete;
+
+    setSparkAvailable(app);
+    await app.updateComplete;
+    app.voiceState.mode = "spark";
+    app.voiceState.conversationActive = true;
+    app.voiceState.sparkVoiceAvailable = true;
+
+    app.client = {
+      request: vi.fn(async () => ({
+        enabled: true,
+        voiceAvailable: false,
+        voiceDegradedReason: "voice_tts: timeout",
+      })),
+    } as unknown as typeof app.client;
+
+    await app.refreshSparkStatus();
+
+    expect(app.voiceState.conversationActive).toBe(false);
+    expect(app.voiceState.error).toContain("voice_tts: timeout");
+    expect(app.voiceState.sparkUnavailableReason).toBe("voice_tts: timeout");
+  });
 });

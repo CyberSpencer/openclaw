@@ -193,6 +193,7 @@ type SparkStatusResult = {
   host?: string | null;
   checkedAt?: number;
   voiceAvailable?: boolean;
+  voiceDegradedReason?: string | null;
   overall?: "healthy" | "degraded" | "down" | "unknown";
   counts?: { healthy: number; degraded: number; down: number; total: number };
   services?: Record<
@@ -862,6 +863,7 @@ export class OpenClawApp extends LitElement {
         this.sparkStatusConsecutivePollFailures = 0;
         this.sparkStatus = null;
         this.voiceState.sparkVoiceAvailable = false;
+        this.voiceState.sparkUnavailableReason = null;
       }
     }
     if (changed.has("sessionKey")) {
@@ -918,6 +920,20 @@ export class OpenClawApp extends LitElement {
 
   private isSparkVoiceAvailable(): boolean {
     return Boolean(this.connected && this.sparkStatus?.enabled && this.sparkStatus?.voiceAvailable);
+  }
+
+  private resolveSparkVoiceUnavailableReason(): string | null {
+    const reason = this.sparkStatus?.voiceDegradedReason;
+    if (typeof reason !== "string") {
+      return null;
+    }
+    const trimmed = reason.trim();
+    return trimmed || null;
+  }
+
+  private sparkVoiceUnavailableMessage(prefix: string): string {
+    const reason = this.resolveSparkVoiceUnavailableReason();
+    return reason ? `${prefix} (${reason})` : prefix;
   }
 
   private handleSubagentMonitorUpdated(changed: Map<PropertyKey, unknown>) {
@@ -2720,6 +2736,7 @@ export class OpenClawApp extends LitElement {
     this.voiceState.connected = this.connected;
     await loadVoiceStatus(this.voiceState);
     this.voiceState.sparkVoiceAvailable = this.isSparkVoiceAvailable();
+    this.voiceState.sparkUnavailableReason = this.resolveSparkVoiceUnavailableReason();
     this.requestUpdate();
   }
 
@@ -2766,6 +2783,7 @@ export class OpenClawApp extends LitElement {
       this.voiceState.client = this.client;
       this.voiceState.connected = this.connected;
       this.voiceState.sparkVoiceAvailable = this.isSparkVoiceAvailable();
+      this.voiceState.sparkUnavailableReason = this.resolveSparkVoiceUnavailableReason();
       this.voiceState.ttsVoice = this.settings.ttsVoice || null;
       this.voiceState.ttsInstruct = this.settings.ttsInstruct || null;
       this.voiceState.ttsLanguage = this.settings.ttsLanguage || null;
@@ -2791,12 +2809,15 @@ export class OpenClawApp extends LitElement {
    */
   handleVoiceStartConversation() {
     if (this.voiceState.mode === "spark" && !this.isSparkVoiceAvailable()) {
-      this.voiceState.error = "Spark voice unavailable. Conversation start is blocked.";
+      this.voiceState.error = this.sparkVoiceUnavailableMessage(
+        "Spark voice unavailable. Conversation start is blocked.",
+      );
       this.requestUpdate();
       return;
     }
     this.voiceState.sessionKey = this.sessionKey;
     this.voiceState.sparkVoiceAvailable = this.isSparkVoiceAvailable();
+    this.voiceState.sparkUnavailableReason = this.resolveSparkVoiceUnavailableReason();
     this.voiceState.ttsVoice = this.settings.ttsVoice || null;
     this.voiceState.ttsInstruct = this.settings.ttsInstruct || null;
     this.voiceState.ttsLanguage = this.settings.ttsLanguage || null;
@@ -2832,6 +2853,7 @@ export class OpenClawApp extends LitElement {
     this.voiceState.lastModel = null;
     this.voiceState.lastThinkingLevel = null;
     this.voiceState.routeModelWarning = null;
+    this.voiceState.sparkUnavailableReason = this.resolveSparkVoiceUnavailableReason();
     this.requestUpdate();
   }
 
@@ -3071,6 +3093,7 @@ export class OpenClawApp extends LitElement {
     const available = this.isSparkVoiceAvailable();
     const wasAvailable = this.voiceState.sparkVoiceAvailable;
     this.voiceState.sparkVoiceAvailable = available;
+    this.voiceState.sparkUnavailableReason = this.resolveSparkVoiceUnavailableReason();
     if (
       this.voiceState.mode === "spark" &&
       wasAvailable &&
@@ -3079,7 +3102,7 @@ export class OpenClawApp extends LitElement {
     ) {
       stopConversation(this.voiceState);
       this.voiceState.error = pollSucceeded
-        ? "Spark voice became unavailable. Conversation stopped."
+        ? this.sparkVoiceUnavailableMessage("Spark voice became unavailable. Conversation stopped.")
         : "Spark status polling failed repeatedly. Conversation stopped.";
       this.requestUpdate();
     }
@@ -3091,7 +3114,9 @@ export class OpenClawApp extends LitElement {
 
   async handleSparkMicClick() {
     if (!this.isSparkVoiceAvailable()) {
-      this.lastError = "Spark voice unavailable. Mic is disabled until DGX voice recovers.";
+      this.lastError = this.sparkVoiceUnavailableMessage(
+        "Spark voice unavailable. Mic is disabled until DGX voice recovers.",
+      );
       return;
     }
     if (this.sparkMicRecording) {
@@ -3369,11 +3394,11 @@ export class OpenClawApp extends LitElement {
       throw new Error("gateway disconnected");
     }
 
-    const requestPromise = this.client.request("spark.voice.stt", {
+    const requestPromise = this.client.request<Record<string, unknown>>("spark.voice.stt", {
       audio_base64: params.audioBase64,
       format: params.format,
       sample_rate: params.sampleRate,
-    }) as Promise<Record<string, unknown>>;
+    });
     requestPromise.catch(() => undefined);
 
     let timeoutHandle: ReturnType<typeof setTimeout> | null = null;
@@ -3491,7 +3516,9 @@ export class OpenClawApp extends LitElement {
 
   private async startSparkMicRecording() {
     if (!this.isSparkVoiceAvailable()) {
-      this.lastError = "Spark voice unavailable. Recording blocked.";
+      this.lastError = this.sparkVoiceUnavailableMessage(
+        "Spark voice unavailable. Recording blocked.",
+      );
       this.sparkMicRecording = false;
       this.requestUpdate();
       return;

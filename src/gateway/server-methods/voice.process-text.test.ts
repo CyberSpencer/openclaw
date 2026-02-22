@@ -201,4 +201,133 @@ describe("voice.processText gateway handler", () => {
       expect.objectContaining({ model: "openai-codex/gpt-5.3-codex", thinkingLevel: "medium" }),
     );
   });
+
+  it("enforces the voice action intent allowlist when enabled", async () => {
+    mocks.processTextToVoice.mockImplementationOnce(async (input, _config, llmInvoke) => {
+      const response = await llmInvoke(String(input));
+      return {
+        success: true,
+        sessionId: "s-allow",
+        response,
+        timings: { totalMs: 7 },
+      };
+    });
+
+    const respond = vi.fn<GatewayResponder>();
+    await voiceHandlers["voice.processText"]?.(
+      makeInvocation(respond, {
+        text: "tell me a joke",
+        voiceActionMode: true,
+      }),
+    );
+
+    expect(mocks.dispatchInboundMessage).not.toHaveBeenCalled();
+    expect(respond).toHaveBeenCalledWith(
+      true,
+      expect.objectContaining({
+        response: expect.stringContaining("Voice Action Mode accepts"),
+        voiceAction: expect.objectContaining({
+          intent: "unknown",
+          blockedReason: "intent_not_allowed",
+        }),
+      }),
+    );
+  });
+
+  it("requires explicit confirmation before external-send intents run", async () => {
+    let capturedBody = "";
+    mocks.dispatchInboundMessage.mockImplementation(async (arg: unknown) => {
+      const typed = arg as { ctx?: { Body?: string } };
+      capturedBody = typed.ctx?.Body ?? "";
+    });
+    mocks.processTextToVoice.mockImplementation(async (input, _config, llmInvoke) => {
+      const response = await llmInvoke(String(input));
+      return {
+        success: true,
+        sessionId: "s-confirm",
+        response,
+        timings: { totalMs: 9 },
+      };
+    });
+
+    const respond = vi.fn<GatewayResponder>();
+    await voiceHandlers["voice.processText"]?.(
+      makeInvocation(respond, {
+        text: "send this update to Alex",
+        sessionKey: "agent:main:main",
+        voiceActionMode: true,
+      }),
+    );
+
+    expect(mocks.dispatchInboundMessage).not.toHaveBeenCalled();
+    expect(respond).toHaveBeenLastCalledWith(
+      true,
+      expect.objectContaining({
+        voiceAction: expect.objectContaining({
+          intent: "external_send",
+          confirmationRequired: true,
+          confirmationState: "pending",
+        }),
+      }),
+    );
+
+    await voiceHandlers["voice.processText"]?.(
+      makeInvocation(respond, {
+        text: "confirm send",
+        sessionKey: "agent:main:main",
+        voiceActionMode: true,
+      }),
+    );
+
+    expect(mocks.dispatchInboundMessage).toHaveBeenCalledTimes(1);
+    expect(capturedBody).toBe("send this update to Alex");
+    expect(respond).toHaveBeenLastCalledWith(
+      true,
+      expect.objectContaining({
+        voiceAction: expect.objectContaining({
+          intent: "external_send",
+          confirmationState: "confirmed",
+        }),
+      }),
+    );
+  });
+
+  it("returns structured stage timings payload", async () => {
+    mocks.processTextToVoice.mockResolvedValueOnce({
+      success: true,
+      sessionId: "s-timings",
+      response: "ok",
+      timings: {
+        sttMs: 11,
+        routingMs: 4,
+        llmMs: 13,
+        ttsMs: 17,
+        totalMs: 51,
+      },
+    });
+
+    const respond = vi.fn<GatewayResponder>();
+    await voiceHandlers["voice.processText"]?.(makeInvocation(respond, { text: "status" }));
+
+    expect(respond).toHaveBeenCalledWith(
+      true,
+      expect.objectContaining({
+        timings: expect.objectContaining({
+          totalMs: 51,
+          sttMs: 11,
+          routingMs: 4,
+          llmMs: 13,
+          ttsMs: 17,
+          transcribeMs: 11,
+          routeMs: 4,
+          stages: expect.objectContaining({
+            transcribeMs: 11,
+            routeMs: 4,
+            llmMs: 13,
+            ttsMs: 17,
+          }),
+        }),
+      }),
+    );
+  });
 });

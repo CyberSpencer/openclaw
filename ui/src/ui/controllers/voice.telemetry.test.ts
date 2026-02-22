@@ -20,10 +20,18 @@ describe("withTurnTelemetry", () => {
     expect(merged).toMatchObject({
       micStartMs: 45,
       firstSpeechMs: 310,
+      captureMs: 45,
       sttMs: 120,
+      transcribeMs: 120,
       llmMs: 240,
       ttsMs: 180,
       totalMs: 650,
+      stages: expect.objectContaining({
+        captureMs: 45,
+        transcribeMs: 120,
+        llmMs: 240,
+        ttsMs: 180,
+      }),
     });
   });
 
@@ -37,6 +45,12 @@ describe("withTurnTelemetry", () => {
     expect(merged).toEqual({
       micStartMs: 30,
       firstSpeechMs: 200,
+      captureMs: 30,
+      transcribeMs: undefined,
+      routeMs: undefined,
+      stages: {
+        captureMs: 30,
+      },
       totalMs: 500,
     });
   });

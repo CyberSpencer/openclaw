@@ -89,13 +89,21 @@ function renderTimings(timings: VoiceTimings | null) {
     return nothing;
   }
 
+  const captureMs = timings.captureMs ?? timings.stages?.captureMs ?? timings.micStartMs;
+  const transcribeMs = timings.transcribeMs ?? timings.stages?.transcribeMs ?? timings.sttMs;
+  const routeMs = timings.routeMs ?? timings.stages?.routeMs ?? timings.routingMs;
+  const llmMs = timings.llmMs ?? timings.stages?.llmMs;
+  const ttsMs = timings.ttsMs ?? timings.stages?.ttsMs;
+  const playbackMs = timings.playbackMs ?? timings.stages?.playbackMs;
+
   const items = [
-    { label: "Mic Start", value: timings.micStartMs },
+    { label: "Capture", value: captureMs },
     { label: "First Speech", value: timings.firstSpeechMs },
-    { label: "STT", value: timings.sttMs },
-    { label: "Route", value: timings.routingMs },
-    { label: "LLM", value: timings.llmMs },
-    { label: "TTS", value: timings.ttsMs },
+    { label: "Transcribe", value: transcribeMs },
+    { label: "Route", value: routeMs },
+    { label: "LLM", value: llmMs },
+    { label: "TTS", value: ttsMs },
+    { label: "Playback", value: playbackMs },
     { label: "Total", value: timings.totalMs },
   ].filter((item) => item.value != null);
 
@@ -385,6 +393,11 @@ export function renderVoiceBar(props: VoiceBarProps) {
           ? html`
               <div class="voice-bar__disabled">
                 Spark voice unavailable. Mic is disabled until DGX voice recovers.
+                ${
+                  state.sparkUnavailableReason
+                    ? html`<div class="voice-bar__meta-warning">Reason: ${state.sparkUnavailableReason}</div>`
+                    : nothing
+                }
               </div>
             `
           : nothing

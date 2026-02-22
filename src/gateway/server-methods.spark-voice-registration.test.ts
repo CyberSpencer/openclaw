@@ -76,6 +76,9 @@ describe("gateway spark.voice method registration and auth", () => {
       vi.fn(async () => ({
         ok: true,
         status: 200,
+        headers: {
+          get: () => null,
+        },
         json: async () => ({ text: "ok", language_detected: "English" }),
       })),
     );

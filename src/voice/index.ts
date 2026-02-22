@@ -46,6 +46,20 @@ export {
   type ResolvedRouterConfig,
 } from "./router.js";
 
+// Voice Action Mode (intent allowlist + confirmation helpers)
+export {
+  resolveVoiceActionPolicy,
+  classifyVoiceActionIntent,
+  isVoiceActionIntentAllowed,
+  formatAllowedVoiceActionIntents,
+  isVoiceActionConfirmText,
+  isVoiceActionCancelText,
+  scaffoldVoiceIntentPrompt,
+  type VoiceActionIntent,
+  type VoiceActionAllowedIntent,
+  type VoiceActionPolicy,
+} from "./action-mode.js";
+
 // PersonaPlex S2S (experimental, legacy on macOS, retained for future reuse)
 export {
   resolvePersonaPlexConfig,
