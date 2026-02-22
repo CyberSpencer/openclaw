@@ -456,6 +456,9 @@ export function renderApp(state: AppViewState) {
                 systemStatusError: state.lastError,
                 routerStatus,
                 sparkStatus,
+                opsSnapshot: state.opsSnapshot,
+                opsSnapshotLoading: state.opsSnapshotLoading,
+                opsSnapshotError: state.opsSnapshotError,
                 onSettingsChange: (next) => state.applySettings(next),
                 onPasswordChange: (next) => (state.password = next),
                 onSessionKeyChange: (next) => {
@@ -471,6 +474,7 @@ export function renderApp(state: AppViewState) {
                 },
                 onConnect: () => state.connect(),
                 onRefresh: () => state.loadOverview(),
+                onOpenTab: (tab) => state.setTab(tab),
                 onRouterSetEnabled: (enabled) => void state.handleNvidiaRouterToggle(enabled),
               })
             : nothing

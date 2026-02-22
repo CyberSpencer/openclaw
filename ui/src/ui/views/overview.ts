@@ -1,6 +1,8 @@
 import { html, nothing } from "lit";
 import type { GatewayHelloOk } from "../gateway.ts";
+import type { Tab } from "../navigation.ts";
 import type { UiSettings } from "../storage.ts";
+import type { OpsCommandCenterSnapshot, OpsCommandCenterStatus } from "../types.ts";
 import { formatAgo, formatDurationHuman, formatRelativeTimestamp } from "../format.ts";
 import { formatNextRun } from "../presenter.ts";
 
@@ -24,6 +26,33 @@ function readControlUiBuildMeta(): ControlUiBuildMeta | null {
   return value as ControlUiBuildMeta;
 }
 
+function statusLabel(status: OpsCommandCenterStatus | null | undefined): string {
+  if (status === "healthy") {
+    return "Healthy";
+  }
+  if (status === "degraded") {
+    return "Degraded";
+  }
+  if (status === "down") {
+    return "Down";
+  }
+  return "Unknown";
+}
+
+function renderOpsStatusPill(label: string, status: OpsCommandCenterStatus | null | undefined) {
+  const normalized: OpsCommandCenterStatus =
+    status === "healthy" || status === "degraded" || status === "down" || status === "unknown"
+      ? status
+      : "unknown";
+  return html`
+    <div class="pill ${normalized === "down" ? "danger" : ""}">
+      <span class="statusDot ${normalized === "healthy" ? "ok" : ""}"></span>
+      <span>${label}</span>
+      <span class="mono">${statusLabel(normalized)}</span>
+    </div>
+  `;
+}
+
 export type OverviewProps = {
   connected: boolean;
   hello: GatewayHelloOk | null;
@@ -39,11 +68,15 @@ export type OverviewProps = {
   systemStatusError: string | null;
   routerStatus: import("../types.js").RouterStatus | null;
   sparkStatus: import("../types.js").SparkStatus | null;
+  opsSnapshot: OpsCommandCenterSnapshot | null;
+  opsSnapshotLoading: boolean;
+  opsSnapshotError: string | null;
   onSettingsChange: (next: UiSettings) => void;
   onPasswordChange: (next: string) => void;
   onSessionKeyChange: (next: string) => void;
   onConnect: () => void;
   onRefresh: () => void;
+  onOpenTab: (tab: Tab) => void;
   onRouterSetEnabled: (enabled: boolean) => void;
 };
 
@@ -166,6 +199,9 @@ export function renderOverview(props: OverviewProps) {
   const sparkEnabled = typeof spark?.enabled === "boolean" ? spark.enabled : null;
   const sparkActive = Boolean(spark?.enabled && spark?.active);
   const sparkCheckedAt = typeof spark?.checkedAt === "number" ? spark.checkedAt : null;
+
+  const ops = props.opsSnapshot;
+  const opsGeneratedAt = typeof ops?.generatedAt === "number" ? ops.generatedAt : null;
 
   return html`
     <section class="grid grid-cols-2">
@@ -425,6 +461,77 @@ export function renderOverview(props: OverviewProps) {
         }
       </div>
 
+      <div class="card">
+        <div class="card-title">Ops Command Center</div>
+        <div class="card-sub">Cross-signal health snapshot for orchestrator, branch hygiene, and Spark voice.</div>
+        <div style="margin-top: 14px; display: grid; gap: 8px;">
+          ${renderOpsStatusPill("Orchestrator", ops?.orchestrator.status)}
+          ${renderOpsStatusPill("Hygiene", ops?.hygiene.status)}
+          ${renderOpsStatusPill("Voice/System", ops?.voiceSystem.status)}
+        </div>
+
+        ${
+          props.opsSnapshotLoading
+            ? html`
+                <div class="muted" style="margin-top: 10px">Loading ops snapshot…</div>
+              `
+            : nothing
+        }
+        ${
+          props.opsSnapshotError
+            ? html`<div class="callout danger" style="margin-top: 10px;">${props.opsSnapshotError}</div>`
+            : nothing
+        }
+
+        ${
+          !ops
+            ? html`
+                <div class="muted" style="margin-top: 10px">Snapshot unavailable. Refresh to retry.</div>
+              `
+            : html`
+                <div class="stat-grid" style="margin-top: 12px; grid-template-columns: repeat(3, minmax(0, 1fr));">
+                  <div class="stat">
+                    <div class="stat-label">Active runs</div>
+                    <div class="stat-value">${ops.orchestrator.activeRuns}</div>
+                  </div>
+                  <div class="stat">
+                    <div class="stat-label">Stalled</div>
+                    <div class="stat-value">${ops.orchestrator.stalledRuns}</div>
+                  </div>
+                  <div class="stat">
+                    <div class="stat-label">Errors</div>
+                    <div class="stat-value">${ops.orchestrator.errorRuns}</div>
+                  </div>
+                </div>
+                <div class="muted" style="margin-top: 8px;">
+                  Updated ${opsGeneratedAt ? formatRelativeTimestamp(opsGeneratedAt) : "n/a"}
+                </div>
+                ${
+                  ops.hygiene.checks.length
+                    ? html`<div style="margin-top: 10px; display: grid; gap: 6px;">
+                        ${ops.hygiene.checks.slice(0, 3).map((check) => renderOpsStatusPill(check.label, check.status))}
+                      </div>`
+                    : nothing
+                }
+                ${
+                  ops.voiceSystem.degradedReasons.length
+                    ? html`<div style="margin-top: 10px;">
+                        <div class="muted" style="margin-bottom: 4px;">Degraded reasons</div>
+                        <ul class="muted" style="margin: 0; padding-left: 18px; display: grid; gap: 2px;">
+                          ${ops.voiceSystem.degradedReasons.slice(0, 3).map((reason) => html`<li>${reason}</li> `)}
+                        </ul>
+                      </div>`
+                    : nothing
+                }
+              `
+        }
+
+        <div class="row" style="margin-top: 12px;">
+          <button class="btn btn--sm" @click=${() => props.onOpenTab("orchestrator")}>Open Orchestrator</button>
+          <button class="btn btn--sm" @click=${() => props.onOpenTab("dgx")}>Open DGX</button>
+          <button class="btn btn--sm" @click=${() => props.onOpenTab("debug")}>Open Debug</button>
+        </div>
+      </div>
     </section>
 
     <section class="card" style="margin-top: 18px;">

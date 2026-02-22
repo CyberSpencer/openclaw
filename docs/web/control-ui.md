@@ -76,6 +76,7 @@ you revoke it with `openclaw devices revoke --device <id> --role <role>`. See
 - Config writes include a base-hash guard to prevent clobbering concurrent edits
 - Config schema + form rendering (`config.schema`, including plugin + channel schemas); Raw JSON editor remains available
 - Debug: status/health/models snapshots + event log + manual RPC calls (`status`, `health`, `models.list`)
+- Ops Command Center: aggregated ops snapshot (orchestrator run health + CI/PR/branch hygiene + router/Spark degraded reasons) via `ops.snapshot`; see [Ops Command Center](/web/ops-command-center)
 - Logs: live tail of gateway file logs with filter/export (`logs.tail`)
 - Update: run a package/git update + restart (`update.run`) with a restart report
 

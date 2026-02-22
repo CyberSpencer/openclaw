@@ -60,6 +60,7 @@ export type SettingsHost = PollingHost &
     themeMediaHandler: ((event: MediaQueryListEvent) => void) | null;
     pendingGatewayUrl?: string | null;
     refreshTopbarControls?: () => Promise<void> | void;
+    refreshOpsCommandCenter?: () => Promise<void> | void;
   };
 
 export function applySettings(host: SettingsHost, next: UiSettings) {
@@ -409,6 +410,7 @@ export async function loadOverview(host: SettingsHost) {
     loadSessions(host),
     loadCronStatus(host),
     loadDebug(host),
+    host.refreshOpsCommandCenter?.(),
   ]);
 }
 

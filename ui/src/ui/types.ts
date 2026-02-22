@@ -818,6 +818,103 @@ export type SparkStatus = {
   containers?: SparkContainer[] | null;
 };
 
+export type OpsCommandCenterStatus = "healthy" | "degraded" | "down" | "unknown";
+
+export type OpsCommandCenterSnapshot = {
+  generatedAt: number;
+  orchestrator: {
+    status: OpsCommandCenterStatus;
+    activeRuns: number;
+    stalledRuns: number;
+    errorRuns: number;
+    stalledAfterMs: number;
+    active: Array<{
+      runId: string;
+      sessionKey: string;
+      startedAt: number;
+      ageMs: number;
+      lastDeltaAt: number | null;
+      idleMs: number;
+      stalled: boolean;
+      boardId?: string;
+      boardTitle?: string;
+      cardId?: string;
+      cardTitle?: string;
+      laneId?: string;
+    }>;
+    links: Array<{
+      label: string;
+      tab: "orchestrator";
+      boardId?: string;
+      cardId?: string;
+    }>;
+  };
+  hygiene: {
+    status: OpsCommandCenterStatus;
+    installKind: "git" | "package" | "unknown";
+    packageManager: string;
+    git: {
+      branch: string | null;
+      upstream: string | null;
+      dirty: boolean | null;
+      ahead: number | null;
+      behind: number | null;
+      fetchOk: boolean | null;
+      sha: string | null;
+    } | null;
+    deps: {
+      status: "ok" | "missing" | "stale" | "unknown";
+      reason?: string;
+    } | null;
+    ci: {
+      detected: boolean;
+      provider: string | null;
+      workflow: string | null;
+      event: string | null;
+      branch: string | null;
+      runId: string | null;
+      runUrl: string | null;
+    };
+    pr: {
+      detected: boolean;
+      number: number | null;
+      url: string | null;
+      baseRef: string | null;
+      headRef: string | null;
+    };
+    checks: Array<{
+      id: string;
+      label: string;
+      status: OpsCommandCenterStatus;
+      detail: string;
+    }>;
+  };
+  voiceSystem: {
+    status: OpsCommandCenterStatus;
+    degradedReasons: string[];
+    router: {
+      enabled: boolean;
+      healthy: boolean;
+      url?: string;
+      checkedAt?: number;
+      status?: number;
+      error?: string;
+    } | null;
+    spark: {
+      enabled: boolean;
+      active: boolean;
+      source?: "dgx-stats" | "fallback";
+      host?: string | null;
+      checkedAt?: number;
+      voiceAvailable?: boolean;
+      overall?: "healthy" | "degraded" | "down" | "unknown";
+      error?: string;
+      services?: Record<string, unknown>;
+    } | null;
+    links: Array<{ label: string; tab: "overview" | "dgx" }>;
+  };
+};
+
 export type PersonaPlexStatus = {
   enabled: boolean;
   installed: boolean;
