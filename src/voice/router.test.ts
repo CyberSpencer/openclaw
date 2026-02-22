@@ -4,7 +4,7 @@ import { detectSensitiveData, resolveRouterConfig, routeVoiceRequest } from "./r
 describe("voice router", () => {
   it("uses expected defaults and normalizes local model names", () => {
     const defaults = resolveRouterConfig();
-    expect(defaults.localModel).toBe("ollama/nemotron-3-nano:30b");
+    expect(defaults.localModel).toBe("spark-ollama/nemotron-3-nano:30b");
     expect(defaults.cloudModel).toBe("openai-codex/gpt-5.3-codex");
 
     const normalized = resolveRouterConfig({ localModel: "nemotron-3-nano:30b" });
@@ -20,7 +20,7 @@ describe("voice router", () => {
     const config = resolveRouterConfig();
     const decision = routeVoiceRequest("api key: sk-live-test-value", config);
     expect(decision.route).toBe("local");
-    expect(decision.model).toBe("ollama/nemotron-3-nano:30b");
+    expect(decision.model).toBe("spark-ollama/nemotron-3-nano:30b");
     expect(decision.thinking).toBe("none");
     expect(decision.sensitiveDetected).toBe(true);
   });
@@ -43,7 +43,7 @@ describe("voice router", () => {
     const config = resolveRouterConfig({ mode: "local" });
     const decision = routeVoiceRequest("Any question", config);
     expect(decision.route).toBe("local");
-    expect(decision.model).toBe("ollama/nemotron-3-nano:30b");
+    expect(decision.model).toBe("spark-ollama/nemotron-3-nano:30b");
     expect(decision.thinking).toBe("none");
   });
 });
