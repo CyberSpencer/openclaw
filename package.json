@@ -47,6 +47,8 @@
     "docs:check-links": "node scripts/docs-link-audit.mjs",
     "docs:dev": "cd docs && mint dev",
     "docs:list": "node scripts/docs-list.js",
+    "evals": "node --import tsx scripts/evals/run.ts --profile local --json-out reports/evals/latest.json",
+    "evals:ci": "node --import tsx scripts/evals/run.ts --profile ci --json-out reports/evals/ci.json",
     "format": "oxfmt --check",
     "format:all": "pnpm format && pnpm format:swift",
     "format:docs": "git ls-files 'docs/**/*.md' 'docs/**/*.mdx' 'README.md' | xargs oxfmt --check",

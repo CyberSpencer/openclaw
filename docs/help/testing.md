@@ -357,6 +357,32 @@ Future evals should stay deterministic first:
 - A small suite of skill-focused scenarios (use vs avoid, gating, prompt injection).
 - Optional live evals (opt-in, env-gated) only after the CI-safe suite is in place.
 
+## Deterministic eval harness (Feature 2)
+
+Use the production-grade eval harness for critical workflows:
+
+- Messaging routing correctness (policy + fallback)
+- Orchestration task lifecycle correctness
+- Voice action safety confirmation requirements
+
+Run locally:
+
+- `pnpm evals`
+
+Run CI profile:
+
+- `pnpm evals:ci`
+
+Reports are machine-readable JSON:
+
+- Local: `reports/evals/latest.json`
+- CI: `reports/evals/ci.json`
+
+See:
+
+- [Evals + Safety Harness](/help/evals-safety-harness)
+- [Eval Failure Triage](/help/evals-failure-triage)
+
 ## Adding regressions (guidance)
 
 When you fix a provider/model issue discovered in live:

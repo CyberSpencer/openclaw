@@ -26,6 +26,14 @@ export type RouterDecision = {
 
 export type ResolvedRouterConfig = Required<VoiceRouterConfig>;
 
+export type VoiceActionSafetyDecision = {
+  action: string;
+  requiresConfirmation: boolean;
+  confirmed: boolean;
+  allow: boolean;
+  reason: string;
+};
+
 function normalizeLocalModel(raw: string): string {
   const trimmed = raw.trim();
   if (!trimmed) {
@@ -46,6 +54,84 @@ export function resolveRouterConfig(config?: VoiceRouterConfig): ResolvedRouterC
     localModel,
     cloudModel: config?.cloudModel?.trim() || DEFAULT_CLOUD_MODEL,
     complexityThreshold: config?.complexityThreshold ?? DEFAULT_COMPLEXITY_THRESHOLD,
+  };
+}
+
+const VOICE_ACTION_CONFIRMATION_REQUIRED = new Set([
+  "exec",
+  "message.send",
+  "message.broadcast",
+  "nodes.run",
+  "nodes.invoke",
+  "calendar.add",
+  "contacts.add",
+  "reminders.add",
+  "sms.send",
+]);
+
+const VOICE_CONFIRMATION_PATTERNS = [
+  /\bconfirm(?:ed|ation)?\b/i,
+  /\bgo\s+ahead\b/i,
+  /\bproceed\b/i,
+  /\byes[,.!\s]+(?:do\s+it|send\s+it|proceed|go\s+ahead)\b/i,
+];
+
+function normalizeActionName(raw: string): string {
+  return raw.trim().toLowerCase();
+}
+
+export function requiresVoiceActionConfirmation(action: string): boolean {
+  const normalized = normalizeActionName(action);
+  if (!normalized) {
+    return false;
+  }
+  return VOICE_ACTION_CONFIRMATION_REQUIRED.has(normalized);
+}
+
+export function detectVoiceConfirmation(text: string): boolean {
+  const trimmed = text.trim();
+  if (!trimmed) {
+    return false;
+  }
+  return VOICE_CONFIRMATION_PATTERNS.some((pattern) => pattern.test(trimmed));
+}
+
+export function resolveVoiceActionSafety(params: {
+  action: string;
+  transcript?: string;
+  confirmed?: boolean;
+}): VoiceActionSafetyDecision {
+  const action = normalizeActionName(params.action);
+  const requiresConfirmation = requiresVoiceActionConfirmation(action);
+  const transcriptConfirmed = detectVoiceConfirmation(params.transcript ?? "");
+  const confirmed = params.confirmed === true || transcriptConfirmed;
+
+  if (!requiresConfirmation) {
+    return {
+      action,
+      requiresConfirmation,
+      confirmed,
+      allow: true,
+      reason: "action does not require confirmation",
+    };
+  }
+
+  if (!confirmed) {
+    return {
+      action,
+      requiresConfirmation,
+      confirmed,
+      allow: false,
+      reason: "confirmation required before executing voice action",
+    };
+  }
+
+  return {
+    action,
+    requiresConfirmation,
+    confirmed,
+    allow: true,
+    reason: "confirmation requirement satisfied",
   };
 }
 
