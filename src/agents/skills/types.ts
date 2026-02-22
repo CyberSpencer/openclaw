@@ -16,6 +16,32 @@ export type SkillInstallSpec = {
   targetDir?: string;
 };
 
+export type SkillTrustTokenHandlingPolicy = "none" | "ephemeral" | "scoped" | "persistent";
+
+export type SkillTrustMetadata = {
+  /** Declared permission scope requested by this integration (least privilege preferred). */
+  permissionScope?: string[];
+  /** How access tokens/secrets are expected to be handled. */
+  tokenHandling?: {
+    policy?: SkillTrustTokenHandlingPolicy;
+    redactionRequired?: boolean;
+    rotationRequired?: boolean;
+  };
+  /** Network egress constraints declared by the integration. */
+  network?: {
+    mode?: "none" | "allowlist" | "restricted" | "any";
+    targets?: string[];
+  };
+  /** Provenance metadata for supply-chain/review checks. */
+  provenance?: {
+    source?: string;
+    publisher?: string;
+    signature?: "verified" | "unsigned" | "unknown";
+    reviewedAt?: string;
+    reviewedBy?: string;
+  };
+};
+
 export type OpenClawSkillMetadata = {
   always?: boolean;
   skillKey?: string;
@@ -30,6 +56,7 @@ export type OpenClawSkillMetadata = {
     config?: string[];
   };
   install?: SkillInstallSpec[];
+  trust?: SkillTrustMetadata;
 };
 
 export type SkillInvocationPolicy = {

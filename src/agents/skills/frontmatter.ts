@@ -6,6 +6,7 @@ import type {
   SkillEntry,
   SkillInstallSpec,
   SkillInvocationPolicy,
+  SkillTrustMetadata,
 } from "./types.js";
 import { LEGACY_MANIFEST_KEYS, MANIFEST_KEY } from "../../compat/legacy-names.js";
 import { parseFrontmatterBlock } from "../../markdown/frontmatter.js";
@@ -89,6 +90,111 @@ function parseInstallSpec(input: unknown): SkillInstallSpec | undefined {
   return spec;
 }
 
+function parseTrustMetadata(input: unknown): SkillTrustMetadata | undefined {
+  if (!input || typeof input !== "object") {
+    return undefined;
+  }
+  const raw = input as Record<string, unknown>;
+
+  const permissionScope = normalizeStringList(raw.permissionScope ?? raw.permissions);
+
+  const tokenRaw =
+    raw.tokenHandling && typeof raw.tokenHandling === "object"
+      ? (raw.tokenHandling as Record<string, unknown>)
+      : raw.tokenPolicy && typeof raw.tokenPolicy === "object"
+        ? (raw.tokenPolicy as Record<string, unknown>)
+        : undefined;
+  const tokenPolicyRaw =
+    typeof tokenRaw?.policy === "string"
+      ? tokenRaw.policy
+      : typeof tokenRaw?.mode === "string"
+        ? tokenRaw.mode
+        : "";
+  const tokenPolicy = tokenPolicyRaw.trim().toLowerCase();
+  const normalizedTokenPolicy =
+    tokenPolicy === "none" ||
+    tokenPolicy === "ephemeral" ||
+    tokenPolicy === "scoped" ||
+    tokenPolicy === "persistent"
+      ? tokenPolicy
+      : undefined;
+
+  const networkRaw =
+    raw.network && typeof raw.network === "object"
+      ? (raw.network as Record<string, unknown>)
+      : raw.networkTargets && typeof raw.networkTargets === "object"
+        ? (raw.networkTargets as Record<string, unknown>)
+        : undefined;
+  const networkModeRaw =
+    typeof networkRaw?.mode === "string"
+      ? networkRaw.mode
+      : typeof networkRaw?.policy === "string"
+        ? networkRaw.policy
+        : "";
+  const networkMode = networkModeRaw.trim().toLowerCase();
+  const normalizedNetworkMode =
+    networkMode === "none" ||
+    networkMode === "allowlist" ||
+    networkMode === "restricted" ||
+    networkMode === "any"
+      ? networkMode
+      : undefined;
+  const networkTargets = normalizeStringList(networkRaw?.targets ?? networkRaw?.allow);
+
+  const provenanceRaw =
+    raw.provenance && typeof raw.provenance === "object"
+      ? (raw.provenance as Record<string, unknown>)
+      : undefined;
+  const signatureRaw =
+    typeof provenanceRaw?.signature === "string"
+      ? provenanceRaw.signature.trim().toLowerCase()
+      : "";
+  const normalizedSignature =
+    signatureRaw === "verified" || signatureRaw === "unsigned" || signatureRaw === "unknown"
+      ? signatureRaw
+      : undefined;
+
+  const trust: SkillTrustMetadata = {
+    permissionScope: permissionScope.length > 0 ? permissionScope : undefined,
+    tokenHandling: tokenRaw
+      ? {
+          policy: normalizedTokenPolicy,
+          redactionRequired:
+            typeof tokenRaw.redactionRequired === "boolean"
+              ? tokenRaw.redactionRequired
+              : undefined,
+          rotationRequired:
+            typeof tokenRaw.rotationRequired === "boolean" ? tokenRaw.rotationRequired : undefined,
+        }
+      : undefined,
+    network: networkRaw
+      ? {
+          mode: normalizedNetworkMode,
+          targets: networkTargets.length > 0 ? networkTargets : undefined,
+        }
+      : undefined,
+    provenance: provenanceRaw
+      ? {
+          source: typeof provenanceRaw.source === "string" ? provenanceRaw.source : undefined,
+          publisher:
+            typeof provenanceRaw.publisher === "string" ? provenanceRaw.publisher : undefined,
+          signature: normalizedSignature,
+          reviewedAt:
+            typeof provenanceRaw.reviewedAt === "string" ? provenanceRaw.reviewedAt : undefined,
+          reviewedBy:
+            typeof provenanceRaw.reviewedBy === "string" ? provenanceRaw.reviewedBy : undefined,
+        }
+      : undefined,
+  };
+
+  const hasValues =
+    Boolean(trust.permissionScope?.length) ||
+    Boolean(trust.tokenHandling) ||
+    Boolean(trust.network) ||
+    Boolean(trust.provenance);
+  return hasValues ? trust : undefined;
+}
+
 function getFrontmatterValue(frontmatter: ParsedSkillFrontmatter, key: string): string | undefined {
   const raw = frontmatter[key];
   return typeof raw === "string" ? raw : undefined;
@@ -133,6 +239,7 @@ export function resolveOpenClawMetadata(
       .map((entry) => parseInstallSpec(entry))
       .filter((entry): entry is SkillInstallSpec => Boolean(entry));
     const osRaw = normalizeStringList(metadataObj.os);
+    const trust = parseTrustMetadata(metadataObj.trust);
     return {
       always: typeof metadataObj.always === "boolean" ? metadataObj.always : undefined,
       emoji: typeof metadataObj.emoji === "string" ? metadataObj.emoji : undefined,
@@ -149,6 +256,7 @@ export function resolveOpenClawMetadata(
           }
         : undefined,
       install: install.length > 0 ? install : undefined,
+      trust,
     };
   } catch {
     return undefined;

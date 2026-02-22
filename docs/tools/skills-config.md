@@ -23,6 +23,12 @@ All skills-related configuration lives under `skills` in `~/.openclaw/openclaw.j
       preferBrew: true,
       nodeManager: "npm", // npm | pnpm | yarn | bun (Gateway runtime still Node; bun not recommended)
     },
+    trustGate: {
+      level: "warn", // warn | block
+      warnThreshold: 70,
+      blockThreshold: 45,
+      auditLogPath: "~/.openclaw/audit/skill-trust-gate.jsonl",
+    },
     entries: {
       "nano-banana-pro": {
         enabled: true,
@@ -32,7 +38,14 @@ All skills-related configuration lives under `skills` in `~/.openclaw/openclaw.j
         },
       },
       peekaboo: { enabled: true },
-      sag: { enabled: false },
+      sag: {
+        enabled: false,
+        trustGateOverride: {
+          reason: "Security reviewed and approved",
+          approvedAt: "2026-02-22T19:40:00.000Z",
+          approvedBy: "ops@example.com",
+        },
+      },
     },
   },
 }
@@ -49,6 +62,10 @@ All skills-related configuration lives under `skills` in `~/.openclaw/openclaw.j
 - `install.nodeManager`: node installer preference (`npm` | `pnpm` | `yarn` | `bun`, default: npm).
   This only affects **skill installs**; the Gateway runtime should still be Node
   (Bun not recommended for WhatsApp/Telegram).
+- `trustGate.level`: trust gate policy (`warn` default, or `block` for strict enforcement).
+- `trustGate.warnThreshold`: score threshold for warning (default: 70).
+- `trustGate.blockThreshold`: score threshold for blocking in strict mode (default: 45).
+- `trustGate.auditLogPath`: optional JSONL path for trust decision audit logs.
 - `entries.<skillKey>`: per-skill overrides.
 
 Per-skill fields:
@@ -56,12 +73,15 @@ Per-skill fields:
 - `enabled`: set `false` to disable a skill even if it’s bundled/installed.
 - `env`: environment variables injected for the agent run (only if not already set).
 - `apiKey`: optional convenience for skills that declare a primary env var.
+- `trustGateOverride`: operator override for strict trust-gate blocks (`reason`, `approvedAt`, optional `approvedBy`).
 
 ## Notes
 
 - Keys under `entries` map to the skill name by default. If a skill defines
   `metadata.openclaw.skillKey`, use that key instead.
 - Changes to skills are picked up on the next agent turn when the watcher is enabled.
+- Operator override path for blocked integrations: call `skills.update` with
+  `trustOverride: { approve: true, reason: "...", approvedBy: "..." }`.
 
 ### Sandboxed skills + env vars
 

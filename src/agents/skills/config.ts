@@ -3,11 +3,18 @@ import path from "node:path";
 import type { OpenClawConfig, SkillConfig } from "../../config/config.js";
 import type { SkillEligibilityContext, SkillEntry } from "./types.js";
 import { resolveSkillKey } from "./frontmatter.js";
+import {
+  evaluateSkillTrustGate,
+  writeSkillTrustGateAudit,
+  type SkillTrustGateFinding,
+} from "./trust-gate.js";
 
 const DEFAULT_CONFIG_VALUES: Record<string, boolean> = {
   "browser.enabled": true,
   "browser.evaluateEnabled": true,
 };
+
+const trustGateAuditOnce = new Set<string>();
 
 function isTruthy(value: unknown): boolean {
   if (value === undefined || value === null) {
@@ -111,6 +118,53 @@ export function hasBinary(bin: string): boolean {
   return false;
 }
 
+function auditTrustGateDecision(params: {
+  config?: OpenClawConfig;
+  skillKey: string;
+  entry: SkillEntry;
+  score: number;
+  decision: "allow" | "warn" | "block";
+  effectiveDecision: "allow" | "warn" | "block";
+  policyLevel: "warn" | "block";
+  overridden: boolean;
+  overrideRequired: boolean;
+  findings: SkillTrustGateFinding[];
+}) {
+  if (params.effectiveDecision === "allow") {
+    return;
+  }
+  const onceKey = [
+    "run",
+    params.skillKey,
+    params.score,
+    params.decision,
+    params.effectiveDecision,
+    params.policyLevel,
+    params.overridden ? "1" : "0",
+  ].join(":");
+  if (trustGateAuditOnce.has(onceKey)) {
+    return;
+  }
+  trustGateAuditOnce.add(onceKey);
+  writeSkillTrustGateAudit({
+    config: params.config,
+    record: {
+      ts: new Date().toISOString(),
+      phase: "run",
+      source: "skills.run",
+      skillName: params.entry.skill.name,
+      skillKey: params.skillKey,
+      score: params.score,
+      decision: params.decision,
+      effectiveDecision: params.effectiveDecision,
+      policyLevel: params.policyLevel,
+      overridden: params.overridden,
+      overrideRequired: params.overrideRequired,
+      findings: params.findings,
+    },
+  });
+}
+
 export function shouldIncludeSkill(params: {
   entry: SkillEntry;
   config?: OpenClawConfig;
@@ -136,55 +190,76 @@ export function shouldIncludeSkill(params: {
   ) {
     return false;
   }
-  if (entry.metadata?.always === true) {
-    return true;
-  }
+  const always = entry.metadata?.always === true;
 
-  const requiredBins = entry.metadata?.requires?.bins ?? [];
-  if (requiredBins.length > 0) {
-    for (const bin of requiredBins) {
-      if (hasBinary(bin)) {
-        continue;
-      }
-      if (eligibility?.remote?.hasBin?.(bin)) {
-        continue;
-      }
-      return false;
-    }
-  }
-  const requiredAnyBins = entry.metadata?.requires?.anyBins ?? [];
-  if (requiredAnyBins.length > 0) {
-    const anyFound =
-      requiredAnyBins.some((bin) => hasBinary(bin)) ||
-      eligibility?.remote?.hasAnyBin?.(requiredAnyBins);
-    if (!anyFound) {
-      return false;
-    }
-  }
-
-  const requiredEnv = entry.metadata?.requires?.env ?? [];
-  if (requiredEnv.length > 0) {
-    for (const envName of requiredEnv) {
-      if (process.env[envName]) {
-        continue;
-      }
-      if (skillConfig?.env?.[envName]) {
-        continue;
-      }
-      if (skillConfig?.apiKey && entry.metadata?.primaryEnv === envName) {
-        continue;
-      }
-      return false;
-    }
-  }
-
-  const requiredConfig = entry.metadata?.requires?.config ?? [];
-  if (requiredConfig.length > 0) {
-    for (const configPath of requiredConfig) {
-      if (!isConfigPathTruthy(config, configPath)) {
+  if (!always) {
+    const requiredBins = entry.metadata?.requires?.bins ?? [];
+    if (requiredBins.length > 0) {
+      for (const bin of requiredBins) {
+        if (hasBinary(bin)) {
+          continue;
+        }
+        if (eligibility?.remote?.hasBin?.(bin)) {
+          continue;
+        }
         return false;
       }
     }
+    const requiredAnyBins = entry.metadata?.requires?.anyBins ?? [];
+    if (requiredAnyBins.length > 0) {
+      const anyFound =
+        requiredAnyBins.some((bin) => hasBinary(bin)) ||
+        eligibility?.remote?.hasAnyBin?.(requiredAnyBins);
+      if (!anyFound) {
+        return false;
+      }
+    }
+
+    const requiredEnv = entry.metadata?.requires?.env ?? [];
+    if (requiredEnv.length > 0) {
+      for (const envName of requiredEnv) {
+        if (process.env[envName]) {
+          continue;
+        }
+        if (skillConfig?.env?.[envName]) {
+          continue;
+        }
+        if (skillConfig?.apiKey && entry.metadata?.primaryEnv === envName) {
+          continue;
+        }
+        return false;
+      }
+    }
+
+    const requiredConfig = entry.metadata?.requires?.config ?? [];
+    if (requiredConfig.length > 0) {
+      for (const configPath of requiredConfig) {
+        if (!isConfigPathTruthy(config, configPath)) {
+          return false;
+        }
+      }
+    }
+  }
+
+  const trustEvaluation = evaluateSkillTrustGate({
+    entry,
+    config,
+    override: skillConfig?.trustGateOverride,
+  });
+  auditTrustGateDecision({
+    config,
+    skillKey,
+    entry,
+    score: trustEvaluation.score,
+    decision: trustEvaluation.decision,
+    effectiveDecision: trustEvaluation.effectiveDecision,
+    policyLevel: trustEvaluation.policyLevel,
+    overridden: trustEvaluation.overridden,
+    overrideRequired: trustEvaluation.overrideRequired,
+    findings: trustEvaluation.findings,
+  });
+  if (trustEvaluation.effectiveDecision === "block") {
+    return false;
   }
 
   return true;
