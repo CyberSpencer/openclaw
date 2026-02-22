@@ -234,6 +234,44 @@ describe("voice.processText gateway handler", () => {
     );
   });
 
+  it("allows unknown intents in text-parity mode", async () => {
+    let capturedBody = "";
+    mocks.dispatchInboundMessage.mockImplementation(async (arg: unknown) => {
+      const typed = arg as { ctx?: { Body?: string } };
+      capturedBody = typed.ctx?.Body ?? "";
+    });
+    mocks.processTextToVoice.mockImplementationOnce(async (input, _config, llmInvoke) => {
+      const response = await llmInvoke(String(input));
+      return {
+        success: true,
+        sessionId: "s-parity",
+        response,
+        timings: { totalMs: 8 },
+      };
+    });
+
+    const respond = vi.fn<GatewayResponder>();
+    await voiceHandlers["voice.processText"]?.(
+      makeInvocation(respond, {
+        text: "tell me a joke",
+        voiceActionMode: "text-parity",
+      }),
+    );
+
+    expect(mocks.dispatchInboundMessage).toHaveBeenCalledTimes(1);
+    expect(capturedBody).toBe("tell me a joke");
+    expect(respond).toHaveBeenCalledWith(
+      true,
+      expect.objectContaining({
+        voiceAction: expect.objectContaining({
+          mode: "text-parity",
+          intent: "unknown",
+          enabled: true,
+        }),
+      }),
+    );
+  });
+
   it("requires explicit confirmation before external-send intents run", async () => {
     let capturedBody = "";
     mocks.dispatchInboundMessage.mockImplementation(async (arg: unknown) => {

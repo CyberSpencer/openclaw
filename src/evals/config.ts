@@ -24,6 +24,12 @@ export const EVAL_SUITES: EvalSuiteConfig[] = [
     description: "High-risk voice actions must require explicit confirmation before execution.",
     testFiles: ["src/voice/router.test.ts", "src/voice/voice-action-safety.test.ts"],
   },
+  {
+    id: "voice-latency-slo",
+    title: "Voice latency SLO gates",
+    description: "Validate voice latency budget evaluation logic and breach reporting semantics.",
+    testFiles: ["src/voice/latency-slo.test.ts"],
+  },
 ];
 
 export const EVAL_PROFILE_THRESHOLDS: Record<"local" | "ci", EvalProfileThresholds> = {
@@ -46,6 +52,11 @@ export const EVAL_PROFILE_THRESHOLDS: Record<"local" | "ci", EvalProfileThreshol
         maxFailures: 0,
         minTotalTests: 9,
       },
+      "voice-latency-slo": {
+        minPassRate: 1,
+        maxFailures: 0,
+        minTotalTests: 3,
+      },
     },
   },
   ci: {
@@ -66,6 +77,11 @@ export const EVAL_PROFILE_THRESHOLDS: Record<"local" | "ci", EvalProfileThreshol
         minPassRate: 1,
         maxFailures: 0,
         minTotalTests: 9,
+      },
+      "voice-latency-slo": {
+        minPassRate: 1,
+        maxFailures: 0,
+        minTotalTests: 3,
       },
     },
   },

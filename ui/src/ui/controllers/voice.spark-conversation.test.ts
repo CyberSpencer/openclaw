@@ -17,6 +17,7 @@ describe("processVoiceInputSpark", () => {
           text: "hello world",
           sessionKey: "agent:main:main",
           driveOpenClaw: true,
+          voiceActionMode: "text-parity",
           skipTts: true,
         });
         return {
@@ -154,6 +155,39 @@ describe("processVoiceInputSpark", () => {
     const result = await processVoiceInputSpark(state, "audio64", "wav");
 
     expect(result?.audioBase64).toBe("tts64");
+  });
+
+  it("returns queued speech chunks when response has multiple sentences", async () => {
+    const ttsTexts: string[] = [];
+    const request = vi.fn(async (method: string, params: Record<string, unknown>) => {
+      if (method === "spark.voice.stt") {
+        return { text: "hello world" };
+      }
+      if (method === "voice.processText") {
+        return {
+          sessionId: "voice-session",
+          response:
+            "First sentence is intentionally verbose to force chunk splitting in low-latency mode and keep the first chunk short. " +
+            "Second sentence should be queued for follow-up synthesis. " +
+            "Third sentence should also be queued for follow-up synthesis.",
+        };
+      }
+      if (method === "spark.voice.tts") {
+        ttsTexts.push(String(params.text ?? ""));
+        return { audio_base64: "tts64", format: "webm" };
+      }
+      throw new Error(`unexpected method: ${method}`);
+    });
+
+    const state = createVoiceState();
+    state.connected = true;
+    state.client = { request } as unknown as typeof state.client;
+
+    const result = await processVoiceInputSpark(state, "audio64", "wav");
+
+    expect(ttsTexts.length).toBe(1);
+    expect(ttsTexts[0]).toContain("First sentence");
+    expect(result?.pendingSpeechChunks?.length).toBeGreaterThanOrEqual(1);
   });
 
   it("surfaces STT timeout with stage-specific message", async () => {

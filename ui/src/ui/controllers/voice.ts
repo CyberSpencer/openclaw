@@ -37,6 +37,7 @@ export type VoiceState = {
   sparkVoiceAvailable: boolean;
   sessionKey: string | null;
   driveOpenClaw: boolean;
+  actionMode: "constrained" | "text-parity";
 
   // Conversation state
   conversationActive: boolean;
@@ -155,6 +156,7 @@ export type VoiceProcessResult = {
   response?: string;
   audioBase64?: string;
   audioFormat?: string;
+  pendingSpeechChunks?: string[];
   route?: string;
   model?: string;
   thinkingLevel?: string;
@@ -234,6 +236,7 @@ export function createVoiceState(): VoiceState {
     sparkVoiceAvailable: false,
     sessionKey: null,
     driveOpenClaw: true,
+    actionMode: "text-parity",
 
     // Conversation state
     conversationActive: false,
@@ -1134,6 +1137,107 @@ function buildSparkTimings(params: {
   };
 }
 
+const SPARK_TTS_FIRST_CHUNK_MAX_CHARS = 180;
+
+function splitSparkTtsChunks(text: string, maxChars = SPARK_TTS_FIRST_CHUNK_MAX_CHARS): string[] {
+  const normalized = normalizeTextForTts(text);
+  if (!normalized) {
+    return [];
+  }
+
+  const sentences = normalized
+    .split(/(?<=[.!?])\s+/)
+    .map((segment) => segment.trim())
+    .filter(Boolean);
+
+  const chunks: string[] = [];
+  let current = "";
+
+  const flush = () => {
+    const trimmed = current.trim();
+    if (trimmed) {
+      chunks.push(trimmed);
+    }
+    current = "";
+  };
+
+  for (const sentence of sentences.length ? sentences : [normalized]) {
+    if (!current) {
+      if (sentence.length <= maxChars) {
+        current = sentence;
+        continue;
+      }
+      const words = sentence.split(/\s+/);
+      for (const word of words) {
+        const candidate = current ? `${current} ${word}` : word;
+        if (candidate.length > maxChars && current) {
+          flush();
+          current = word;
+        } else {
+          current = candidate;
+        }
+      }
+      continue;
+    }
+
+    const candidate = `${current} ${sentence}`;
+    if (candidate.length <= maxChars) {
+      current = candidate;
+      continue;
+    }
+
+    flush();
+    if (sentence.length <= maxChars) {
+      current = sentence;
+      continue;
+    }
+
+    const words = sentence.split(/\s+/);
+    for (const word of words) {
+      const next = current ? `${current} ${word}` : word;
+      if (next.length > maxChars && current) {
+        flush();
+        current = word;
+      } else {
+        current = next;
+      }
+    }
+  }
+
+  flush();
+  return chunks;
+}
+
+async function synthesizeSparkTtsChunk(
+  state: VoiceState,
+  text: string,
+): Promise<{ audioBase64?: string; audioFormat: string; ttsMs: number }> {
+  const ttsParams: Record<string, string> = { text, format: "webm" };
+  if (state.ttsVoice != null && state.ttsVoice.trim() !== "") {
+    ttsParams.voice = state.ttsVoice.trim();
+  }
+  if (state.ttsInstruct != null && state.ttsInstruct.trim() !== "") {
+    ttsParams.instruct = state.ttsInstruct.trim();
+  }
+  if (state.ttsLanguage != null && state.ttsLanguage.trim() !== "") {
+    ttsParams.language = state.ttsLanguage.trim();
+  }
+
+  const started = Date.now();
+  const ttsResult = await requestWithTimeout(
+    state.client!.request<Record<string, unknown>>("spark.voice.tts", ttsParams),
+    SPARK_TTS_TIMEOUT_MS,
+    "SPARK_TTS_TIMEOUT",
+  );
+
+  return {
+    audioBase64:
+      typeof ttsResult?.audio_base64 === "string" ? (ttsResult.audio_base64 as string) : undefined,
+    audioFormat: typeof ttsResult?.format === "string" ? (ttsResult.format as string) : "webm",
+    ttsMs: Math.max(0, Date.now() - started),
+  };
+}
+
 /**
  * Process voice input via Spark STT + OpenClaw reply generation + Spark TTS.
  *
@@ -1216,7 +1320,7 @@ export async function processVoiceInputSpark(
           text: state.transcription,
           sessionKey: state.sessionKey ?? undefined,
           driveOpenClaw: state.driveOpenClaw,
-          voiceActionMode: true,
+          voiceActionMode: state.actionMode,
           skipTts: true,
         }),
         SPARK_LLM_TIMEOUT_MS,
@@ -1286,9 +1390,9 @@ export async function processVoiceInputSpark(
       };
     }
 
-    // 3) TTS via Spark
-    const ttsInput = normalizeTextForTts(responseText);
-    if (!ttsInput) {
+    // 3) TTS via Spark (first chunk now, remaining chunks queued for playback)
+    const ttsChunks = splitSparkTtsChunks(responseText);
+    if (!ttsChunks.length) {
       state.timings = buildSparkTimings({
         sttMs,
         routingMs,
@@ -1301,24 +1405,10 @@ export async function processVoiceInputSpark(
       };
     }
 
-    const ttsStart = Date.now();
-    let ttsResult: Record<string, unknown> | null = null;
-    const ttsParams: Record<string, string> = { text: ttsInput, format: "webm" };
-    if (state.ttsVoice != null && state.ttsVoice.trim() !== "") {
-      ttsParams.voice = state.ttsVoice.trim();
-    }
-    if (state.ttsInstruct != null && state.ttsInstruct.trim() !== "") {
-      ttsParams.instruct = state.ttsInstruct.trim();
-    }
-    if (state.ttsLanguage != null && state.ttsLanguage.trim() !== "") {
-      ttsParams.language = state.ttsLanguage.trim();
-    }
+    let firstChunkResult: { audioBase64?: string; audioFormat: string; ttsMs: number } | null =
+      null;
     try {
-      ttsResult = await requestWithTimeout(
-        state.client.request<Record<string, unknown>>("spark.voice.tts", ttsParams),
-        SPARK_TTS_TIMEOUT_MS,
-        "SPARK_TTS_TIMEOUT",
-      );
+      firstChunkResult = await synthesizeSparkTtsChunk(state, ttsChunks[0]);
     } catch (ttsErr) {
       const code = ttsErr instanceof Error ? ttsErr.message : String(ttsErr);
       if (code === "SPARK_TTS_TIMEOUT") {
@@ -1328,10 +1418,8 @@ export async function processVoiceInputSpark(
         state.error = `TTS failed: ${code}`;
       }
     }
-    const ttsMs = Date.now() - ttsStart;
 
-    const audio = ttsResult?.audio_base64;
-    const fmt = ttsResult?.format;
+    const ttsMs = firstChunkResult?.ttsMs ?? 0;
 
     state.timings = buildSparkTimings({
       sttMs,
@@ -1343,8 +1431,9 @@ export async function processVoiceInputSpark(
 
     return {
       ...baseResult,
-      audioBase64: typeof audio === "string" ? audio : undefined,
-      audioFormat: typeof fmt === "string" ? fmt : "webm",
+      audioBase64: firstChunkResult?.audioBase64,
+      audioFormat: firstChunkResult?.audioFormat ?? "webm",
+      pendingSpeechChunks: ttsChunks.slice(1),
       timings: state.timings,
     };
   } catch (err) {
@@ -1375,6 +1464,7 @@ export async function processTextToVoice(
       text,
       sessionKey: state.sessionKey ?? undefined,
       driveOpenClaw: state.driveOpenClaw,
+      voiceActionMode: state.actionMode,
     });
 
     state.response =
@@ -1745,13 +1835,64 @@ export async function startConversation(
         });
 
         const playbackStart = Date.now();
+        let accumulatedTtsMs = 0;
         await playAudioBase64(result.audioBase64, state, result.audioFormat);
+
+        // Stream remaining speech chunks progressively to reduce first-audio latency.
+        const pendingChunks = Array.isArray(result.pendingSpeechChunks)
+          ? result.pendingSpeechChunks.filter((chunk) => chunk.trim().length > 0)
+          : [];
+
+        if (!interrupted && pendingChunks.length > 0 && state.client && state.connected) {
+          let nextChunkPromise: Promise<{
+            audioBase64?: string;
+            audioFormat: string;
+            ttsMs: number;
+          }> | null = synthesizeSparkTtsChunk(state, pendingChunks[0]);
+
+          for (let idx = 0; idx < pendingChunks.length && !interrupted; idx += 1) {
+            const currentPromise = nextChunkPromise;
+            if (!currentPromise) {
+              break;
+            }
+
+            let chunkResult: { audioBase64?: string; audioFormat: string; ttsMs: number };
+            try {
+              chunkResult = await currentPromise;
+            } catch (err) {
+              const code = err instanceof Error ? err.message : String(err);
+              state.error =
+                code === "SPARK_TTS_TIMEOUT"
+                  ? "TTS timed out while streaming response."
+                  : `TTS chunk failed: ${code}`;
+              break;
+            }
+
+            accumulatedTtsMs += chunkResult.ttsMs;
+
+            if (idx + 1 < pendingChunks.length) {
+              nextChunkPromise = synthesizeSparkTtsChunk(state, pendingChunks[idx + 1]);
+            } else {
+              nextChunkPromise = null;
+            }
+
+            if (!chunkResult.audioBase64) {
+              continue;
+            }
+            await playAudioBase64(chunkResult.audioBase64, state, chunkResult.audioFormat);
+          }
+        }
+
         const playbackMs = Math.max(0, Date.now() - playbackStart);
         if (state.timings) {
+          if (accumulatedTtsMs > 0) {
+            state.timings.ttsMs = (state.timings.ttsMs ?? 0) + accumulatedTtsMs;
+          }
           state.timings.playbackMs = playbackMs;
           state.timings.totalMs = Math.max(0, Date.now() - turnStartedAt);
           state.timings.stages = {
             ...state.timings.stages,
+            ...(state.timings.ttsMs != null ? { ttsMs: state.timings.ttsMs } : {}),
             playbackMs,
           };
         }

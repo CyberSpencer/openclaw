@@ -36,8 +36,10 @@ import {
   isVoiceActionIntentAllowed,
   resolveVoiceActionPolicy,
   scaffoldVoiceIntentPrompt,
+  normalizeVoiceActionMode,
   type VoiceActionAllowedIntent,
   type VoiceActionIntent,
+  type VoiceActionMode,
 } from "../../voice/action-mode.js";
 import { transcribeWithWhisper, resolveWhisperConfig } from "../../voice/local-stt.js";
 import { synthesizeWithLocalTts, resolveLocalTtsConfig } from "../../voice/local-tts.js";
@@ -92,7 +94,7 @@ type VoiceStructuredTimings = {
 };
 
 type VoiceActionPayload = {
-  mode: "constrained";
+  mode: "constrained" | "text-parity";
   enabled: boolean;
   intent: VoiceActionIntent;
   allowedIntents: VoiceActionAllowedIntent[];
@@ -181,7 +183,7 @@ function prunePendingVoiceConfirmations(now: number): void {
 }
 
 function resolveVoiceActionDecision(params: {
-  enabled: boolean;
+  mode: VoiceActionMode;
   sessionKey: string;
   text: string;
 }): {
@@ -192,8 +194,9 @@ function resolveVoiceActionDecision(params: {
 } {
   const policy = resolveVoiceActionPolicy();
   const allowedIntents = formatAllowedVoiceActionIntents(policy);
+  const mode = params.mode;
 
-  if (!params.enabled) {
+  if (mode === "off") {
     return { proceed: true, effectiveText: params.text };
   }
 
@@ -202,7 +205,7 @@ function resolveVoiceActionDecision(params: {
       proceed: true,
       effectiveText: params.text,
       action: {
-        mode: "constrained",
+        mode,
         enabled: false,
         intent: "unknown",
         allowedIntents,
@@ -221,7 +224,7 @@ function resolveVoiceActionDecision(params: {
       effectiveText: params.text,
       responseText: "Cancelled pending external send.",
       action: {
-        mode: "constrained",
+        mode,
         enabled: true,
         intent: "cancel",
         allowedIntents,
@@ -238,7 +241,7 @@ function resolveVoiceActionDecision(params: {
       proceed: true,
       effectiveText: pending.text,
       action: {
-        mode: "constrained",
+        mode,
         enabled: true,
         intent: "external_send",
         allowedIntents,
@@ -265,7 +268,7 @@ function resolveVoiceActionDecision(params: {
         responseText:
           'External send detected. Say "confirm send" to proceed, or say "cancel" to stop.',
         action: {
-          mode: "constrained",
+          mode,
           enabled: true,
           intent,
           allowedIntents,
@@ -280,11 +283,25 @@ function resolveVoiceActionDecision(params: {
       proceed: true,
       effectiveText: params.text,
       action: {
-        mode: "constrained",
+        mode,
         enabled: true,
         intent,
         allowedIntents,
         confirmationState: "not_required",
+        appliedText: params.text,
+      },
+    };
+  }
+
+  if (mode === "text-parity") {
+    return {
+      proceed: true,
+      effectiveText: params.text,
+      action: {
+        mode,
+        enabled: true,
+        intent,
+        allowedIntents,
         appliedText: params.text,
       },
     };
@@ -296,7 +313,7 @@ function resolveVoiceActionDecision(params: {
       effectiveText: params.text,
       responseText: `Voice Action Mode accepts: ${allowedIntents.join(", ")}. Ask for one of those intents.`,
       action: {
-        mode: "constrained",
+        mode,
         enabled: true,
         intent,
         allowedIntents,
@@ -310,7 +327,7 @@ function resolveVoiceActionDecision(params: {
     proceed: true,
     effectiveText,
     action: {
-      mode: "constrained",
+      mode,
       enabled: true,
       intent,
       allowedIntents,
@@ -617,7 +634,7 @@ export const voiceHandlers: GatewayRequestHandlers = {
    * Params:
    * - audio: Base64-encoded audio data (WAV format)
    * - sessionKey: Optional session key for chat context
-   * - voiceActionMode: Optional constrained intent mode with explicit send confirmations
+   * - voiceActionMode: Optional mode ("constrained" | "text-parity" | true/false)
    */
   "voice.process": async ({ params, respond, context, client }) => {
     const audioBase64 = typeof params.audio === "string" ? params.audio : "";
@@ -634,7 +651,7 @@ export const voiceHandlers: GatewayRequestHandlers = {
     const textPrompt = typeof params.textPrompt === "string" ? params.textPrompt.trim() : "";
     const voicePrompt = typeof params.voicePrompt === "string" ? params.voicePrompt.trim() : "";
     const driveOpenClaw = params.driveOpenClaw === true;
-    const voiceActionMode = params.voiceActionMode === true;
+    const voiceActionMode = normalizeVoiceActionMode(params.voiceActionMode);
     const seed =
       typeof params.seed === "number" && Number.isFinite(params.seed)
         ? Math.trunc(params.seed)
@@ -673,7 +690,7 @@ export const voiceHandlers: GatewayRequestHandlers = {
         thinking?: string,
       ): Promise<string> => {
         const actionDecision = resolveVoiceActionDecision({
-          enabled: voiceActionMode,
+          mode: voiceActionMode,
           sessionKey,
           text,
         });
@@ -851,7 +868,7 @@ export const voiceHandlers: GatewayRequestHandlers = {
    * - text: Text to process
    * - sessionKey: Optional session key for chat context
    * - driveOpenClaw: Optional parity flag with voice.process config shaping
-   * - voiceActionMode: Optional constrained intent mode with explicit send confirmations
+   * - voiceActionMode: Optional mode ("constrained" | "text-parity" | true/false)
    * - skipTts: Optional flag to return text-only response (no local TTS synthesis)
    */
   "voice.processText": async ({ params, respond, context, client }) => {
@@ -868,7 +885,7 @@ export const voiceHandlers: GatewayRequestHandlers = {
     const sessionKey = typeof params.sessionKey === "string" ? params.sessionKey : "webchat-voice";
     const skipTts = params.skipTts === true;
     const driveOpenClaw = params.driveOpenClaw === true;
-    const voiceActionMode = params.voiceActionMode === true;
+    const voiceActionMode = normalizeVoiceActionMode(params.voiceActionMode);
 
     try {
       const voiceConfig = getVoiceConfig();
@@ -891,7 +908,7 @@ export const voiceHandlers: GatewayRequestHandlers = {
         thinking?: string,
       ): Promise<string> => {
         const actionDecision = resolveVoiceActionDecision({
-          enabled: voiceActionMode,
+          mode: voiceActionMode,
           sessionKey,
           text: inputText,
         });

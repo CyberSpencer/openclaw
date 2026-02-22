@@ -1,5 +1,7 @@
 export type VoiceActionAllowedIntent = "status" | "triage" | "draft" | "schedule";
 
+export type VoiceActionMode = "off" | "constrained" | "text-parity";
+
 export type VoiceActionIntent =
   | VoiceActionAllowedIntent
   | "external_send"
@@ -79,6 +81,30 @@ function parseAllowedIntents(raw: string | undefined): Set<VoiceActionAllowedInt
     return new Set(DEFAULT_ALLOWED_INTENTS);
   }
   return new Set(values);
+}
+
+export function normalizeVoiceActionMode(raw: unknown): VoiceActionMode {
+  if (raw === true) {
+    return "constrained";
+  }
+  if (raw === false || raw == null) {
+    return "off";
+  }
+  if (typeof raw !== "string") {
+    return "off";
+  }
+
+  const normalized = raw.trim().toLowerCase();
+  if (normalized === "off" || normalized === "disabled") {
+    return "off";
+  }
+  if (normalized === "constrained" || normalized === "safe") {
+    return "constrained";
+  }
+  if (normalized === "text-parity" || normalized === "parity" || normalized === "full") {
+    return "text-parity";
+  }
+  return "off";
 }
 
 export function resolveVoiceActionPolicy(env: NodeJS.ProcessEnv = process.env): VoiceActionPolicy {
