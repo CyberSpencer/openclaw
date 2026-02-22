@@ -32,6 +32,17 @@ export {
   resolveSkillsPromptForRun,
   syncSkillsToWorkspace,
 } from "./skills/workspace.js";
+export {
+  evaluateSkillTrustGate,
+  resolveSkillsTrustGatePolicy,
+  writeSkillTrustGateAudit,
+  type ResolvedSkillsTrustGatePolicy,
+  type SkillTrustGateAuditRecord,
+  type SkillTrustGateDecision,
+  type SkillTrustGateEvaluation,
+  type SkillTrustGateFinding,
+  type SkillTrustGatePhase,
+} from "./skills/trust-gate.js";
 
 export function resolveSkillsInstallPreferences(config?: OpenClawConfig): SkillsInstallPreferences {
   const raw = config?.skills?.install;

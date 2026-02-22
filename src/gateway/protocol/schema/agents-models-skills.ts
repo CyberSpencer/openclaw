@@ -204,6 +204,16 @@ export const SkillsUpdateParamsSchema = Type.Object(
     enabled: Type.Optional(Type.Boolean()),
     apiKey: Type.Optional(Type.String()),
     env: Type.Optional(Type.Record(NonEmptyString, Type.String())),
+    trustOverride: Type.Optional(
+      Type.Object(
+        {
+          approve: Type.Optional(Type.Boolean()),
+          reason: Type.Optional(Type.String()),
+          approvedBy: Type.Optional(Type.String()),
+        },
+        { additionalProperties: false },
+      ),
+    ),
   },
   { additionalProperties: false },
 );

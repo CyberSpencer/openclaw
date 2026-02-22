@@ -225,6 +225,51 @@ describe("buildWorkspaceSkillsPrompt", () => {
     expect(prompt).toContain("Does demo things");
     expect(prompt).toContain(path.join(skillDir, "SKILL.md"));
   });
+
+  it("blocks risky skills at run-time when trust gate level is block", async () => {
+    const workspaceDir = await makeWorkspace();
+    await writeSkill({
+      dir: path.join(workspaceDir, "skills", "risky-skill"),
+      name: "risky-skill",
+      description: "Risky by missing trust metadata",
+    });
+
+    const prompt = buildWorkspaceSkillsPrompt(workspaceDir, {
+      config: { skills: { trustGate: { level: "block" } } },
+      managedSkillsDir: path.join(workspaceDir, ".managed"),
+    });
+
+    expect(prompt).not.toContain("risky-skill");
+  });
+
+  it("allows blocked skills when trust gate override is set", async () => {
+    const workspaceDir = await makeWorkspace();
+    await writeSkill({
+      dir: path.join(workspaceDir, "skills", "risky-skill"),
+      name: "risky-skill",
+      description: "Risky by missing trust metadata",
+    });
+
+    const prompt = buildWorkspaceSkillsPrompt(workspaceDir, {
+      config: {
+        skills: {
+          trustGate: { level: "block" },
+          entries: {
+            "risky-skill": {
+              trustGateOverride: {
+                reason: "Operator reviewed",
+                approvedAt: new Date().toISOString(),
+                approvedBy: "ops",
+              },
+            },
+          },
+        },
+      },
+      managedSkillsDir: path.join(workspaceDir, ".managed"),
+    });
+
+    expect(prompt).toContain("risky-skill");
+  });
 });
 
 describe("applySkillEnvOverrides", () => {

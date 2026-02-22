@@ -534,6 +534,15 @@ export const OpenClawSchema = z
           })
           .strict()
           .optional(),
+        trustGate: z
+          .object({
+            level: z.union([z.literal("warn"), z.literal("block")]).optional(),
+            warnThreshold: z.number().int().min(0).max(100).optional(),
+            blockThreshold: z.number().int().min(0).max(100).optional(),
+            auditLogPath: z.string().optional(),
+          })
+          .strict()
+          .optional(),
         entries: z
           .record(
             z.string(),
@@ -543,6 +552,14 @@ export const OpenClawSchema = z
                 apiKey: z.string().optional(),
                 env: z.record(z.string(), z.string()).optional(),
                 config: z.record(z.string(), z.unknown()).optional(),
+                trustGateOverride: z
+                  .object({
+                    reason: z.string(),
+                    approvedAt: z.string(),
+                    approvedBy: z.string().optional(),
+                  })
+                  .strict()
+                  .optional(),
               })
               .strict(),
           )

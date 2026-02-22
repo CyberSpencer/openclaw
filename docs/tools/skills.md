@@ -72,6 +72,9 @@ that up as `<workspace>/skills` on the next session.
 - Prefer sandboxed runs for untrusted inputs and risky tools. See [Sandboxing](/gateway/sandboxing).
 - `skills.entries.*.env` and `skills.entries.*.apiKey` inject secrets into the **host** process
   for that agent turn (not the sandbox). Keep secrets out of prompts and logs.
+- Trust-gate checks now score integrations on permission scope, token policy,
+  network constraints, and provenance metadata before enable/run.
+  See [Skill/MCP Trust Gate](/security/skill-mcp-trust-gate) for threat model + checklist.
 - For a broader threat model and checklists, see [Security](/gateway/security).
 
 ## Format (AgentSkills + Pi-compatible)
@@ -133,6 +136,10 @@ Fields under `metadata.openclaw`:
 - `requires.config` — list of `openclaw.json` paths that must be truthy.
 - `primaryEnv` — env var name associated with `skills.entries.<name>.apiKey`.
 - `install` — optional array of installer specs used by the macOS Skills UI (brew/node/go/uv/download).
+- `trust.permissionScope` — requested permission scope list (`read`, `write`, `exec`, `admin`, etc.).
+- `trust.tokenHandling` / `trust.tokenPolicy` — token handling declaration (`none` | `ephemeral` | `scoped` | `persistent`) and redaction/rotation requirements.
+- `trust.network` / `trust.networkTargets` — network egress policy (`none` | `allowlist` | `restricted` | `any`) plus optional allowlist targets.
+- `trust.provenance` — integration provenance metadata (`source`, `publisher`, optional `signature`, `reviewedAt`, `reviewedBy`).
 
 Note on sandboxing:
 
@@ -224,6 +231,11 @@ Rules:
 - `config`: optional bag for custom per-skill fields; custom keys must live here.
 - `allowBundled`: optional allowlist for **bundled** skills only. If set, only
   bundled skills in the list are eligible (managed/workspace skills unaffected).
+- `skills.trustGate.level`: default `warn` (non-blocking), optional `block` (strict).
+  In strict mode, high-risk skills are excluded at run time and `skills.update`
+  refuses enable/update unless operator override is set.
+- `skills.entries.<skillKey>.trustGateOverride`: manual reviewed override with
+  `reason`, `approvedAt`, optional `approvedBy`.
 
 ## Environment injection (per agent run)
 

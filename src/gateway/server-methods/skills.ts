@@ -1,4 +1,4 @@
-import type { OpenClawConfig } from "../../config/config.js";
+import type { OpenClawConfig, SkillTrustGateOverrideConfig } from "../../config/config.js";
 import type { GatewayRequestHandlers } from "./types.js";
 import {
   listAgentIds,
@@ -7,7 +7,13 @@ import {
 } from "../../agents/agent-scope.js";
 import { installSkill } from "../../agents/skills-install.js";
 import { buildWorkspaceSkillStatus } from "../../agents/skills-status.js";
-import { loadWorkspaceSkillEntries, type SkillEntry } from "../../agents/skills.js";
+import {
+  evaluateSkillTrustGate,
+  loadWorkspaceSkillEntries,
+  writeSkillTrustGateAudit,
+  type SkillEntry,
+} from "../../agents/skills.js";
+import { resolveSkillKey } from "../../agents/skills/frontmatter.js";
 import { loadConfig, writeConfigFile } from "../../config/config.js";
 import { getRemoteSkillEligibility } from "../../infra/skills-remote.js";
 import { normalizeAgentId } from "../../routing/session-key.js";
@@ -65,6 +71,46 @@ function collectSkillBins(entries: SkillEntry[]): string[] {
     }
   }
   return [...bins].toSorted();
+}
+
+function findSkillEntryByKey(entries: SkillEntry[], skillKey: string): SkillEntry | undefined {
+  const normalized = skillKey.trim();
+  if (!normalized) {
+    return undefined;
+  }
+  return entries.find((entry) => {
+    const key = resolveSkillKey(entry.skill, entry);
+    return key === normalized || entry.skill.name === normalized;
+  });
+}
+
+function buildOverrideFromParams(
+  input: unknown,
+  current: SkillTrustGateOverrideConfig | undefined,
+): SkillTrustGateOverrideConfig | undefined {
+  if (!input || typeof input !== "object") {
+    return current;
+  }
+  const raw = input as Record<string, unknown>;
+  const approve = raw.approve;
+  if (approve === false) {
+    return undefined;
+  }
+  if (approve !== true) {
+    return current;
+  }
+
+  const reason = typeof raw.reason === "string" ? raw.reason.trim() : "";
+  if (!reason) {
+    return current;
+  }
+  const approvedByRaw = typeof raw.approvedBy === "string" ? raw.approvedBy.trim() : "";
+
+  return {
+    reason,
+    approvedAt: new Date().toISOString(),
+    approvedBy: approvedByRaw || undefined,
+  };
 }
 
 export const skillsHandlers: GatewayRequestHandlers = {
@@ -173,11 +219,39 @@ export const skillsHandlers: GatewayRequestHandlers = {
       enabled?: boolean;
       apiKey?: string;
       env?: Record<string, string>;
+      trustOverride?: {
+        approve?: boolean;
+        reason?: string;
+        approvedBy?: string;
+      };
     };
+    if (
+      p.trustOverride?.approve === true &&
+      (typeof p.trustOverride.reason !== "string" || !p.trustOverride.reason.trim())
+    ) {
+      respond(
+        false,
+        undefined,
+        errorShape(
+          ErrorCodes.INVALID_REQUEST,
+          "trustOverride.reason is required when trustOverride.approve=true",
+        ),
+      );
+      return;
+    }
+
     const cfg = loadConfig();
     const skills = cfg.skills ? { ...cfg.skills } : {};
     const entries = skills.entries ? { ...skills.entries } : {};
     const current = entries[p.skillKey] ? { ...entries[p.skillKey] } : {};
+
+    const nextOverride = buildOverrideFromParams(p.trustOverride, current.trustGateOverride);
+    if (nextOverride) {
+      current.trustGateOverride = nextOverride;
+    } else if (p.trustOverride?.approve === false) {
+      delete current.trustGateOverride;
+    }
+
     if (typeof p.enabled === "boolean") {
       current.enabled = p.enabled;
     }
@@ -205,6 +279,56 @@ export const skillsHandlers: GatewayRequestHandlers = {
       }
       current.env = nextEnv;
     }
+
+    const willBeEnabled = current.enabled !== false;
+    const workspaceDirRaw = resolveAgentWorkspaceDir(cfg, resolveDefaultAgentId(cfg));
+    const workspaceEntries = loadWorkspaceSkillEntries(workspaceDirRaw, { config: cfg });
+    const skillEntry = findSkillEntryByKey(workspaceEntries, p.skillKey);
+    const trustGate =
+      skillEntry && willBeEnabled
+        ? evaluateSkillTrustGate({
+            entry: skillEntry,
+            config: cfg,
+            override: current.trustGateOverride,
+          })
+        : undefined;
+
+    if (skillEntry && trustGate) {
+      writeSkillTrustGateAudit({
+        config: cfg,
+        record: {
+          ts: new Date().toISOString(),
+          phase: "enable",
+          source: "skills.update",
+          skillName: skillEntry.skill.name,
+          skillKey: p.skillKey,
+          score: trustGate.score,
+          decision: trustGate.decision,
+          effectiveDecision: trustGate.effectiveDecision,
+          policyLevel: trustGate.policyLevel,
+          overridden: trustGate.overridden,
+          overrideRequired: trustGate.overrideRequired,
+          findings: trustGate.findings,
+        },
+      });
+
+      if (trustGate.effectiveDecision === "block") {
+        respond(
+          false,
+          {
+            ok: false,
+            skillKey: p.skillKey,
+            trustGate,
+          },
+          errorShape(
+            ErrorCodes.UNAVAILABLE,
+            `Trust gate blocked skill "${p.skillKey}" (score ${trustGate.score}). Override with skills.update { trustOverride: { approve: true, reason: "<operator review>", approvedBy: "<you>" } } after review.`,
+          ),
+        );
+        return;
+      }
+    }
+
     entries[p.skillKey] = current;
     skills.entries = entries;
     const nextConfig: OpenClawConfig = {
@@ -212,6 +336,6 @@ export const skillsHandlers: GatewayRequestHandlers = {
       skills,
     };
     await writeConfigFile(nextConfig);
-    respond(true, { ok: true, skillKey: p.skillKey, config: current }, undefined);
+    respond(true, { ok: true, skillKey: p.skillKey, config: current, trustGate }, undefined);
   },
 };
