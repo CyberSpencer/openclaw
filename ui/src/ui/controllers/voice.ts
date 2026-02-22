@@ -92,6 +92,7 @@ export type VoiceState = {
   lastModel: string | null;
   lastThinkingLevel: string | null;
   routeModelWarning: string | null;
+  sparkUnavailableReason: string | null;
 
   // Optional TTS steering (voice = who, instruct = mood/style, language = hint)
   ttsVoice: string | null;
@@ -115,6 +116,15 @@ export type VoiceCapabilities = {
   };
 };
 
+export type VoiceStageTimings = {
+  captureMs?: number;
+  transcribeMs?: number;
+  routeMs?: number;
+  llmMs?: number;
+  ttsMs?: number;
+  playbackMs?: number;
+};
+
 export type VoiceTimings = {
   micStartMs?: number;
   firstSpeechMs?: number;
@@ -122,6 +132,11 @@ export type VoiceTimings = {
   routingMs?: number;
   llmMs?: number;
   ttsMs?: number;
+  captureMs?: number;
+  transcribeMs?: number;
+  routeMs?: number;
+  playbackMs?: number;
+  stages?: VoiceStageTimings;
   totalMs: number;
 };
 
@@ -144,6 +159,7 @@ export type VoiceProcessResult = {
   model?: string;
   thinkingLevel?: string;
   runId?: string;
+  voiceAction?: Record<string, unknown>;
   timings?: VoiceTimings;
 };
 
@@ -181,10 +197,27 @@ export function withTurnTelemetry(
   base: VoiceTimings | null | undefined,
   telemetry: { micStartMs: number; firstSpeechMs?: number; totalMs: number },
 ): VoiceTimings {
+  const captureMs = base?.captureMs ?? telemetry.micStartMs;
+  const transcribeMs = base?.transcribeMs ?? base?.sttMs;
+  const routeMs = base?.routeMs ?? base?.routingMs;
+  const stages: VoiceStageTimings = {
+    ...base?.stages,
+    ...(captureMs != null ? { captureMs } : {}),
+    ...(transcribeMs != null ? { transcribeMs } : {}),
+    ...(routeMs != null ? { routeMs } : {}),
+    ...(base?.llmMs != null ? { llmMs: base.llmMs } : {}),
+    ...(base?.ttsMs != null ? { ttsMs: base.ttsMs } : {}),
+    ...(base?.playbackMs != null ? { playbackMs: base.playbackMs } : {}),
+  };
+
   return {
     ...(base ?? { totalMs: telemetry.totalMs }),
     micStartMs: telemetry.micStartMs,
     firstSpeechMs: telemetry.firstSpeechMs,
+    captureMs,
+    transcribeMs,
+    routeMs,
+    stages,
     totalMs: base?.totalMs ?? telemetry.totalMs,
   };
 }
@@ -256,6 +289,7 @@ export function createVoiceState(): VoiceState {
     lastModel: null,
     lastThinkingLevel: null,
     routeModelWarning: null,
+    sparkUnavailableReason: null,
 
     // TTS steering (synced from app when starting conversation)
     ttsVoice: null,
@@ -1068,6 +1102,38 @@ async function requestWithTimeout<T>(
   }
 }
 
+function asTimingNumber(value: unknown): number | undefined {
+  if (typeof value === "number" && Number.isFinite(value)) {
+    return Math.max(0, Math.round(value));
+  }
+  return undefined;
+}
+
+function buildSparkTimings(params: {
+  sttMs?: number;
+  routingMs?: number;
+  llmMs?: number;
+  ttsMs?: number;
+  totalMs: number;
+}): VoiceTimings {
+  const transcribeMs = params.sttMs;
+  const routeMs = params.routingMs;
+  return {
+    ...(params.sttMs != null ? { sttMs: params.sttMs } : {}),
+    ...(params.routingMs != null ? { routingMs: params.routingMs, routeMs } : {}),
+    ...(params.llmMs != null ? { llmMs: params.llmMs } : {}),
+    ...(params.ttsMs != null ? { ttsMs: params.ttsMs } : {}),
+    ...(transcribeMs != null ? { transcribeMs } : {}),
+    stages: {
+      ...(transcribeMs != null ? { transcribeMs } : {}),
+      ...(routeMs != null ? { routeMs } : {}),
+      ...(params.llmMs != null ? { llmMs: params.llmMs } : {}),
+      ...(params.ttsMs != null ? { ttsMs: params.ttsMs } : {}),
+    },
+    totalMs: params.totalMs,
+  };
+}
+
 /**
  * Process voice input via Spark STT + OpenClaw reply generation + Spark TTS.
  *
@@ -1100,10 +1166,10 @@ export async function processVoiceInputSpark(
     let sttResult: Record<string, unknown>;
     try {
       sttResult = await requestWithTimeout(
-        state.client.request("spark.voice.stt", {
+        state.client.request<Record<string, unknown>>("spark.voice.stt", {
           audio_base64: audioBase64,
           format,
-        }) as Promise<Record<string, unknown>>,
+        }),
         SPARK_STT_TIMEOUT_MS,
         "SPARK_STT_TIMEOUT",
       );
@@ -1114,7 +1180,10 @@ export async function processVoiceInputSpark(
       } else {
         state.error = `STT failed: ${code}`;
       }
-      state.timings = { sttMs: Date.now() - sttStart, totalMs: Date.now() - startedAt };
+      state.timings = buildSparkTimings({
+        sttMs: Date.now() - sttStart,
+        totalMs: Date.now() - startedAt,
+      });
       return null;
     }
     const sttMs = Date.now() - sttStart;
@@ -1126,7 +1195,10 @@ export async function processVoiceInputSpark(
 
     if (!state.transcription.trim()) {
       state.error = "No speech detected";
-      state.timings = { sttMs, totalMs: Date.now() - startedAt };
+      state.timings = buildSparkTimings({
+        sttMs,
+        totalMs: Date.now() - startedAt,
+      });
       return {
         sessionId: "",
         transcription: state.transcription,
@@ -1140,12 +1212,13 @@ export async function processVoiceInputSpark(
     let reply: Record<string, unknown>;
     try {
       reply = await requestWithTimeout(
-        state.client.request("voice.processText", {
+        state.client.request<Record<string, unknown>>("voice.processText", {
           text: state.transcription,
           sessionKey: state.sessionKey ?? undefined,
           driveOpenClaw: state.driveOpenClaw,
+          voiceActionMode: true,
           skipTts: true,
-        }) as Promise<Record<string, unknown>>,
+        }),
         SPARK_LLM_TIMEOUT_MS,
         "SPARK_LLM_TIMEOUT",
       );
@@ -1155,14 +1228,27 @@ export async function processVoiceInputSpark(
         code === "SPARK_LLM_TIMEOUT"
           ? "Response generation timed out. Try a shorter request."
           : `LLM failed: ${code}`;
-      state.timings = {
+      state.timings = buildSparkTimings({
         sttMs,
         llmMs: Date.now() - llmStart,
         totalMs: Date.now() - startedAt,
-      };
+      });
       return null;
     }
     const llmMs = Date.now() - llmStart;
+    const replyTimings =
+      reply?.timings && typeof reply.timings === "object"
+        ? (reply.timings as Record<string, unknown>)
+        : null;
+    const replyStages =
+      replyTimings?.stages && typeof replyTimings.stages === "object"
+        ? (replyTimings.stages as Record<string, unknown>)
+        : null;
+    const routingMs =
+      asTimingNumber(replyTimings?.routingMs) ??
+      asTimingNumber(replyTimings?.routeMs) ??
+      asTimingNumber(replyStages?.routeMs);
+    const effectiveLlmMs = asTimingNumber(replyTimings?.llmMs) ?? llmMs;
 
     const responseTextRaw = reply?.response;
     const responseText =
@@ -1170,28 +1256,13 @@ export async function processVoiceInputSpark(
     state.response = responseText;
 
     const baseResult: VoiceProcessResult = {
-      sessionId:
-        typeof (reply as Record<string, unknown>)?.sessionId === "string"
-          ? ((reply as Record<string, unknown>).sessionId as string)
-          : "",
+      sessionId: typeof reply.sessionId === "string" ? reply.sessionId : "",
       transcription: state.transcription,
       response: responseText,
-      route:
-        typeof (reply as Record<string, unknown>)?.route === "string"
-          ? ((reply as Record<string, unknown>).route as string)
-          : undefined,
-      model:
-        typeof (reply as Record<string, unknown>)?.model === "string"
-          ? ((reply as Record<string, unknown>).model as string)
-          : undefined,
-      thinkingLevel:
-        typeof (reply as Record<string, unknown>)?.thinkingLevel === "string"
-          ? ((reply as Record<string, unknown>).thinkingLevel as string)
-          : undefined,
-      runId:
-        typeof (reply as Record<string, unknown>)?.runId === "string"
-          ? ((reply as Record<string, unknown>).runId as string)
-          : undefined,
+      route: typeof reply.route === "string" ? reply.route : undefined,
+      model: typeof reply.model === "string" ? reply.model : undefined,
+      thinkingLevel: typeof reply.thinkingLevel === "string" ? reply.thinkingLevel : undefined,
+      runId: typeof reply.runId === "string" ? reply.runId : undefined,
     };
 
     setVoiceAttribution(
@@ -1203,11 +1274,12 @@ export async function processVoiceInputSpark(
     );
 
     if (!responseText.trim()) {
-      state.timings = {
+      state.timings = buildSparkTimings({
         sttMs,
-        llmMs,
+        routingMs,
+        llmMs: effectiveLlmMs,
         totalMs: Date.now() - startedAt,
-      };
+      });
       return {
         ...baseResult,
         timings: state.timings,
@@ -1217,11 +1289,12 @@ export async function processVoiceInputSpark(
     // 3) TTS via Spark
     const ttsInput = normalizeTextForTts(responseText);
     if (!ttsInput) {
-      state.timings = {
+      state.timings = buildSparkTimings({
         sttMs,
-        llmMs,
+        routingMs,
+        llmMs: effectiveLlmMs,
         totalMs: Date.now() - startedAt,
-      };
+      });
       return {
         ...baseResult,
         timings: state.timings,
@@ -1242,7 +1315,7 @@ export async function processVoiceInputSpark(
     }
     try {
       ttsResult = await requestWithTimeout(
-        state.client.request("spark.voice.tts", ttsParams) as Promise<Record<string, unknown>>,
+        state.client.request<Record<string, unknown>>("spark.voice.tts", ttsParams),
         SPARK_TTS_TIMEOUT_MS,
         "SPARK_TTS_TIMEOUT",
       );
@@ -1260,12 +1333,13 @@ export async function processVoiceInputSpark(
     const audio = ttsResult?.audio_base64;
     const fmt = ttsResult?.format;
 
-    state.timings = {
+    state.timings = buildSparkTimings({
       sttMs,
-      llmMs,
+      routingMs,
+      llmMs: effectiveLlmMs,
       ttsMs,
       totalMs: Date.now() - startedAt,
-    };
+    });
 
     return {
       ...baseResult,
@@ -1542,7 +1616,10 @@ export async function startConversation(
     return;
   }
   if (state.mode === "spark" && !state.sparkVoiceAvailable) {
-    state.error = "Spark voice is unavailable. Check DGX voice health and try again.";
+    const reason = state.sparkUnavailableReason?.trim();
+    state.error = reason
+      ? `Spark voice is unavailable: ${reason}`
+      : "Spark voice is unavailable. Check DGX voice health and try again.";
     state.phase = "idle";
     onUpdate();
     return;
@@ -1667,7 +1744,17 @@ export async function startConversation(
           stopPlayback(state);
         });
 
+        const playbackStart = Date.now();
         await playAudioBase64(result.audioBase64, state, result.audioFormat);
+        const playbackMs = Math.max(0, Date.now() - playbackStart);
+        if (state.timings) {
+          state.timings.playbackMs = playbackMs;
+          state.timings.totalMs = Math.max(0, Date.now() - turnStartedAt);
+          state.timings.stages = {
+            ...state.timings.stages,
+            playbackMs,
+          };
+        }
         cleanupInterruptMonitor(state);
         onUpdate();
       }

@@ -381,6 +381,43 @@ function mapDgxServices(
   return result;
 }
 
+function deriveVoiceDegradedReasonFromStats(stats: DgxStatsResponse): string | undefined {
+  if (stats.voice?.available) {
+    return undefined;
+  }
+  const candidates: string[] = [];
+  for (const [name, svc] of Object.entries(stats.services ?? {})) {
+    const key = name.toLowerCase();
+    const looksVoice = key.includes("voice") || key === "stt" || key === "tts";
+    if (!looksVoice || svc.status === "healthy") {
+      continue;
+    }
+    const reason = svc.reason?.trim() || `status=${svc.status}`;
+    candidates.push(`${name}: ${reason}`);
+  }
+  if (candidates.length > 0) {
+    return candidates[0];
+  }
+  return "Spark voice STT/TTS services are unavailable.";
+}
+
+function deriveVoiceDegradedReasonFromFallback(params: {
+  voiceHealthProbe: Awaited<ReturnType<typeof fetchVoiceHealth>> | null;
+  sttProbe: Awaited<ReturnType<typeof probeHealth>> | null;
+  ttsProbe: Awaited<ReturnType<typeof probeHealth>> | null;
+}): string | undefined {
+  if (params.voiceHealthProbe && !params.voiceHealthProbe.healthy) {
+    return params.voiceHealthProbe.error || "voice health endpoint unhealthy";
+  }
+  if (params.sttProbe && !params.sttProbe.healthy) {
+    return params.sttProbe.error || `voice_stt HTTP ${params.sttProbe.status ?? "?"}`;
+  }
+  if (params.ttsProbe && !params.ttsProbe.healthy) {
+    return params.ttsProbe.error || `voice_tts HTTP ${params.ttsProbe.status ?? "?"}`;
+  }
+  return undefined;
+}
+
 export const sparkStatusHandlers: GatewayRequestHandlers = {
   "spark.status": async ({ respond }) => {
     const now = Date.now();
@@ -403,6 +440,7 @@ export const sparkStatusHandlers: GatewayRequestHandlers = {
           checkedAt,
           source: "fallback" as const,
           voiceAvailable: false,
+          voiceDegradedReason: "DGX is disabled",
           overall: "unknown" as SparkOverall,
         };
         lastCachedAt = now;
@@ -415,6 +453,7 @@ export const sparkStatusHandlers: GatewayRequestHandlers = {
       const context = access.context;
       const activeHost = context?.host ?? configuredHost ?? null;
       if (!context) {
+        const unresolvedReason = access.error ?? "DGX endpoint is not configured";
         const payload = {
           enabled: true,
           active: false,
@@ -422,8 +461,9 @@ export const sparkStatusHandlers: GatewayRequestHandlers = {
           checkedAt,
           source: "fallback" as const,
           voiceAvailable: false,
+          voiceDegradedReason: unresolvedReason,
           overall: "down" as SparkOverall,
-          error: access.error ?? "DGX endpoint is not configured",
+          error: unresolvedReason,
         };
         lastCachedAt = now;
         lastCachedResult = payload;
@@ -438,6 +478,9 @@ export const sparkStatusHandlers: GatewayRequestHandlers = {
           // When voice pipeline (STT/TTS) is up, treat Spark as active even if PersonaPlex or Moshi are down.
           const voiceAvailable = stats.voice?.available ?? false;
           const active = stats.overall !== "down" || voiceAvailable;
+          const voiceDegradedReason = voiceAvailable
+            ? undefined
+            : deriveVoiceDegradedReasonFromStats(stats);
           const payload = {
             enabled: true,
             active,
@@ -445,6 +488,7 @@ export const sparkStatusHandlers: GatewayRequestHandlers = {
             checkedAt,
             source: "dgx-stats" as const,
             voiceAvailable,
+            voiceDegradedReason,
             overall: stats.overall,
             counts: stats.counts ?? null,
             services: mapDgxServices(stats),
@@ -516,6 +560,13 @@ export const sparkStatusHandlers: GatewayRequestHandlers = {
         ttsProbe,
       ]);
       const active = overall === "healthy" || overall === "degraded";
+      const voiceDegradedReason = voiceAvailable
+        ? undefined
+        : (deriveVoiceDegradedReasonFromFallback({
+            voiceHealthProbe,
+            sttProbe,
+            ttsProbe,
+          }) ?? "Spark voice STT/TTS services are unavailable.");
 
       const payload = {
         enabled: true,
@@ -524,6 +575,7 @@ export const sparkStatusHandlers: GatewayRequestHandlers = {
         checkedAt,
         source: "fallback" as const,
         voiceAvailable,
+        voiceDegradedReason,
         overall,
         services,
       };

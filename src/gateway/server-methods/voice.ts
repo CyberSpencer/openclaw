@@ -28,6 +28,17 @@ import {
 import { loadConfig } from "../../config/config.js";
 import { updateSessionStore, type SessionEntry } from "../../config/sessions.js";
 import { INTERNAL_MESSAGE_CHANNEL } from "../../utils/message-channel.js";
+import {
+  classifyVoiceActionIntent,
+  formatAllowedVoiceActionIntents,
+  isVoiceActionCancelText,
+  isVoiceActionConfirmText,
+  isVoiceActionIntentAllowed,
+  resolveVoiceActionPolicy,
+  scaffoldVoiceIntentPrompt,
+  type VoiceActionAllowedIntent,
+  type VoiceActionIntent,
+} from "../../voice/action-mode.js";
 import { transcribeWithWhisper, resolveWhisperConfig } from "../../voice/local-stt.js";
 import { synthesizeWithLocalTts, resolveLocalTtsConfig } from "../../voice/local-tts.js";
 import {
@@ -56,6 +67,256 @@ import { formatForLog } from "../ws-log.js";
 function getVoiceConfig(): VoiceConfig {
   const cfg = loadConfig();
   return cfg.voice ?? {};
+}
+
+type VoiceStageTimings = {
+  captureMs?: number;
+  transcribeMs?: number;
+  routeMs?: number;
+  llmMs?: number;
+  ttsMs?: number;
+  playbackMs?: number;
+};
+
+type VoiceStructuredTimings = {
+  sttMs?: number;
+  routingMs?: number;
+  llmMs?: number;
+  ttsMs?: number;
+  totalMs: number;
+  captureMs?: number;
+  transcribeMs?: number;
+  routeMs?: number;
+  playbackMs?: number;
+  stages: VoiceStageTimings;
+};
+
+type VoiceActionPayload = {
+  mode: "constrained";
+  enabled: boolean;
+  intent: VoiceActionIntent;
+  allowedIntents: VoiceActionAllowedIntent[];
+  confirmationRequired?: boolean;
+  confirmationState?: "pending" | "confirmed" | "cancelled" | "not_required";
+  confirmationId?: string;
+  blockedReason?: string;
+  appliedText?: string;
+};
+
+type PendingVoiceConfirmation = {
+  id: string;
+  text: string;
+  createdAt: number;
+  expiresAt: number;
+};
+
+const pendingVoiceConfirmations = new Map<string, PendingVoiceConfirmation>();
+
+function normalizeTimingValue(value: unknown): number | undefined {
+  if (typeof value === "number" && Number.isFinite(value)) {
+    return Math.max(0, Math.round(value));
+  }
+  return undefined;
+}
+
+function normalizeVoiceTimings(
+  timings: Record<string, unknown> | undefined,
+): VoiceStructuredTimings | undefined {
+  if (!timings) {
+    return undefined;
+  }
+
+  const totalMs = normalizeTimingValue(timings.totalMs);
+  if (totalMs == null) {
+    return undefined;
+  }
+
+  const stagesRaw =
+    timings.stages && typeof timings.stages === "object"
+      ? (timings.stages as Record<string, unknown>)
+      : {};
+
+  const captureMs =
+    normalizeTimingValue(timings.captureMs) ?? normalizeTimingValue(stagesRaw.captureMs);
+  const transcribeMs =
+    normalizeTimingValue(timings.transcribeMs) ??
+    normalizeTimingValue(stagesRaw.transcribeMs) ??
+    normalizeTimingValue(timings.sttMs);
+  const routeMs =
+    normalizeTimingValue(timings.routeMs) ??
+    normalizeTimingValue(stagesRaw.routeMs) ??
+    normalizeTimingValue(timings.routingMs);
+  const llmMs = normalizeTimingValue(timings.llmMs) ?? normalizeTimingValue(stagesRaw.llmMs);
+  const ttsMs = normalizeTimingValue(timings.ttsMs) ?? normalizeTimingValue(stagesRaw.ttsMs);
+  const playbackMs =
+    normalizeTimingValue(timings.playbackMs) ?? normalizeTimingValue(stagesRaw.playbackMs);
+
+  return {
+    sttMs: normalizeTimingValue(timings.sttMs),
+    routingMs: normalizeTimingValue(timings.routingMs),
+    llmMs,
+    ttsMs,
+    totalMs,
+    captureMs,
+    transcribeMs,
+    routeMs,
+    playbackMs,
+    stages: {
+      ...(captureMs != null ? { captureMs } : {}),
+      ...(transcribeMs != null ? { transcribeMs } : {}),
+      ...(routeMs != null ? { routeMs } : {}),
+      ...(llmMs != null ? { llmMs } : {}),
+      ...(ttsMs != null ? { ttsMs } : {}),
+      ...(playbackMs != null ? { playbackMs } : {}),
+    },
+  };
+}
+
+function prunePendingVoiceConfirmations(now: number): void {
+  for (const [sessionKey, pending] of pendingVoiceConfirmations.entries()) {
+    if (pending.expiresAt <= now) {
+      pendingVoiceConfirmations.delete(sessionKey);
+    }
+  }
+}
+
+function resolveVoiceActionDecision(params: {
+  enabled: boolean;
+  sessionKey: string;
+  text: string;
+}): {
+  proceed: boolean;
+  effectiveText: string;
+  responseText?: string;
+  action?: VoiceActionPayload;
+} {
+  const policy = resolveVoiceActionPolicy();
+  const allowedIntents = formatAllowedVoiceActionIntents(policy);
+
+  if (!params.enabled) {
+    return { proceed: true, effectiveText: params.text };
+  }
+
+  if (!policy.enabled) {
+    return {
+      proceed: true,
+      effectiveText: params.text,
+      action: {
+        mode: "constrained",
+        enabled: false,
+        intent: "unknown",
+        allowedIntents,
+      },
+    };
+  }
+
+  const now = Date.now();
+  prunePendingVoiceConfirmations(now);
+  const pending = pendingVoiceConfirmations.get(params.sessionKey);
+
+  if (pending && isVoiceActionCancelText(params.text)) {
+    pendingVoiceConfirmations.delete(params.sessionKey);
+    return {
+      proceed: false,
+      effectiveText: params.text,
+      responseText: "Cancelled pending external send.",
+      action: {
+        mode: "constrained",
+        enabled: true,
+        intent: "cancel",
+        allowedIntents,
+        confirmationState: "cancelled",
+        confirmationId: pending.id,
+        blockedReason: "confirmation_cancelled",
+      },
+    };
+  }
+
+  if (pending && isVoiceActionConfirmText(params.text)) {
+    pendingVoiceConfirmations.delete(params.sessionKey);
+    return {
+      proceed: true,
+      effectiveText: pending.text,
+      action: {
+        mode: "constrained",
+        enabled: true,
+        intent: "external_send",
+        allowedIntents,
+        confirmationState: "confirmed",
+        confirmationId: pending.id,
+        appliedText: pending.text,
+      },
+    };
+  }
+
+  const intent = classifyVoiceActionIntent(params.text);
+  if (intent === "external_send") {
+    if (policy.requireExplicitSendConfirmation) {
+      const id = randomUUID();
+      pendingVoiceConfirmations.set(params.sessionKey, {
+        id,
+        text: params.text,
+        createdAt: now,
+        expiresAt: now + policy.confirmationTtlMs,
+      });
+      return {
+        proceed: false,
+        effectiveText: params.text,
+        responseText:
+          'External send detected. Say "confirm send" to proceed, or say "cancel" to stop.',
+        action: {
+          mode: "constrained",
+          enabled: true,
+          intent,
+          allowedIntents,
+          confirmationRequired: true,
+          confirmationState: "pending",
+          confirmationId: id,
+          blockedReason: "confirmation_required",
+        },
+      };
+    }
+    return {
+      proceed: true,
+      effectiveText: params.text,
+      action: {
+        mode: "constrained",
+        enabled: true,
+        intent,
+        allowedIntents,
+        confirmationState: "not_required",
+        appliedText: params.text,
+      },
+    };
+  }
+
+  if (!isVoiceActionIntentAllowed(intent, policy)) {
+    return {
+      proceed: false,
+      effectiveText: params.text,
+      responseText: `Voice Action Mode accepts: ${allowedIntents.join(", ")}. Ask for one of those intents.`,
+      action: {
+        mode: "constrained",
+        enabled: true,
+        intent,
+        allowedIntents,
+        blockedReason: "intent_not_allowed",
+      },
+    };
+  }
+
+  const effectiveText = scaffoldVoiceIntentPrompt(intent, params.text);
+  return {
+    proceed: true,
+    effectiveText,
+    action: {
+      mode: "constrained",
+      enabled: true,
+      intent,
+      allowedIntents,
+      appliedText: effectiveText,
+    },
+  };
 }
 
 type TranscriptAppendResult = {
@@ -356,6 +617,7 @@ export const voiceHandlers: GatewayRequestHandlers = {
    * Params:
    * - audio: Base64-encoded audio data (WAV format)
    * - sessionKey: Optional session key for chat context
+   * - voiceActionMode: Optional constrained intent mode with explicit send confirmations
    */
   "voice.process": async ({ params, respond, context, client }) => {
     const audioBase64 = typeof params.audio === "string" ? params.audio : "";
@@ -372,6 +634,7 @@ export const voiceHandlers: GatewayRequestHandlers = {
     const textPrompt = typeof params.textPrompt === "string" ? params.textPrompt.trim() : "";
     const voicePrompt = typeof params.voicePrompt === "string" ? params.voicePrompt.trim() : "";
     const driveOpenClaw = params.driveOpenClaw === true;
+    const voiceActionMode = params.voiceActionMode === true;
     const seed =
       typeof params.seed === "number" && Number.isFinite(params.seed)
         ? Math.trunc(params.seed)
@@ -402,26 +665,42 @@ export const voiceHandlers: GatewayRequestHandlers = {
         value: { provider: string; model: string; thinkLevel?: string } | null;
       } = { value: null };
       const agentRunIdRef: { value: string | null } = { value: null };
+      const voiceActionRef: { value: VoiceActionPayload | undefined } = { value: undefined };
 
       const llmInvoke = async (
         text: string,
         modelOverride?: string,
         thinking?: string,
       ): Promise<string> => {
+        const actionDecision = resolveVoiceActionDecision({
+          enabled: voiceActionMode,
+          sessionKey,
+          text,
+        });
+        if (actionDecision.action) {
+          voiceActionRef.value = actionDecision.action;
+        }
+        if (!actionDecision.proceed) {
+          return actionDecision.responseText ?? "Voice action blocked.";
+        }
+
+        const effectiveInput = actionDecision.effectiveText;
         const { cfg } = loadSessionEntry(sessionKey);
         const runId = randomUUID();
         agentRunIdRef.value = runId;
         let agentRunStarted = false;
 
-        const trimmed = text.trim();
+        const trimmed = effectiveInput.trim();
         const injectThinking = Boolean(thinking && trimmed && !trimmed.startsWith("/"));
-        const commandBody = injectThinking ? `/think ${thinking} ${text}` : text;
+        const commandBody = injectThinking
+          ? `/think ${thinking} ${effectiveInput}`
+          : effectiveInput;
 
         const ctx: MsgContext = {
-          Body: text,
-          BodyForAgent: text,
+          Body: effectiveInput,
+          BodyForAgent: effectiveInput,
           BodyForCommands: commandBody,
-          RawBody: text,
+          RawBody: effectiveInput,
           CommandBody: commandBody,
           SessionKey: sessionKey,
           Provider: INTERNAL_MESSAGE_CHANNEL,
@@ -545,7 +824,8 @@ export const voiceHandlers: GatewayRequestHandlers = {
             : result.routerDecision?.model,
           thinkingLevel: selectedModelRef.value?.thinkLevel,
           runId: agentRunIdRef.value,
-          timings: result.timings,
+          voiceAction: voiceActionRef.value,
+          timings: normalizeVoiceTimings(result.timings as Record<string, unknown> | undefined),
         });
       } else {
         respond(
@@ -553,7 +833,8 @@ export const voiceHandlers: GatewayRequestHandlers = {
           {
             sessionId: result.sessionId,
             transcription: result.transcription,
-            timings: result.timings,
+            voiceAction: voiceActionRef.value,
+            timings: normalizeVoiceTimings(result.timings as Record<string, unknown> | undefined),
           },
           errorShape(ErrorCodes.UNAVAILABLE, result.error ?? "Voice processing failed"),
         );
@@ -570,6 +851,7 @@ export const voiceHandlers: GatewayRequestHandlers = {
    * - text: Text to process
    * - sessionKey: Optional session key for chat context
    * - driveOpenClaw: Optional parity flag with voice.process config shaping
+   * - voiceActionMode: Optional constrained intent mode with explicit send confirmations
    * - skipTts: Optional flag to return text-only response (no local TTS synthesis)
    */
   "voice.processText": async ({ params, respond, context, client }) => {
@@ -586,6 +868,7 @@ export const voiceHandlers: GatewayRequestHandlers = {
     const sessionKey = typeof params.sessionKey === "string" ? params.sessionKey : "webchat-voice";
     const skipTts = params.skipTts === true;
     const driveOpenClaw = params.driveOpenClaw === true;
+    const voiceActionMode = params.voiceActionMode === true;
 
     try {
       const voiceConfig = getVoiceConfig();
@@ -600,26 +883,42 @@ export const voiceHandlers: GatewayRequestHandlers = {
         value: { provider: string; model: string; thinkLevel?: string } | null;
       } = { value: null };
       const agentRunIdRef: { value: string | null } = { value: null };
+      const voiceActionRef: { value: VoiceActionPayload | undefined } = { value: undefined };
 
       const llmInvoke = async (
         inputText: string,
         modelOverride?: string,
         thinking?: string,
       ): Promise<string> => {
+        const actionDecision = resolveVoiceActionDecision({
+          enabled: voiceActionMode,
+          sessionKey,
+          text: inputText,
+        });
+        if (actionDecision.action) {
+          voiceActionRef.value = actionDecision.action;
+        }
+        if (!actionDecision.proceed) {
+          return actionDecision.responseText ?? "Voice action blocked.";
+        }
+
+        const effectiveInput = actionDecision.effectiveText;
         const { cfg } = loadSessionEntry(sessionKey);
         const runId = randomUUID();
         agentRunIdRef.value = runId;
         let agentRunStarted = false;
 
-        const trimmed = inputText.trim();
+        const trimmed = effectiveInput.trim();
         const injectThinking = Boolean(thinking && trimmed && !trimmed.startsWith("/"));
-        const commandBody = injectThinking ? `/think ${thinking} ${inputText}` : inputText;
+        const commandBody = injectThinking
+          ? `/think ${thinking} ${effectiveInput}`
+          : effectiveInput;
 
         const ctx: MsgContext = {
-          Body: inputText,
-          BodyForAgent: inputText,
+          Body: effectiveInput,
+          BodyForAgent: effectiveInput,
           BodyForCommands: commandBody,
-          RawBody: inputText,
+          RawBody: effectiveInput,
           CommandBody: commandBody,
           SessionKey: sessionKey,
           Provider: INTERNAL_MESSAGE_CHANNEL,
@@ -741,12 +1040,17 @@ export const voiceHandlers: GatewayRequestHandlers = {
             : result.routerDecision?.model,
           thinkingLevel: selectedModelRef.value?.thinkLevel,
           runId: agentRunIdRef.value,
-          timings: result.timings,
+          voiceAction: voiceActionRef.value,
+          timings: normalizeVoiceTimings(result.timings as Record<string, unknown> | undefined),
         });
       } else {
         respond(
           false,
-          { sessionId: result.sessionId, timings: result.timings },
+          {
+            sessionId: result.sessionId,
+            voiceAction: voiceActionRef.value,
+            timings: normalizeVoiceTimings(result.timings as Record<string, unknown> | undefined),
+          },
           errorShape(ErrorCodes.UNAVAILABLE, result.error ?? "Voice processing failed"),
         );
       }
