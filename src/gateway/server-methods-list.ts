@@ -10,6 +10,7 @@ const BASE_METHODS = [
   "status",
   "usage.status",
   "usage.cost",
+  "brief.get",
   "tts.status",
   "tts.providers",
   "tts.enable",

@@ -81,6 +81,7 @@ import {
   ExecApprovalRequestParamsSchema,
   ExecApprovalResolveParamsSchema,
 } from "./exec-approvals.js";
+import { ExecutiveBriefGetParamsSchema } from "./executive-brief.js";
 import {
   ConnectParamsSchema,
   ErrorShapeSchema,
@@ -158,6 +159,7 @@ export const ProtocolSchemas: Record<string, TSchema> = {
   AgentIdentityResult: AgentIdentityResultSchema,
   AgentWaitParams: AgentWaitParamsSchema,
   WakeParams: WakeParamsSchema,
+  ExecutiveBriefGetParams: ExecutiveBriefGetParamsSchema,
   NodePairRequestParams: NodePairRequestParamsSchema,
   NodePairListParams: NodePairListParamsSchema,
   NodePairApproveParams: NodePairApproveParamsSchema,
