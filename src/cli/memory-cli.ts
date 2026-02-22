@@ -3,11 +3,25 @@ import fsSync from "node:fs";
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
-import { resolveDefaultAgentId } from "../agents/agent-scope.js";
+import { resolveDefaultAgentId, resolveAgentWorkspaceDir } from "../agents/agent-scope.js";
 import { loadConfig, type MemorySearchConfig, type OpenClawConfig } from "../config/config.js";
 import { resolveStateDir } from "../config/paths.js";
 import { resolveSessionTranscriptsDirForAgent } from "../config/sessions/paths.js";
 import { setVerbose } from "../globals.js";
+import {
+  buildReminderDigest,
+  closeTrackedCommitment,
+  extractDecisionCommitmentsFromRecords,
+  ingestExtractedCommitments,
+  listTrackedCommitments,
+  loadTrackedCommitmentStore,
+  normalizeIsoDate,
+  parseCommitmentStatus,
+  renderReminderDigest,
+  resolveTrackedCommitmentStorePath,
+  updateTrackedCommitment,
+  updateTrackedCommitmentStore,
+} from "../memory/execution-loop.js";
 import { getMemorySearchManager, type MemorySearchManagerResult } from "../memory/index.js";
 import { listMemoryFiles, normalizeExtraMemoryPaths } from "../memory/internal.js";
 import { defaultRuntime } from "../runtime.js";
@@ -104,6 +118,44 @@ function resolveAgentIds(cfg: ReturnType<typeof loadConfig>, agent?: string): st
     return list.map((entry) => entry.id).filter(Boolean);
   }
   return [resolveDefaultAgentId(cfg)];
+}
+
+function resolveExtraMemoryPathsForAgent(
+  cfg: ReturnType<typeof loadConfig>,
+  agentId: string,
+): string[] {
+  const paths = new Set<string>();
+  const add = (value?: string[]) => {
+    if (!value) {
+      return;
+    }
+    for (const entry of value) {
+      const trimmed = String(entry ?? "").trim();
+      if (trimmed) {
+        paths.add(trimmed);
+      }
+    }
+  };
+
+  add(cfg.agents?.defaults?.memorySearch?.extraPaths);
+
+  const listEntry = cfg.agents?.list?.find((entry) => entry.id === agentId);
+  add(listEntry?.memorySearch?.extraPaths);
+
+  const agentMap = cfg.agents as
+    | (Record<string, { memorySearch?: MemorySearchConfig } | undefined> & typeof cfg.agents)
+    | undefined;
+  add(agentMap?.[agentId]?.memorySearch?.extraPaths);
+
+  return Array.from(paths);
+}
+
+function toProvenancePath(workspaceDir: string, absPath: string): string {
+  const relative = path.relative(workspaceDir, absPath);
+  if (!relative.startsWith("..") && !path.isAbsolute(relative)) {
+    return relative.replace(/\\/g, "/");
+  }
+  return absPath.replace(/\\/g, "/");
 }
 
 function formatExtraPaths(workspaceDir: string, extraPaths: string[]): string[] {
@@ -737,6 +789,369 @@ export function registerMemoryCli(program: Command) {
             defaultRuntime.log(lines.join("\n").trim());
           },
         });
+      },
+    );
+
+  const commitments = memory
+    .command("commitments")
+    .description("Track commitments extracted from decision-style memory records");
+
+  commitments
+    .command("ingest")
+    .description(
+      "Extract decision-style records from memory markdown and upsert tracked commitments",
+    )
+    .option("--agent <id>", "Agent id (default: default agent)")
+    .option("--dry-run", "Run extraction without persisting", false)
+    .option("--json", "Print JSON")
+    .option("--verbose", "Verbose logging", false)
+    .action(
+      async (
+        opts: MemoryCommandOptions & {
+          dryRun?: boolean;
+        },
+      ) => {
+        setVerbose(Boolean(opts.verbose));
+        const cfg = loadConfig();
+        const agentId = resolveAgent(cfg, opts.agent);
+        const workspaceDir = resolveAgentWorkspaceDir(cfg, agentId);
+        const extraPaths = resolveExtraMemoryPathsForAgent(cfg, agentId);
+        const files = await listMemoryFiles(workspaceDir, extraPaths);
+        const records = await Promise.all(
+          files.map(async (absPath) => ({
+            path: toProvenancePath(workspaceDir, absPath),
+            content: await fs.readFile(absPath, "utf-8"),
+          })),
+        );
+
+        const extractedAt = new Date().toISOString();
+        const extracted = extractDecisionCommitmentsFromRecords({
+          records,
+          extractedAt,
+        });
+
+        const storePath = resolveTrackedCommitmentStorePath({ cfg, agentId });
+        let result: {
+          store: Awaited<ReturnType<typeof loadTrackedCommitmentStore>>;
+          summary: ReturnType<typeof ingestExtractedCommitments>;
+        };
+
+        if (opts.dryRun) {
+          const existing = await loadTrackedCommitmentStore(storePath);
+          const store = structuredClone(existing);
+          result = {
+            store,
+            summary: ingestExtractedCommitments({ store, extracted, nowIso: extractedAt }),
+          };
+        } else {
+          result = await updateTrackedCommitmentStore({
+            storePath,
+            mutator: (store) => {
+              const summary = ingestExtractedCommitments({ store, extracted, nowIso: extractedAt });
+              return { store, summary };
+            },
+          });
+        }
+
+        const totalCommitments = listTrackedCommitments({
+          store: result.store,
+          filter: { includeClosed: true },
+        }).length;
+
+        const payload = {
+          agentId,
+          workspaceDir,
+          storePath,
+          dryRun: Boolean(opts.dryRun),
+          filesScanned: files.length,
+          extracted: extracted.length,
+          summary: result.summary,
+          totalCommitments,
+        };
+
+        if (opts.json) {
+          defaultRuntime.log(JSON.stringify(payload, null, 2));
+          return;
+        }
+
+        defaultRuntime.log(
+          [
+            `Memory commitments ingest (${agentId})`,
+            `- Files scanned: ${files.length}`,
+            `- Extracted: ${extracted.length}`,
+            `- Created: ${result.summary.created}`,
+            `- Updated: ${result.summary.updated}`,
+            `- Duplicates: ${result.summary.duplicates}`,
+            `- Tracked total: ${totalCommitments}`,
+            `- Store: ${shortenHomePath(storePath)}${opts.dryRun ? " (dry-run, not saved)" : ""}`,
+          ].join("\n"),
+        );
+      },
+    );
+
+  commitments
+    .command("list")
+    .description("List tracked commitments")
+    .option("--agent <id>", "Agent id (default: default agent)")
+    .option(
+      "--status <value>",
+      "Filter by status (repeat or comma-separated): open,in_progress,blocked,done,cancelled",
+      (value: string, prev: string[] = []) => [...prev, value],
+      [],
+    )
+    .option("--owner <owner>", "Filter by owner")
+    .option("--due-before <YYYY-MM-DD>", "Filter by due date (inclusive upper bound)")
+    .option("--due-after <YYYY-MM-DD>", "Filter by due date (inclusive lower bound)")
+    .option("--include-closed", "Include done/cancelled commitments", false)
+    .option("--limit <n>", "Max items", (value: string) => Number(value))
+    .option("--json", "Print JSON")
+    .action(
+      async (opts: {
+        agent?: string;
+        status?: string[];
+        owner?: string;
+        dueBefore?: string;
+        dueAfter?: string;
+        includeClosed?: boolean;
+        limit?: number;
+        json?: boolean;
+      }) => {
+        const cfg = loadConfig();
+        const agentId = resolveAgent(cfg, opts.agent);
+        const storePath = resolveTrackedCommitmentStorePath({ cfg, agentId });
+        const store = await loadTrackedCommitmentStore(storePath);
+
+        const statuses = (opts.status ?? [])
+          .flatMap((raw) => raw.split(","))
+          .map((entry) => entry.trim())
+          .filter(Boolean);
+        const parsedStatuses = statuses.map((entry) => parseCommitmentStatus(entry));
+        const invalid = statuses.filter((_, index) => !parsedStatuses[index]);
+        if (invalid.length > 0) {
+          defaultRuntime.error(`Invalid commitment statuses: ${invalid.join(", ")}`);
+          process.exitCode = 1;
+          return;
+        }
+
+        const dueBefore = opts.dueBefore ? normalizeIsoDate(opts.dueBefore) : undefined;
+        const dueAfter = opts.dueAfter ? normalizeIsoDate(opts.dueAfter) : undefined;
+        if (opts.dueBefore && !dueBefore) {
+          defaultRuntime.error(`Invalid --due-before date: ${opts.dueBefore}`);
+          process.exitCode = 1;
+          return;
+        }
+        if (opts.dueAfter && !dueAfter) {
+          defaultRuntime.error(`Invalid --due-after date: ${opts.dueAfter}`);
+          process.exitCode = 1;
+          return;
+        }
+
+        const selectedStatuses = parsedStatuses.filter(
+          (entry): entry is NonNullable<typeof entry> => entry !== undefined,
+        );
+
+        const commitments = listTrackedCommitments({
+          store,
+          filter: {
+            statuses: selectedStatuses,
+            owner: opts.owner,
+            dueBefore,
+            dueAfter,
+            includeClosed: Boolean(opts.includeClosed),
+            limit: opts.limit,
+          },
+        });
+
+        if (opts.json) {
+          defaultRuntime.log(JSON.stringify({ agentId, storePath, commitments }, null, 2));
+          return;
+        }
+
+        if (commitments.length === 0) {
+          defaultRuntime.log("No tracked commitments.");
+          return;
+        }
+
+        for (const entry of commitments) {
+          defaultRuntime.log(
+            `- ${entry.id} [${entry.status}] ${entry.title} (owner: ${entry.owner}${entry.dueDate ? `, due: ${entry.dueDate}` : ""})`,
+          );
+        }
+      },
+    );
+
+  commitments
+    .command("update")
+    .description("Update a tracked commitment")
+    .argument("<id>", "Commitment id")
+    .option("--agent <id>", "Agent id (default: default agent)")
+    .option("--status <value>", "New status")
+    .option("--owner <owner>", "Set owner")
+    .option("--title <title>", "Set title")
+    .option("--due <YYYY-MM-DD>", "Set due date")
+    .option("--clear-due", "Clear due date", false)
+    .option("--note <text>", "Closure note or resolution note")
+    .option("--json", "Print JSON")
+    .action(
+      async (
+        id: string,
+        opts: {
+          agent?: string;
+          status?: string;
+          owner?: string;
+          title?: string;
+          due?: string;
+          clearDue?: boolean;
+          note?: string;
+          json?: boolean;
+        },
+      ) => {
+        const nextStatus = opts.status ? parseCommitmentStatus(opts.status) : undefined;
+        if (opts.status && !nextStatus) {
+          defaultRuntime.error(`Invalid status: ${opts.status}`);
+          process.exitCode = 1;
+          return;
+        }
+
+        const dueDate = opts.clearDue ? null : opts.due;
+        if (
+          nextStatus === undefined &&
+          opts.owner === undefined &&
+          opts.title === undefined &&
+          dueDate === undefined &&
+          opts.note === undefined
+        ) {
+          defaultRuntime.error(
+            "No updates supplied. Use --status/--owner/--title/--due/--clear-due/--note.",
+          );
+          process.exitCode = 1;
+          return;
+        }
+
+        const cfg = loadConfig();
+        const agentId = resolveAgent(cfg, opts.agent);
+        const storePath = resolveTrackedCommitmentStorePath({ cfg, agentId });
+
+        try {
+          const updated = await updateTrackedCommitmentStore({
+            storePath,
+            mutator: (store) =>
+              updateTrackedCommitment({
+                store,
+                update: {
+                  id,
+                  status: nextStatus,
+                  owner: opts.owner,
+                  title: opts.title,
+                  dueDate,
+                  closureNote: opts.note,
+                },
+              }),
+          });
+
+          if (opts.json) {
+            defaultRuntime.log(
+              JSON.stringify({ agentId, storePath, commitment: updated }, null, 2),
+            );
+            return;
+          }
+
+          defaultRuntime.log(
+            `Updated ${updated.id}: [${updated.status}] ${updated.title} (owner: ${updated.owner}${updated.dueDate ? `, due: ${updated.dueDate}` : ""})`,
+          );
+        } catch (err) {
+          defaultRuntime.error(`Failed to update commitment: ${formatErrorMessage(err)}`);
+          process.exitCode = 1;
+        }
+      },
+    );
+
+  commitments
+    .command("close")
+    .description("Mark a tracked commitment as done")
+    .argument("<id>", "Commitment id")
+    .option("--agent <id>", "Agent id (default: default agent)")
+    .option("--note <text>", "Closure note")
+    .option("--json", "Print JSON")
+    .action(
+      async (
+        id: string,
+        opts: {
+          agent?: string;
+          note?: string;
+          json?: boolean;
+        },
+      ) => {
+        const cfg = loadConfig();
+        const agentId = resolveAgent(cfg, opts.agent);
+        const storePath = resolveTrackedCommitmentStorePath({ cfg, agentId });
+
+        try {
+          const closed = await updateTrackedCommitmentStore({
+            storePath,
+            mutator: (store) =>
+              closeTrackedCommitment({ store, close: { id, closureNote: opts.note } }),
+          });
+          if (opts.json) {
+            defaultRuntime.log(JSON.stringify({ agentId, storePath, commitment: closed }, null, 2));
+            return;
+          }
+          defaultRuntime.log(`Closed ${closed.id}: ${closed.title}`);
+        } catch (err) {
+          defaultRuntime.error(`Failed to close commitment: ${formatErrorMessage(err)}`);
+          process.exitCode = 1;
+        }
+      },
+    );
+
+  commitments
+    .command("check")
+    .description("Render reminder/check output for tracked commitments (cron/heartbeat friendly)")
+    .option("--agent <id>", "Agent id (default: default agent)")
+    .option(
+      "--window-hours <n>",
+      "Reminder lookahead window in hours",
+      (value: string) => Number(value),
+      48,
+    )
+    .option("--owner <owner>", "Filter reminders by owner")
+    .option("--mode <mode>", "Output mode: plain|cron|heartbeat", "plain")
+    .option("--json", "Print JSON")
+    .action(
+      async (opts: {
+        agent?: string;
+        windowHours?: number;
+        owner?: string;
+        mode?: string;
+        json?: boolean;
+      }) => {
+        const mode = String(opts.mode ?? "plain")
+          .trim()
+          .toLowerCase();
+        if (mode !== "plain" && mode !== "cron" && mode !== "heartbeat") {
+          defaultRuntime.error(`Invalid --mode value: ${opts.mode}`);
+          process.exitCode = 1;
+          return;
+        }
+
+        const cfg = loadConfig();
+        const agentId = resolveAgent(cfg, opts.agent);
+        const storePath = resolveTrackedCommitmentStorePath({ cfg, agentId });
+        const store = await loadTrackedCommitmentStore(storePath);
+        const digest = buildReminderDigest({
+          store,
+          check: {
+            windowHours: opts.windowHours,
+            owner: opts.owner,
+          },
+        });
+
+        if (opts.json) {
+          defaultRuntime.log(JSON.stringify({ agentId, storePath, digest }, null, 2));
+          return;
+        }
+
+        defaultRuntime.log(renderReminderDigest({ digest, mode }));
       },
     );
 }
