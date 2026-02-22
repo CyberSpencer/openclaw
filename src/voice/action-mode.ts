@@ -136,7 +136,9 @@ export function isVoiceActionIntentAllowed(
   return false;
 }
 
-export function formatAllowedVoiceActionIntents(policy: VoiceActionPolicy): string[] {
+export function formatAllowedVoiceActionIntents(
+  policy: VoiceActionPolicy,
+): VoiceActionAllowedIntent[] {
   const ordered = DEFAULT_ALLOWED_INTENTS.filter((intent) => policy.allowedIntents.has(intent));
   return ordered;
 }

@@ -435,7 +435,8 @@ describe("spark mic chunked interim updates", () => {
 
     expect(sttCalls).toBe(1);
 
-    resolveFirst?.();
+    const releaseFirst = resolveFirst as (() => void) | null;
+    releaseFirst?.();
     await flushAsync(8);
 
     expect(sttCalls).toBe(2);
