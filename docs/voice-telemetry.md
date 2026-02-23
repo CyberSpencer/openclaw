@@ -1,35 +1,79 @@
 # Voice Telemetry (UI + Gateway)
 
-This document describes per-turn voice metrics shown in the voice panel and emitted to UI logs.
+This document describes per-turn voice metrics emitted by gateway + UI and shown in the voice panel.
 
-## Metrics
+## Timing shape
 
-Each voice turn exposes a `timings` object.
+Each turn exposes a `timings` object.
 
-Legacy top-level fields are preserved (`sttMs`, `routingMs`, `llmMs`, `ttsMs`, `totalMs`) and
-Feature 6 adds a structured stage view under `timings.stages`:
+Legacy top-level fields are retained for compatibility:
 
-- `captureMs`: capture startup overhead (mic stream + recorder/worklet ready)
+- `sttMs`
+- `routingMs`
+- `llmMs`
+- `ttsMs`
+- `totalMs`
+
+Structured stage timings are exposed in `timings.stages`:
+
+- `captureMs`: mic capture startup overhead
 - `transcribeMs`: speech-to-text duration
-- `routeMs`: voice router decision duration
-- `llmMs`: assistant generation duration
+- `routeMs`: voice route decision duration
+- `llmMs`: generation duration
 - `ttsMs`: text-to-speech duration
-- `playbackMs`: client playback duration (when spoken audio is played)
+- `playbackMs`: client playback duration
 
-Other useful top-level fields:
+Additional useful fields:
 
-- `micStartMs`: time from turn start to active mic capture
-- `firstSpeechMs`: time from mic start to first detected speech by VAD
+- `micStartMs`: turn start to active mic capture
+- `firstSpeechMs`: mic start to first VAD speech detection
 - `totalMs`: end-to-end turn duration
+
+## Spark conversational playback telemetry
+
+Spark conversational flow currently uses:
+
+1. `spark.voice.stt`
+2. `voice.processText` (`skipTts: true`)
+3. `spark.voice.tts`
+
+The UI now supports progressive playback for long responses:
+
+- first chunk is synthesized and played immediately
+- remaining chunks are synthesized and played in-order
+- additional chunk synthesis time is accumulated into `timings.ttsMs`
+- total playback time is recorded in `timings.playbackMs`
+
+This improves perceived latency without requiring a gateway streaming method.
+
+## Latency SLO evaluation
+
+Voice latency SLO evaluation is implemented in:
+
+- `src/voice/latency-slo.ts`
+- `src/voice/latency-slo.test.ts`
+
+Default budget tracks p95 for:
+
+- first-audio latency
+- total-turn latency
+- transcribe latency
+- llm latency
+- tts latency
+
+Eval suite coverage:
+
+- suite id: `voice-latency-slo`
+- wired in `src/evals/config.ts` for both local and CI profiles
 
 ## Where to view
 
-- **Voice panel** in the web UI (timings chips under the voice controls)
-- Browser console logs: `[Voice/Telemetry] turn {...}`
+- Voice panel in web UI (timing chips)
+- browser console log entries (`[Voice/Telemetry] turn ...`)
 
-## How to interpret
+## Practical interpretation
 
-- High `micStartMs` means capture startup overhead, check permission churn, stream reuse, and worklet availability.
-- High `firstSpeechMs` usually means user pause or VAD sensitivity mismatch, check ambient calibration.
-- High `sttMs`, `llmMs`, or `ttsMs` isolates backend hotspots.
-- `totalMs` is the user-visible turn latency and should trend down as each stage is optimized.
+- High `captureMs` or `micStartMs`: capture init overhead, permission churn, stream/worklet setup
+- High `firstSpeechMs`: VAD threshold mismatch or user pause
+- High `transcribeMs` / `llmMs` / `ttsMs`: backend bottleneck by stage
+- High `playbackMs`: long output or slow synthesis + playback chain

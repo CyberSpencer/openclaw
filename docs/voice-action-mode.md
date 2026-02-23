@@ -1,29 +1,48 @@
 ---
-summary: "Voice Action Mode (Feature 6): constrained intents, confirmation gating, Spark degrade reasons"
+summary: "Voice Action Mode: off/constrained/text-parity behavior, external-send confirmation, and request wiring"
 read_when:
   - Working on Spark conversational voice mode
   - Debugging voice intent routing / confirmation safety
+  - Auditing parity between text chat and voice chat behavior
 ---
 
 # Voice Action Mode
 
-Voice Action Mode is a constrained pathway for conversational Spark voice turns.
+Voice Action Mode controls how `voice.process` / `voice.processText` gate intent execution.
 
-## Intent set (allowlist)
+## Mode values
 
-When `voiceActionMode=true` is passed to `voice.processText`, the gateway classifies the utterance
-into one of these intents:
+`voiceActionMode` accepts:
 
-- `status`
-- `triage`
-- `draft`
-- `schedule`
-- `external_send`
-- `confirm` / `cancel`
-- `unknown`
+- `"off"` (or `false`)
+- `"constrained"` (or `true`, or `"safe"`)
+- `"text-parity"` (or `"parity"` / `"full"`)
 
-Only allowlisted intents (`status`, `triage`, `draft`, `schedule`) are executed directly.
-`unknown` is blocked with a safe guidance response.
+Normalization is handled by `normalizeVoiceActionMode()` in `src/voice/action-mode.ts`.
+
+## Behavior by mode
+
+### 1) `off`
+
+- No voice-action safety classification is applied.
+- Input text is passed through directly to normal processing.
+
+### 2) `constrained`
+
+- Utterance is classified into a voice intent.
+- Allowlisted intents execute directly:
+  - `status`
+  - `triage`
+  - `draft`
+  - `schedule`
+- Non-allowlisted intents are blocked with guidance.
+- `external_send` requires explicit confirmation before execution.
+
+### 3) `text-parity`
+
+- Keeps the external-send confirmation safety gate.
+- For non-send intents, preserves text-like behavior (does not block unknown intents).
+- This is the default UI conversational mode (`state.actionMode = "text-parity"`).
 
 ## External-send confirmation gate
 
@@ -32,40 +51,34 @@ Only allowlisted intents (`status`, `triage`, `draft`, `schedule`) are executed 
 Flow:
 
 1. User asks to send (`send`, `text`, `email`, etc.)
-2. Gateway stores pending send request (per `sessionKey`) and responds with:
-   - confirmation required
-   - explicit prompt (`"confirm send"`)
-3. User says `confirm send` → pending request is replayed into normal processing
-4. User says `cancel` → pending request is discarded
+2. Gateway stores pending send request keyed by `sessionKey`
+3. Gateway returns confirmation-required response
+4. User says `confirm send` -> pending request is replayed
+5. User says `cancel` -> pending request is discarded
 
-## Structured timing payload
+Config knobs:
 
-Voice responses expose structured stage timings in `timings.stages`:
+- `OPENCLAW_VOICE_ACTION_MODE_ENABLED` (default `true`)
+- `OPENCLAW_VOICE_ACTION_ALLOWED_INTENTS` (CSV subset of allowlist)
+- `OPENCLAW_VOICE_ACTION_REQUIRE_CONFIRM_SEND` (default `true`)
+- `OPENCLAW_VOICE_ACTION_CONFIRM_TTL_MS` (default `120000`)
 
-- `captureMs`
-- `transcribeMs`
-- `routeMs`
-- `llmMs`
-- `ttsMs`
-- `playbackMs` (client-side when available)
+## Request wiring
 
-Legacy top-level timing fields remain for compatibility.
+### Gateway methods
 
-## Spark degrade reason propagation
+- `voice.process` and `voice.processText` accept `voiceActionMode`
+- Documented mode surface: `"constrained" | "text-parity" | true/false`
 
-`spark.status` now includes `voiceDegradedReason` when voice is unavailable.
-The UI surfaces this reason in Spark voice blocked states (conversation start, mic blocking,
-and voice bar disabled messaging).
+### UI Spark conversational flow
 
-## Operator controls
+In `ui/src/ui/controllers/voice.ts` Spark turns call:
 
-Environment variables:
+- `spark.voice.stt`
+- `voice.processText` with:
+  - `driveOpenClaw: true`
+  - `voiceActionMode: state.actionMode`
+  - `skipTts: true`
+- `spark.voice.tts` for synthesis/playback
 
-- `OPENCLAW_VOICE_ACTION_MODE_ENABLED` (default: `true`)
-- `OPENCLAW_VOICE_ACTION_ALLOWED_INTENTS` (CSV subset of `status,triage,draft,schedule`)
-- `OPENCLAW_VOICE_ACTION_REQUIRE_CONFIRM_SEND` (default: `true`)
-- `OPENCLAW_VOICE_ACTION_CONFIRM_TTL_MS` (default: `120000`)
-
-Client request flags:
-
-- `voice.processText` / `voice.process` support `voiceActionMode: true` to enable constrained mode per request.
+So voice now follows explicit mode semantics rather than hardcoded `voiceActionMode: true`.
