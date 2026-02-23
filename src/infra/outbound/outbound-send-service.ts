@@ -139,46 +139,56 @@ export async function executeSendAction(params: {
         routeReason: params.routingDecision?.reason,
       });
 
-  const runSend = async (): Promise<{
-    handledBy: "plugin" | "core";
+  const sendViaPlugin = async (): Promise<{
+    handledBy: "plugin";
     payload: unknown;
-    toolResult?: AgentToolResult<unknown>;
-    sendResult?: MessageSendResult;
-  }> => {
-    throwIfAborted(params.ctx.abortSignal);
-    if (!params.ctx.dryRun) {
-      const handled = await dispatchChannelMessageAction({
-        channel: params.ctx.channel,
-        action: "send",
-        cfg: params.ctx.cfg,
-        params: params.ctx.params,
-        accountId: params.ctx.accountId ?? undefined,
-        gateway: params.ctx.gateway,
-        toolContext: params.ctx.toolContext,
-        dryRun: params.ctx.dryRun,
-      });
-      if (handled) {
-        if (params.ctx.mirror) {
-          const mirrorText = params.ctx.mirror.text ?? params.message;
-          const mirrorMediaUrls =
-            params.ctx.mirror.mediaUrls ??
-            params.mediaUrls ??
-            (params.mediaUrl ? [params.mediaUrl] : undefined);
-          await appendAssistantMessageToSessionTranscript({
-            agentId: params.ctx.mirror.agentId,
-            sessionKey: params.ctx.mirror.sessionKey,
-            text: mirrorText,
-            mediaUrls: mirrorMediaUrls,
-          });
-        }
-        return {
-          handledBy: "plugin",
-          payload: extractToolPayload(handled),
-          toolResult: handled,
-        };
-      }
+    toolResult: AgentToolResult<unknown>;
+    sendResult?: undefined;
+  } | null> => {
+    if (params.ctx.dryRun) {
+      return null;
     }
+    throwIfAborted(params.ctx.abortSignal);
+    const handled = await dispatchChannelMessageAction({
+      channel: params.ctx.channel,
+      action: "send",
+      cfg: params.ctx.cfg,
+      params: params.ctx.params,
+      accountId: params.ctx.accountId ?? undefined,
+      gateway: params.ctx.gateway,
+      toolContext: params.ctx.toolContext,
+      dryRun: params.ctx.dryRun,
+    });
+    if (!handled) {
+      return null;
+    }
+    if (params.ctx.mirror) {
+      const mirrorText = params.ctx.mirror.text ?? params.message;
+      const mirrorMediaUrls =
+        params.ctx.mirror.mediaUrls ??
+        params.mediaUrls ??
+        (params.mediaUrl ? [params.mediaUrl] : undefined);
+      await appendAssistantMessageToSessionTranscript({
+        agentId: params.ctx.mirror.agentId,
+        sessionKey: params.ctx.mirror.sessionKey,
+        text: mirrorText,
+        mediaUrls: mirrorMediaUrls,
+      });
+    }
+    return {
+      handledBy: "plugin",
+      payload: extractToolPayload(handled),
+      toolResult: handled,
+      sendResult: undefined,
+    };
+  };
 
+  const sendViaCore = async (): Promise<{
+    handledBy: "core";
+    payload: unknown;
+    toolResult?: undefined;
+    sendResult: MessageSendResult;
+  }> => {
     throwIfAborted(params.ctx.abortSignal);
     const result: MessageSendResult = await sendMessage({
       cfg: params.ctx.cfg,
@@ -206,26 +216,31 @@ export async function executeSendAction(params: {
   };
 
   try {
-    const retryPolicy = resolveDeliveryRetryPolicy(params.ctx.cfg);
-    const sendResult =
-      !params.ctx.dryRun && retryPolicy.enabled && retryPolicy.attempts > 1
-        ? await retryAsync(runSend, {
-            ...retryPolicy,
-            label: "message-send",
-            shouldRetry: (err) => isRetryableDeliveryError(err),
-            retryAfterMs: (err) => resolveRetryAfterMs(err),
-            onRetry: (info) => {
-              if (!ledgerEntry) {
-                return;
-              }
-              markDeliveryRetrying({
-                id: ledgerEntry.id,
-                error: info.err instanceof Error ? info.err.message : String(info.err),
-                delayMs: info.delayMs,
-              });
-            },
-          })
-        : await runSend();
+    const pluginResult = await sendViaPlugin();
+    const sendResult = pluginResult
+      ? pluginResult
+      : await (async () => {
+          const retryPolicy = resolveDeliveryRetryPolicy(params.ctx.cfg);
+          if (!params.ctx.dryRun && retryPolicy.enabled && retryPolicy.attempts > 1) {
+            return retryAsync(sendViaCore, {
+              ...retryPolicy,
+              label: "message-send",
+              shouldRetry: (err) => isRetryableDeliveryError(err),
+              retryAfterMs: (err) => resolveRetryAfterMs(err),
+              onRetry: (info) => {
+                if (!ledgerEntry) {
+                  return;
+                }
+                markDeliveryRetrying({
+                  id: ledgerEntry.id,
+                  error: info.err instanceof Error ? info.err.message : String(info.err),
+                  delayMs: info.delayMs,
+                });
+              },
+            });
+          }
+          return sendViaCore();
+        })();
 
     if (ledgerEntry) {
       markDeliverySent({

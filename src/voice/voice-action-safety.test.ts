@@ -50,4 +50,15 @@ describe("voice action safety confirmation", () => {
     expect(explicit.allow).toBe(true);
     expect(explicit.confirmed).toBe(true);
   });
+
+  it("blocks empty action names", () => {
+    const decision = resolveVoiceActionSafety({
+      action: "   ",
+      transcript: "confirm",
+      confirmed: true,
+    });
+    expect(decision.allow).toBe(false);
+    expect(decision.requiresConfirmation).toBe(false);
+    expect(decision.reason).toContain("required");
+  });
 });

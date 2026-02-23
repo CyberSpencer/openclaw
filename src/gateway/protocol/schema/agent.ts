@@ -1,4 +1,5 @@
 import { Type } from "@sinclair/typebox";
+import { optionalStringEnum } from "../../../agents/schema/typebox.js";
 import { NonEmptyString, SessionLabelString } from "./primitives.js";
 
 export const AgentEventSchema = Type.Object(
@@ -31,14 +32,7 @@ export const SendParamsSchema = Type.Object(
     accountId: Type.Optional(Type.String()),
     /** Optional session key for mirroring delivered output back into the transcript. */
     sessionKey: Type.Optional(Type.String()),
-    urgency: Type.Optional(
-      Type.Union([
-        Type.Literal("low"),
-        Type.Literal("normal"),
-        Type.Literal("high"),
-        Type.Literal("critical"),
-      ]),
-    ),
+    urgency: optionalStringEnum(["low", "normal", "high", "critical"]),
     idempotencyKey: NonEmptyString,
   },
   { additionalProperties: false },
@@ -54,15 +48,7 @@ export const SendLedgerGetParamsSchema = Type.Object(
 export const SendLedgerListParamsSchema = Type.Object(
   {
     limit: Type.Optional(Type.Integer({ minimum: 1, maximum: 500 })),
-    state: Type.Optional(
-      Type.Union([
-        Type.Literal("queued"),
-        Type.Literal("sent"),
-        Type.Literal("failed"),
-        Type.Literal("retrying"),
-        Type.Literal("acknowledged"),
-      ]),
-    ),
+    state: optionalStringEnum(["queued", "sent", "failed", "retrying", "acknowledged"]),
     channel: Type.Optional(Type.String()),
     idempotencyKey: Type.Optional(Type.String()),
   },

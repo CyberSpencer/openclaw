@@ -102,6 +102,15 @@ export function resolveVoiceActionSafety(params: {
   confirmed?: boolean;
 }): VoiceActionSafetyDecision {
   const action = normalizeActionName(params.action);
+  if (!action) {
+    return {
+      action,
+      requiresConfirmation: false,
+      confirmed: false,
+      allow: false,
+      reason: "action name is required",
+    };
+  }
   const requiresConfirmation = requiresVoiceActionConfirmation(action);
   const transcriptConfirmed = detectVoiceConfirmation(params.transcript ?? "");
   const confirmed = params.confirmed === true || transcriptConfirmed;

@@ -270,24 +270,32 @@ async function callInternalHandler<T>(params: {
   let payload: T | null = null;
   let error: string | null = null;
 
-  await params.handler({
-    req: {
-      id: `ops-snapshot:${params.method}`,
-      type: "req",
-      method: params.method,
+  try {
+    await params.handler({
+      req: {
+        id: `ops-snapshot:${params.method}`,
+        type: "req",
+        method: params.method,
+        params: {},
+      },
       params: {},
-    },
-    params: {},
-    client: null,
-    isWebchatConnect: () => false,
-    respond: (nextOk, nextPayload, nextError) => {
-      called = true;
-      ok = nextOk;
-      payload = (nextPayload as T | undefined) ?? null;
-      error = nextError?.message ?? null;
-    },
-    context: params.context,
-  });
+      client: null,
+      isWebchatConnect: () => false,
+      respond: (nextOk, nextPayload, nextError) => {
+        called = true;
+        ok = nextOk;
+        payload = (nextPayload as T | undefined) ?? null;
+        error = nextError?.message ?? null;
+      },
+      context: params.context,
+    });
+  } catch (err) {
+    return {
+      ok: false,
+      payload: null,
+      error: err instanceof Error ? err.message : String(err),
+    };
+  }
 
   if (!called) {
     return { ok: false, payload: null, error: "handler did not respond" };

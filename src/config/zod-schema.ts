@@ -555,7 +555,7 @@ export const OpenClawSchema = z
                 trustGateOverride: z
                   .object({
                     reason: z.string(),
-                    approvedAt: z.string(),
+                    approvedAt: z.string().optional(),
                     approvedBy: z.string().optional(),
                   })
                   .strict()

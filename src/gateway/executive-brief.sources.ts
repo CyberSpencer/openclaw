@@ -136,13 +136,18 @@ export async function collectUsageSource(
     let activeAgents = 0;
     let dailyEntries = 0;
 
-    for (const agent of agents) {
-      const summary = await loadCostUsageSummary({
-        startMs,
-        endMs: now,
-        config: cfg,
-        agentId: agent.id,
-      });
+    const summaries = await Promise.all(
+      agents.map((agent) =>
+        loadCostUsageSummary({
+          startMs,
+          endMs: now,
+          config: cfg,
+          agentId: agent.id,
+        }),
+      ),
+    );
+
+    for (const summary of summaries) {
       sumTotals(totals, summary.totals);
       dailyEntries += summary.daily.length;
       if (summary.totals.totalTokens > 0) {
@@ -176,14 +181,15 @@ type OrchestratorState = {
   }>;
 };
 
-function readOrchestratorStateFiles(): OrchestratorState[] {
+async function readOrchestratorStateFiles(): Promise<OrchestratorState[]> {
   const stateDir = resolveStateDir(process.env, os.homedir);
   const scopedDir = path.join(stateDir, "control-ui", "orchestrator");
   const legacyPath = path.join(stateDir, "control-ui", "orchestrator.json");
 
   const files: string[] = [];
   try {
-    for (const name of fs.readdirSync(scopedDir)) {
+    const names = await fs.promises.readdir(scopedDir);
+    for (const name of names) {
       if (name.endsWith(".json")) {
         files.push(path.join(scopedDir, name));
       }
@@ -191,14 +197,17 @@ function readOrchestratorStateFiles(): OrchestratorState[] {
   } catch {
     // ignore missing dir
   }
-  if (fs.existsSync(legacyPath)) {
+  try {
+    await fs.promises.access(legacyPath);
     files.push(legacyPath);
+  } catch {
+    // ignore missing legacy file
   }
 
   const states: OrchestratorState[] = [];
   for (const filePath of files) {
     try {
-      const raw = fs.readFileSync(filePath, "utf8").trim();
+      const raw = (await fs.promises.readFile(filePath, "utf8")).trim();
       if (!raw) {
         continue;
       }
@@ -218,7 +227,7 @@ export async function collectOrchestratorSource(
   windows: ExecutiveBriefWindows,
 ): Promise<ExecutiveBriefSources["orchestrator"]> {
   try {
-    const states = readOrchestratorStateFiles();
+    const states = await readOrchestratorStateFiles();
     const cutoffMs = Date.now() - windows.orchestratorMinutes * 60_000;
 
     let boards = 0;

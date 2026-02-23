@@ -80,51 +80,59 @@ function runVitestSuite(params: { repoRoot: string; suiteId: string; testFiles: 
   const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "openclaw-evals-"));
   const outputFile = path.join(tmpDir, `${params.suiteId}.json`);
 
-  const pnpmCmd = process.platform === "win32" ? "pnpm.cmd" : "pnpm";
-  const args = [
-    "exec",
-    "vitest",
-    "run",
-    "--reporter=json",
-    "--outputFile",
-    outputFile,
-    ...params.testFiles,
-  ];
-
-  const res = spawnSync(pnpmCmd, args, {
-    cwd: params.repoRoot,
-    encoding: "utf8",
-    env: {
-      ...process.env,
-      FORCE_COLOR: "0",
-      NO_COLOR: "1",
-    },
-  });
-
-  const stdout = res.stdout ?? "";
-  const stderr = res.stderr ?? "";
-
-  let reportRaw: Record<string, unknown> = {};
   try {
-    const data = fs.readFileSync(outputFile, "utf8");
-    reportRaw = JSON.parse(data) as Record<string, unknown>;
-  } catch {
-    reportRaw = {};
+    const pnpmCmd = process.platform === "win32" ? "pnpm.cmd" : "pnpm";
+    const args = [
+      "exec",
+      "vitest",
+      "run",
+      "--reporter=json",
+      "--outputFile",
+      outputFile,
+      ...params.testFiles,
+    ];
+
+    const res = spawnSync(pnpmCmd, args, {
+      cwd: params.repoRoot,
+      encoding: "utf8",
+      env: {
+        ...process.env,
+        FORCE_COLOR: "0",
+        NO_COLOR: "1",
+      },
+    });
+
+    const stdout = res.stdout ?? "";
+    const stderr = res.stderr ?? "";
+
+    let reportRaw: Record<string, unknown> = {};
+    try {
+      const data = fs.readFileSync(outputFile, "utf8");
+      reportRaw = JSON.parse(data) as Record<string, unknown>;
+    } catch {
+      reportRaw = {};
+    }
+
+    const parsed = parseVitestJsonReport(reportRaw as Parameters<typeof parseVitestJsonReport>[0]);
+    const metrics: EvalSuiteMetrics = {
+      id: params.suiteId,
+      total: parsed.total,
+      passed: parsed.passed,
+      failed: parsed.failed,
+      skipped: parsed.skipped,
+      success: parsed.success,
+      durationMs: parsed.durationMs,
+      exitCode: res.status ?? 1,
+    };
+
+    return { metrics, stdout, stderr };
+  } finally {
+    try {
+      fs.rmSync(tmpDir, { recursive: true, force: true });
+    } catch {
+      // ignore cleanup failures
+    }
   }
-
-  const parsed = parseVitestJsonReport(reportRaw as Parameters<typeof parseVitestJsonReport>[0]);
-  const metrics: EvalSuiteMetrics = {
-    id: params.suiteId,
-    total: parsed.total,
-    passed: parsed.passed,
-    failed: parsed.failed,
-    skipped: parsed.skipped,
-    success: parsed.success,
-    durationMs: parsed.durationMs,
-    exitCode: res.status ?? 1,
-  };
-
-  return { metrics, stdout, stderr };
 }
 
 function fmtPct(value: number): string {

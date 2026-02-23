@@ -235,6 +235,17 @@ function evaluateTokenHandlingPolicy(
       },
       score,
     );
+  } else {
+    pushFinding(
+      findings,
+      {
+        category: "tokenHandlingPolicy",
+        severity: "warn",
+        message: "unknown token policy, treating as potentially risky",
+        penalty: 10,
+      },
+      score,
+    );
   }
 
   if (policy !== "none" && token.redactionRequired !== true) {
@@ -489,10 +500,12 @@ export function writeSkillTrustGateAudit(params: {
   record: SkillTrustGateAuditRecord;
 }): void {
   const policy = resolveSkillsTrustGatePolicy(params.config, params.policy);
-  try {
-    fs.mkdirSync(path.dirname(policy.auditLogPath), { recursive: true });
-    fs.appendFileSync(policy.auditLogPath, `${JSON.stringify(params.record)}\n`, "utf8");
-  } catch {
-    // Never block execution on audit log write failures.
-  }
+  void fs.promises
+    .mkdir(path.dirname(policy.auditLogPath), { recursive: true })
+    .then(() =>
+      fs.promises.appendFile(policy.auditLogPath, `${JSON.stringify(params.record)}\n`, "utf8"),
+    )
+    .catch(() => {
+      // Never block execution on audit log write failures.
+    });
 }

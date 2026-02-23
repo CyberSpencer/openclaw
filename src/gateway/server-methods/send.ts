@@ -20,6 +20,7 @@ import {
   resolveDeliveryRetryPolicy,
   resolveRetryAfterMs,
 } from "../../infra/outbound/delivery-retry.js";
+import { normalizeMessageUrgency } from "../../infra/outbound/intent-router.js";
 import {
   ensureOutboundSessionEntry,
   resolveOutboundSessionRoute,
@@ -131,15 +132,7 @@ export const sendHandlers: GatewayRequestHandlers = {
         : undefined;
     const outboundChannel = channel;
     const plugin = getChannelPlugin(channel);
-    const urgencyRaw =
-      typeof request.urgency === "string" ? request.urgency.trim().toLowerCase() : "normal";
-    const urgency =
-      urgencyRaw === "low" ||
-      urgencyRaw === "normal" ||
-      urgencyRaw === "high" ||
-      urgencyRaw === "critical"
-        ? urgencyRaw
-        : "normal";
+    const urgency = normalizeMessageUrgency(request.urgency);
     const payloadType =
       (request.mediaUrl || (mediaUrls?.length ?? 0) > 0) && message
         ? "mixed"
@@ -287,6 +280,7 @@ export const sendHandlers: GatewayRequestHandlers = {
           return payload;
         };
 
+        // Retry policy drives transient-failure backoff and ledger retry state transitions.
         const retryPolicy = resolveDeliveryRetryPolicy(cfg);
         const payload =
           retryPolicy.enabled && retryPolicy.attempts > 1

@@ -71,19 +71,33 @@ const DEFAULT_MAX_ENTRIES = 2_000;
 const entriesById = new Map<string, DeliveryLedgerEntry>();
 const entriesByIdempotency = new Map<string, string>();
 
+function cloneJson<T>(value: T): T {
+  if (value === null || value === undefined || typeof value !== "object") {
+    return value;
+  }
+  try {
+    return structuredClone(value);
+  } catch {
+    try {
+      return JSON.parse(JSON.stringify(value)) as T;
+    } catch {
+      return value;
+    }
+  }
+}
+
 function cloneEntry(entry: DeliveryLedgerEntry): DeliveryLedgerEntry {
   return {
     ...entry,
-    events: entry.events.map((event) => ({ ...event })),
+    events: entry.events.map((event) => cloneJson(event)),
     result: entry.result
       ? {
-          gatewayPayload: entry.result.gatewayPayload
-            ? { ...entry.result.gatewayPayload }
-            : undefined,
+          gatewayPayload: cloneJson(entry.result.gatewayPayload),
           sendAction: entry.result.sendAction
             ? {
                 ...entry.result.sendAction,
-                sendResult: entry.result.sendAction.sendResult,
+                payload: cloneJson(entry.result.sendAction.payload),
+                sendResult: cloneJson(entry.result.sendAction.sendResult),
               }
             : undefined,
         }

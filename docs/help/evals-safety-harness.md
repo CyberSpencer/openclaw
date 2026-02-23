@@ -8,11 +8,12 @@ title: "Evals + Safety Harness"
 
 # Evals + Safety Harness
 
-Feature 2 adds deterministic, CI-safe eval suites for critical workflows:
+Deterministic, CI-safe eval suites are available for critical workflows:
 
 - **messaging-routing**: routing policy + fallback correctness
 - **orchestration-lifecycle**: task-plan lifecycle/delegation terminal-state correctness
 - **voice-action-safety**: voice action confirmation requirements for high-risk actions
+- **voice-latency-slo**: voice latency budget evaluation and breach reporting
 
 ## Single-command run
 
@@ -47,6 +48,7 @@ Thresholds are strict and deterministic for both local + CI:
   - messaging-routing: `minPassRate=1.0`, `maxFailures=0`, `minTotalTests=20`
   - orchestration-lifecycle: `minPassRate=1.0`, `maxFailures=0`, `minTotalTests=6`
   - voice-action-safety: `minPassRate=1.0`, `maxFailures=0`, `minTotalTests=9`
+  - voice-latency-slo: `minPassRate=1.0`, `maxFailures=0`, `minTotalTests=3`
 
 ## Running a single suite
 

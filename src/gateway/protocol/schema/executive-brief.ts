@@ -1,6 +1,7 @@
 import { Type } from "@sinclair/typebox";
+import { stringEnum } from "../../../agents/schema/typebox.js";
 
-export const ExecutiveBriefPresetSchema = Type.Union([Type.Literal("am"), Type.Literal("pm")]);
+export const ExecutiveBriefPresetSchema = stringEnum(["am", "pm"]);
 
 export const ExecutiveBriefWindowsSchema = Type.Object(
   {

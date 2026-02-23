@@ -90,4 +90,23 @@ describe("evaluateSkillTrustGate", () => {
     expect(result.overridden).toBe(true);
     expect(result.overrideRequired).toBe(false);
   });
+
+  it("penalizes unrecognized token handling policy values", () => {
+    const result = evaluateSkillTrustGate({
+      entry: makeEntry({
+        permissionScope: ["write"],
+        tokenHandling: {
+          policy: "mystery-policy" as unknown as SkillTrustMetadata["tokenHandling"]["policy"],
+          redactionRequired: true,
+        },
+        network: { mode: "allowlist", targets: ["api.github.com"] },
+      }),
+      policy: { level: "block" },
+    });
+
+    expect(
+      result.findings.some((finding) => finding.message.includes("unknown token policy")),
+    ).toBe(true);
+    expect(result.score).toBeLessThan(70);
+  });
 });

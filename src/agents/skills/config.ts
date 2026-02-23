@@ -14,8 +14,6 @@ const DEFAULT_CONFIG_VALUES: Record<string, boolean> = {
   "browser.evaluateEnabled": true,
 };
 
-const trustGateAuditOnce = new Set<string>();
-
 function isTruthy(value: unknown): boolean {
   if (value === undefined || value === null) {
     return false;
@@ -133,19 +131,6 @@ function auditTrustGateDecision(params: {
   if (params.effectiveDecision === "allow") {
     return;
   }
-  const onceKey = [
-    "run",
-    params.skillKey,
-    params.score,
-    params.decision,
-    params.effectiveDecision,
-    params.policyLevel,
-    params.overridden ? "1" : "0",
-  ].join(":");
-  if (trustGateAuditOnce.has(onceKey)) {
-    return;
-  }
-  trustGateAuditOnce.add(onceKey);
   writeSkillTrustGateAudit({
     config: params.config,
     record: {

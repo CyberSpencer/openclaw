@@ -138,6 +138,41 @@ describe("memory execution loop status transitions", () => {
       }),
     ).toThrow(/Invalid commitment status transition/);
   });
+
+  it("rejects updates that would collide with an existing dedupe key", () => {
+    const extracted = extractDecisionCommitmentsFromRecords({
+      records: [
+        {
+          path: "memory/2026-03-01.md",
+          content: "Decision: Ship docs | owner: Ops | due: 2026-03-04",
+        },
+        {
+          path: "memory/2026-03-01.md",
+          content: "Decision: Prepare launch | owner: Ops | due: 2026-03-05",
+        },
+      ],
+    });
+
+    const store = emptyTrackedCommitmentStore();
+    ingestExtractedCommitments({ store, extracted, nowIso: "2026-03-01T00:00:00.000Z" });
+
+    const firstId = store.commitments[0]?.id;
+    const secondId = store.commitments[1]?.id;
+    expect(firstId).toBeTruthy();
+    expect(secondId).toBeTruthy();
+
+    expect(() =>
+      updateTrackedCommitment({
+        store,
+        update: {
+          id: secondId ?? "",
+          title: "Ship docs",
+          dueDate: "2026-03-04",
+          nowIso: "2026-03-02T00:00:00.000Z",
+        },
+      }),
+    ).toThrow(/dedupe key/i);
+  });
 });
 
 describe("memory execution loop reminders", () => {

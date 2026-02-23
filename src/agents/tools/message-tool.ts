@@ -19,7 +19,12 @@ import { normalizeAccountId } from "../../routing/session-key.js";
 import { normalizeMessageChannel } from "../../utils/message-channel.js";
 import { resolveSessionAgentId } from "../agent-scope.js";
 import { listChannelSupportedActions } from "../channel-tools.js";
-import { channelTargetSchema, channelTargetsSchema, stringEnum } from "../schema/typebox.js";
+import {
+  channelTargetSchema,
+  channelTargetsSchema,
+  optionalStringEnum,
+  stringEnum,
+} from "../schema/typebox.js";
 import { jsonResult, readNumberParam, readStringParam } from "./common.js";
 
 const AllMessageActions = CHANNEL_MESSAGE_ACTION_NAMES;
@@ -80,9 +85,9 @@ function buildSendSchema(options: { includeButtons: boolean; includeCards: boole
       Type.String({ description: "Quote text for Telegram reply_parameters" }),
     ),
     bestEffort: Type.Optional(Type.Boolean()),
-    urgency: Type.Optional(
-      Type.String({ description: "Delivery urgency hint: low, normal, high, critical." }),
-    ),
+    urgency: optionalStringEnum(["low", "normal", "high", "critical"], {
+      description: "Delivery urgency hint: low, normal, high, critical.",
+    }),
     idempotencyKey: Type.Optional(
       Type.String({ description: "Idempotency key to safely dedupe retries/replays." }),
     ),

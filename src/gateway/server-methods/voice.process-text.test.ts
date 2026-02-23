@@ -54,12 +54,16 @@ vi.mock("../../voice/voice.js", async () => {
 
 import { voiceHandlers } from "./voice.js";
 
-function makeInvocation(respond: GatewayResponder, params: Record<string, unknown>) {
+function makeInvocation(
+  respond: GatewayResponder,
+  params: Record<string, unknown>,
+  client: { connId?: string; connect?: Record<string, unknown> } | null = null,
+) {
   return {
     req: { type: "req", id: "1", method: "voice.processText", params },
     params,
     respond,
-    client: null,
+    client,
     context: {
       broadcast: vi.fn(),
       nodeSendToSession: vi.fn(),
@@ -328,6 +332,71 @@ describe("voice.processText gateway handler", () => {
         }),
       }),
     );
+  });
+
+  it("isolates pending external-send confirmations per caller connection", async () => {
+    let capturedBody = "";
+    mocks.dispatchInboundMessage.mockImplementation(async (arg: unknown) => {
+      const typed = arg as { ctx?: { Body?: string } };
+      capturedBody = typed.ctx?.Body ?? "";
+    });
+    mocks.processTextToVoice.mockImplementation(async (input, _config, llmInvoke) => {
+      const response = await llmInvoke(String(input));
+      return {
+        success: true,
+        sessionId: "s-conn-isolation",
+        response,
+        timings: { totalMs: 10 },
+      };
+    });
+
+    const respond = vi.fn<GatewayResponder>();
+    await voiceHandlers["voice.processText"]?.(
+      makeInvocation(
+        respond,
+        {
+          text: "send this update to Alex",
+          voiceActionMode: true,
+        },
+        {
+          connId: "conn-a",
+          connect: { client: { id: "webchat", version: "1", platform: "web", mode: "web" } },
+        },
+      ),
+    );
+
+    await voiceHandlers["voice.processText"]?.(
+      makeInvocation(
+        respond,
+        {
+          text: "confirm send",
+          voiceActionMode: true,
+        },
+        {
+          connId: "conn-b",
+          connect: { client: { id: "webchat", version: "1", platform: "web", mode: "web" } },
+        },
+      ),
+    );
+
+    expect(mocks.dispatchInboundMessage).not.toHaveBeenCalled();
+
+    await voiceHandlers["voice.processText"]?.(
+      makeInvocation(
+        respond,
+        {
+          text: "confirm send",
+          voiceActionMode: true,
+        },
+        {
+          connId: "conn-a",
+          connect: { client: { id: "webchat", version: "1", platform: "web", mode: "web" } },
+        },
+      ),
+    );
+
+    expect(mocks.dispatchInboundMessage).toHaveBeenCalledTimes(1);
+    expect(capturedBody).toBe("send this update to Alex");
   });
 
   it("returns structured stage timings payload", async () => {

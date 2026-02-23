@@ -16,7 +16,12 @@ import fs from "node:fs";
 import path from "node:path";
 import type { MsgContext } from "../../auto-reply/templating.js";
 import type { VoiceConfig } from "../../config/types.voice.js";
-import type { GatewayRequestHandlers } from "./types.js";
+import type {
+  VoiceActionAllowedIntent,
+  VoiceActionIntent,
+  VoiceActionMode,
+} from "../../voice/action-mode.js";
+import type { GatewayRequestHandlerOptions, GatewayRequestHandlers } from "./types.js";
 import { resolveSessionAgentId } from "../../agents/agent-scope.js";
 import { resolveEffectiveMessagesConfig, resolveIdentityName } from "../../agents/identity.js";
 import { dispatchInboundMessage } from "../../auto-reply/dispatch.js";
@@ -34,12 +39,9 @@ import {
   isVoiceActionCancelText,
   isVoiceActionConfirmText,
   isVoiceActionIntentAllowed,
+  normalizeVoiceActionMode,
   resolveVoiceActionPolicy,
   scaffoldVoiceIntentPrompt,
-  normalizeVoiceActionMode,
-  type VoiceActionAllowedIntent,
-  type VoiceActionIntent,
-  type VoiceActionMode,
 } from "../../voice/action-mode.js";
 import { transcribeWithWhisper, resolveWhisperConfig } from "../../voice/local-stt.js";
 import { synthesizeWithLocalTts, resolveLocalTtsConfig } from "../../voice/local-tts.js";
@@ -175,16 +177,31 @@ function normalizeVoiceTimings(
 }
 
 function prunePendingVoiceConfirmations(now: number): void {
-  for (const [sessionKey, pending] of pendingVoiceConfirmations.entries()) {
+  for (const [confirmationKey, pending] of pendingVoiceConfirmations.entries()) {
     if (pending.expiresAt <= now) {
-      pendingVoiceConfirmations.delete(sessionKey);
+      pendingVoiceConfirmations.delete(confirmationKey);
     }
   }
 }
 
+function resolveVoiceConfirmationKey(params: {
+  sessionKey: string;
+  client: GatewayRequestHandlerOptions["client"];
+}): string {
+  const connId = params.client?.connId?.trim();
+  if (connId) {
+    return `${params.sessionKey}::conn:${connId}`;
+  }
+  const instanceId = params.client?.connect?.client?.instanceId?.trim();
+  if (instanceId) {
+    return `${params.sessionKey}::instance:${instanceId}`;
+  }
+  return params.sessionKey;
+}
+
 function resolveVoiceActionDecision(params: {
   mode: VoiceActionMode;
-  sessionKey: string;
+  confirmationKey: string;
   text: string;
 }): {
   proceed: boolean;
@@ -215,10 +232,10 @@ function resolveVoiceActionDecision(params: {
 
   const now = Date.now();
   prunePendingVoiceConfirmations(now);
-  const pending = pendingVoiceConfirmations.get(params.sessionKey);
+  const pending = pendingVoiceConfirmations.get(params.confirmationKey);
 
   if (pending && isVoiceActionCancelText(params.text)) {
-    pendingVoiceConfirmations.delete(params.sessionKey);
+    pendingVoiceConfirmations.delete(params.confirmationKey);
     return {
       proceed: false,
       effectiveText: params.text,
@@ -236,7 +253,7 @@ function resolveVoiceActionDecision(params: {
   }
 
   if (pending && isVoiceActionConfirmText(params.text)) {
-    pendingVoiceConfirmations.delete(params.sessionKey);
+    pendingVoiceConfirmations.delete(params.confirmationKey);
     return {
       proceed: true,
       effectiveText: pending.text,
@@ -256,7 +273,7 @@ function resolveVoiceActionDecision(params: {
   if (intent === "external_send") {
     if (policy.requireExplicitSendConfirmation) {
       const id = randomUUID();
-      pendingVoiceConfirmations.set(params.sessionKey, {
+      pendingVoiceConfirmations.set(params.confirmationKey, {
         id,
         text: params.text,
         createdAt: now,
@@ -647,7 +664,11 @@ export const voiceHandlers: GatewayRequestHandlers = {
       return;
     }
 
-    const sessionKey = typeof params.sessionKey === "string" ? params.sessionKey : "webchat-voice";
+    const sessionKey =
+      typeof params.sessionKey === "string" && params.sessionKey.trim().length > 0
+        ? params.sessionKey.trim()
+        : "webchat-voice";
+    const confirmationKey = resolveVoiceConfirmationKey({ sessionKey, client });
     const textPrompt = typeof params.textPrompt === "string" ? params.textPrompt.trim() : "";
     const voicePrompt = typeof params.voicePrompt === "string" ? params.voicePrompt.trim() : "";
     const driveOpenClaw = params.driveOpenClaw === true;
@@ -691,7 +712,7 @@ export const voiceHandlers: GatewayRequestHandlers = {
       ): Promise<string> => {
         const actionDecision = resolveVoiceActionDecision({
           mode: voiceActionMode,
-          sessionKey,
+          confirmationKey,
           text,
         });
         if (actionDecision.action) {
@@ -882,7 +903,11 @@ export const voiceHandlers: GatewayRequestHandlers = {
       return;
     }
 
-    const sessionKey = typeof params.sessionKey === "string" ? params.sessionKey : "webchat-voice";
+    const sessionKey =
+      typeof params.sessionKey === "string" && params.sessionKey.trim().length > 0
+        ? params.sessionKey.trim()
+        : "webchat-voice";
+    const confirmationKey = resolveVoiceConfirmationKey({ sessionKey, client });
     const skipTts = params.skipTts === true;
     const driveOpenClaw = params.driveOpenClaw === true;
     const voiceActionMode = normalizeVoiceActionMode(params.voiceActionMode);
@@ -909,7 +934,7 @@ export const voiceHandlers: GatewayRequestHandlers = {
       ): Promise<string> => {
         const actionDecision = resolveVoiceActionDecision({
           mode: voiceActionMode,
-          sessionKey,
+          confirmationKey,
           text: inputText,
         });
         if (actionDecision.action) {

@@ -108,7 +108,7 @@ Result shape (abridged):
     "router": {
       "enabled": true,
       "healthy": true,
-      "url": "http://127.0.0.1:8001/health"
+      "url": "http://gateway-host:8001/health"
     },
     "spark": {
       "enabled": true,

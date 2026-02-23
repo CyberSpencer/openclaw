@@ -806,7 +806,7 @@ export const voiceBarStyles = `
 .voice-bar__meta-warning {
   margin-top: 0.5rem;
   font-size: 0.75rem;
-  color: #8a6d3b;
+  color: var(--text-muted, #666);
 }
 
 .voice-bar__error {

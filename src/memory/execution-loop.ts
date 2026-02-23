@@ -639,14 +639,25 @@ export function updateTrackedCommitment(params: {
 
   let changed = false;
 
+  const ensureUniqueDedupe = (nextKey: string): void => {
+    const collision = params.store.commitments.find(
+      (entry) => entry.id !== target.id && entry.dedupeKey === nextKey,
+    );
+    if (collision) {
+      throw new Error(`Commitment already exists for dedupe key: ${nextKey}`);
+    }
+  };
+
   if (params.update.title !== undefined) {
     const title = normalizeCommitmentTitle(params.update.title);
     if (!title) {
       throw new Error("title cannot be empty");
     }
     if (target.title !== title) {
+      const nextKey = toDedupeKey({ title, owner: target.owner, dueDate: target.dueDate });
+      ensureUniqueDedupe(nextKey);
       target.title = title;
-      target.dedupeKey = toDedupeKey({ title, owner: target.owner, dueDate: target.dueDate });
+      target.dedupeKey = nextKey;
       changed = true;
     }
   }
@@ -654,12 +665,14 @@ export function updateTrackedCommitment(params: {
   if (params.update.owner !== undefined) {
     const owner = normalizeCommitmentOwner(params.update.owner);
     if (target.owner !== owner) {
-      target.owner = owner;
-      target.dedupeKey = toDedupeKey({
+      const nextKey = toDedupeKey({
         title: target.title,
-        owner: target.owner,
+        owner,
         dueDate: target.dueDate,
       });
+      ensureUniqueDedupe(nextKey);
+      target.owner = owner;
+      target.dedupeKey = nextKey;
       changed = true;
     }
   }
@@ -671,12 +684,14 @@ export function updateTrackedCommitment(params: {
       throw new Error(`Invalid due date: ${params.update.dueDate}`);
     }
     if (target.dueDate !== nextDue) {
-      target.dueDate = nextDue;
-      target.dedupeKey = toDedupeKey({
+      const nextKey = toDedupeKey({
         title: target.title,
         owner: target.owner,
-        dueDate: target.dueDate,
+        dueDate: nextDue,
       });
+      ensureUniqueDedupe(nextKey);
+      target.dueDate = nextDue;
+      target.dedupeKey = nextKey;
       changed = true;
     }
   }

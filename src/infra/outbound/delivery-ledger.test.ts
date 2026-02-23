@@ -88,4 +88,53 @@ describe("delivery ledger", () => {
     expect(listed).toHaveLength(1);
     expect(listed[0]?.id).toBe(first.id);
   });
+
+  it("returns deep-cloned nested payloads", () => {
+    const queued = registerDelivery({
+      idempotencyKey: "idem-clone",
+      action: "send",
+      channel: "slack",
+      to: "channel:C42",
+      payloadType: "text",
+      urgency: "normal",
+    });
+    markDeliverySent({
+      id: queued.id,
+      result: {
+        gatewayPayload: { nested: { level: 1 } },
+        sendAction: {
+          handledBy: "core",
+          payload: { foo: { bar: 1 } },
+          sendResult: { nested: { value: 9 } },
+        },
+      },
+    });
+
+    const firstRead = getDeliveryById(queued.id);
+    const secondRead = getDeliveryById(queued.id);
+    expect(firstRead).toBeTruthy();
+    expect(secondRead).toBeTruthy();
+
+    const firstGateway = firstRead?.result?.gatewayPayload as { nested?: { level?: number } };
+    const firstPayload = firstRead?.result?.sendAction?.payload as { foo?: { bar?: number } };
+    const firstSendResult = firstRead?.result?.sendAction?.sendResult as {
+      nested?: { value?: number };
+    };
+    expect(firstGateway.nested).toBeTruthy();
+    expect(firstPayload.foo).toBeTruthy();
+    expect(firstSendResult.nested).toBeTruthy();
+
+    firstGateway.nested!.level = 999;
+    firstPayload.foo!.bar = 999;
+    firstSendResult.nested!.value = 999;
+
+    const secondGateway = secondRead?.result?.gatewayPayload as { nested?: { level?: number } };
+    const secondPayload = secondRead?.result?.sendAction?.payload as { foo?: { bar?: number } };
+    const secondSendResult = secondRead?.result?.sendAction?.sendResult as {
+      nested?: { value?: number };
+    };
+    expect(secondGateway.nested?.level).toBe(1);
+    expect(secondPayload.foo?.bar).toBe(1);
+    expect(secondSendResult.nested?.value).toBe(9);
+  });
 });
