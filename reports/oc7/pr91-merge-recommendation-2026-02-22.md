@@ -26,6 +26,9 @@ Rationale:
 2. Merge recommendation package
    - This report captures risks and smoke evidence for decision support.
 
+3. Type-safety stabilization carried in this PR slice
+   - Includes the previously requested null-safe handling updates in UI voice chunk synthesis/queue flow (`ui/src/ui/controllers/voice.ts`) that restored clean TypeScript compilation.
+
 ## Smoke and acceptance evidence
 
 ### Local acceptance gates
@@ -41,7 +44,6 @@ Rationale:
 
 ### Previously published integration evidence
 
-- `reports/oc7/integration-acceptance-2026-02-22.md`
 - `reports/oc7/voice-mode-parity-delta-2026-02-22.md`
 
 ## Risk notes
@@ -81,7 +83,7 @@ Recommended action:
    - voice conversational turn (Spark mode)
    - `pnpm evals`
    - `pnpm exec tsc --noEmit`
-3. Keep AWS KV incident remediation in separate lane (already in flight with Andrew).
+3. Keep Autobuild Step-4 KV/cache staging remediation in a separate lane (ongoing infra config-drift fix path; see workspace deep-dive: `reports/aii-autobuild-step4-kv-deep-dive-2026-02-22.md`).
 
 ## Decision
 
