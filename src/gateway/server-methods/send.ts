@@ -91,7 +91,7 @@ export const sendHandlers: GatewayRequestHandlers = {
     const cached = context.dedupe.get(dedupeKey);
     if (cached) {
       const existing = getDeliveryByIdempotencyKey(idem);
-      if (existing) {
+      if (existing && cached.ok) {
         markDeliveryAcknowledged({ id: existing.id, note: "gateway dedupe cache hit" });
       }
       respond(cached.ok, cached.payload, cached.error, {
@@ -104,7 +104,7 @@ export const sendHandlers: GatewayRequestHandlers = {
     if (inflight) {
       const result = await inflight;
       const existing = getDeliveryByIdempotencyKey(idem);
-      if (existing) {
+      if (existing && result.ok) {
         markDeliveryAcknowledged({ id: existing.id, note: "gateway inflight dedupe hit" });
       }
       const meta = result.meta ? { ...result.meta, cached: true } : { cached: true };

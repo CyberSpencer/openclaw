@@ -72,6 +72,20 @@ export function evaluateVoiceLatencySlo(
   samples: VoiceLatencySample[],
   budget: VoiceLatencySloBudget = DEFAULT_VOICE_LATENCY_BUDGET,
 ): VoiceLatencySloResult {
+  if (samples.length === 0) {
+    return {
+      pass: false,
+      metrics: {
+        p95FirstAudioMs: 0,
+        p95TotalMs: 0,
+        p95TranscribeMs: 0,
+        p95LlmMs: 0,
+        p95TtsMs: 0,
+      },
+      breaches: ["no latency samples provided"],
+    };
+  }
+
   const firstAudioValues = positiveNumbers(samples.map((sample) => deriveFirstAudioMs(sample)));
   const totalValues = positiveNumbers(samples.map((sample) => sample.totalMs));
   const transcribeValues = positiveNumbers(samples.map((sample) => sample.transcribeMs));

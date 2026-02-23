@@ -110,6 +110,7 @@ function resolveGatewayOptions(opts?: MessageGatewayOptions) {
 
 export async function sendMessage(params: MessageSendParams): Promise<MessageSendResult> {
   const cfg = params.cfg ?? loadConfig();
+  const normalizedUrgency = normalizeMessageUrgency(params.urgency);
   const channel = params.channel?.trim()
     ? normalizeChannelId(params.channel)
     : (
@@ -122,7 +123,7 @@ export async function sendMessage(params: MessageSendParams): Promise<MessageSen
               message: params.content,
               media: params.mediaUrl,
               mediaUrls: params.mediaUrls,
-              urgency: normalizeMessageUrgency(params.urgency),
+              urgency: normalizedUrgency,
             },
           },
         })
@@ -217,6 +218,7 @@ export async function sendMessage(params: MessageSendParams): Promise<MessageSen
       gifPlayback: params.gifPlayback,
       accountId: params.accountId,
       channel,
+      urgency: normalizedUrgency,
       sessionKey: params.mirror?.sessionKey,
       idempotencyKey: params.idempotencyKey ?? randomIdempotencyKey(),
     },

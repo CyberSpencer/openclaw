@@ -1,6 +1,11 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { GatewayRequestContext } from "./types.js";
-import { resetDeliveryLedgerForTests } from "../../infra/outbound/delivery-ledger.js";
+import {
+  getDeliveryByIdempotencyKey,
+  markDeliveryFailed,
+  registerDelivery,
+  resetDeliveryLedgerForTests,
+} from "../../infra/outbound/delivery-ledger.js";
 import { sendHandlers } from "./send.js";
 
 const mocks = vi.hoisted(() => ({
@@ -253,5 +258,44 @@ describe("gateway send mirroring", () => {
     };
     expect(getPayload.entry?.id).toBe(entry?.id);
     expect(getPayload.entry?.idempotencyKey).toBe("idem-ledger");
+  });
+
+  it("does not acknowledge failed deliveries on dedupe cache hits", async () => {
+    const ledger = registerDelivery({
+      idempotencyKey: "idem-failed-cache",
+      action: "send",
+      channel: "slack",
+      to: "resolved",
+      payloadType: "text",
+      urgency: "normal",
+    });
+    markDeliveryFailed({ id: ledger.id, error: "simulated failure" });
+
+    const context = makeContext();
+    context.dedupe.set("send:idem-failed-cache", {
+      ts: Date.now(),
+      ok: false,
+      error: { code: -32000, message: "cached failure" },
+    });
+
+    const respond = vi.fn();
+    await sendHandlers.send({
+      params: {
+        to: "channel:C1",
+        message: "retry me",
+        channel: "slack",
+        idempotencyKey: "idem-failed-cache",
+      },
+      respond,
+      context,
+      req: { type: "req", id: "1", method: "send" },
+      client: null,
+      isWebchatConnect: () => false,
+    });
+
+    const entry = getDeliveryByIdempotencyKey("idem-failed-cache");
+    expect(entry?.state).toBe("failed");
+    expect(entry?.events.at(-1)?.state).toBe("failed");
+    expect(respond).toHaveBeenCalledWith(false, undefined, expect.any(Object), { cached: true });
   });
 });

@@ -51,4 +51,18 @@ describe("evaluateVoiceLatencySlo", () => {
     expect(result.metrics.p95FirstAudioMs).toBeGreaterThan(0);
     expect(result.pass).toBe(true);
   });
+
+  it("fails closed when no samples are provided", () => {
+    const result = evaluateVoiceLatencySlo([], DEFAULT_VOICE_LATENCY_BUDGET);
+
+    expect(result.pass).toBe(false);
+    expect(result.metrics).toEqual({
+      p95FirstAudioMs: 0,
+      p95TotalMs: 0,
+      p95TranscribeMs: 0,
+      p95LlmMs: 0,
+      p95TtsMs: 0,
+    });
+    expect(result.breaches).toEqual(["no latency samples provided"]);
+  });
 });

@@ -78,6 +78,38 @@ describe("sendMessage channel normalization", () => {
     expect(sendIMessage).toHaveBeenCalledWith("someone@example.com", "hi", expect.any(Object));
     expect(result.channel).toBe("imessage");
   });
+
+  it("propagates normalized urgency on gateway sends", async () => {
+    const { sendMessage } = await loadMessage();
+    callGatewayMock.mockResolvedValueOnce({ messageId: "gw-1" });
+    await setRegistry(
+      createTestRegistry([
+        {
+          pluginId: "msteams",
+          source: "test",
+          plugin: createMSTeamsPlugin({
+            aliases: ["teams"],
+            outbound: { deliveryMode: "gateway" },
+          }),
+        },
+      ]),
+    );
+
+    const result = await sendMessage({
+      cfg: {},
+      to: "conversation:19:abc@thread.tacv2",
+      content: "ship it",
+      channel: "teams",
+      urgency: "CRITICAL",
+    });
+
+    const call = callGatewayMock.mock.calls[0]?.[0] as {
+      params?: Record<string, unknown>;
+    };
+    expect(call?.params?.channel).toBe("msteams");
+    expect(call?.params?.urgency).toBe("critical");
+    expect(result.via).toBe("gateway");
+  });
 });
 
 describe("sendPoll channel normalization", () => {
