@@ -10,12 +10,15 @@
  * In standalone checkouts/CI of the openclaw-core repo, that workspace-level script may not exist.
  * In that case we skip this guard (it is still enforced in the workspace where the script exists).
  *
- * When adding a new maybe_set() in the sync script, also add the key to the
- * Zod schema (core/src/config/zod-schema.ts) and TypeScript types.
+ * When adding a new maybe_set() in the sync script:
+ * - persisted keys must be in core schema/types
+ * - runtime-only workspace keys must be listed in
+ *   core/src/config/sync-schema-workspace-extensions.ts
  */
 import fs from "node:fs";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
+import { SYNC_SCHEMA_WORKSPACE_EXTENSIONS } from "./sync-schema-workspace-extensions.js";
 import { OpenClawSchema } from "./zod-schema.js";
 
 const CORE_REPO_ROOT = path.resolve(import.meta.dirname, "../..", ".."); // <repo>/src/config -> <repo>
@@ -46,6 +49,11 @@ const PLACEHOLDERS: Record<string, unknown> = {
   "models.providers.ollama.endpointStrategy": "health",
   "models.providers.ollama.endpoints": [],
   "models.providers.ollama.models": [] as unknown[],
+  "models.providers.spark-ollama.baseUrl": "http://localhost:11434/v1",
+  "models.providers.spark-ollama.endpointStrategy": "health",
+  "models.providers.spark-ollama.models": [] as unknown[],
+  "models.providers.nvidia.baseUrl": "https://integrate.api.nvidia.com/v1",
+  "models.providers.nvidia.models": [] as unknown[],
   "agents.defaults.memorySearch.store.driver": "auto",
   "agents.defaults.memorySearch.store.qdrant.url": "http://localhost:6333",
   "agents.defaults.memorySearch.store.qdrant.endpoints": [{ url: "http://localhost:6333" }],
@@ -59,6 +67,31 @@ const PLACEHOLDERS: Record<string, unknown> = {
   "voice.mode": "spark",
   "voice.sparkTts.format": "webm",
 };
+
+const RUNTIME_ONLY_EXTENSION_PATHS = new Set(
+  Object.entries(SYNC_SCHEMA_WORKSPACE_EXTENSIONS)
+    .filter(([, ext]) => ext.persistence === "runtime_only")
+    .map(([pathStr]) => pathStr),
+);
+
+function isUnrecognizedIssue(message: string): boolean {
+  return /unrecognized/i.test(message);
+}
+
+function extractUnrecognizedPaths(issue: {
+  path: Array<string | number>;
+  message: string;
+}): string[] {
+  if (!isUnrecognizedIssue(issue.message)) {
+    return [];
+  }
+  const parent = issue.path.map(String).join(".");
+  const keys = Array.from(issue.message.matchAll(/"([^"]+)"/g)).map((m) => m[1]);
+  if (keys.length === 0) {
+    return [parent].filter(Boolean);
+  }
+  return keys.map((key) => (parent ? `${parent}.${key}` : key));
+}
 
 function setByPath(obj: Record<string, unknown>, pathStr: string, value: unknown): void {
   const parts = pathStr.split(".");
@@ -75,8 +108,21 @@ function setByPath(obj: Record<string, unknown>, pathStr: string, value: unknown
 }
 
 function placeholderForPath(pathStr: string): unknown {
+  const extensionPlaceholder = SYNC_SCHEMA_WORKSPACE_EXTENSIONS[pathStr]?.placeholder;
+  if (extensionPlaceholder !== undefined) {
+    return extensionPlaceholder;
+  }
   if (pathStr in PLACEHOLDERS) {
     return PLACEHOLDERS[pathStr];
+  }
+  if (pathStr.endsWith(".baseUrl")) {
+    return "http://localhost";
+  }
+  if (pathStr.endsWith(".models")) {
+    return [];
+  }
+  if (pathStr.endsWith(".endpointStrategy")) {
+    return "health";
   }
   if (pathStr.endsWith(".endpoints") || pathStr.endsWith(".fallbacks")) {
     return [];
@@ -109,12 +155,15 @@ describe("sync_openclaw_config schema sync", () => {
 
     expect(paths.size).toBeGreaterThan(0);
 
-    // Add required sibling paths when we touch certain objects (schema requires them).
+    // Add required sibling paths when we touch provider objects (schema requires baseUrl + models).
     for (const p of paths) {
-      if (p.startsWith("models.providers.ollama.")) {
-        paths.add("models.providers.ollama.models");
-        break;
+      const providerMatch = /^models\.providers\.([^.]+)\./.exec(p);
+      if (!providerMatch) {
+        continue;
       }
+      const provider = providerMatch[1];
+      paths.add(`models.providers.${provider}.baseUrl`);
+      paths.add(`models.providers.${provider}.models`);
     }
 
     const config: Record<string, unknown> = {};
@@ -123,22 +172,56 @@ describe("sync_openclaw_config schema sync", () => {
     }
 
     const result = OpenClawSchema.safeParse(config);
-
     if (!result.success) {
-      const unrecognized = result.error.issues.filter(
-        (iss) =>
-          typeof iss.message === "string" &&
-          (iss.message.includes("Unrecognized") || iss.message.includes("unrecognized")),
+      const unrecognizedIssues = result.error.issues.filter((iss) =>
+        isUnrecognizedIssue(String(iss.message ?? "")),
       );
-      if (unrecognized.length > 0) {
-        const details = unrecognized
-          .map((iss) => `  - ${iss.path.map(String).join(".")}: ${iss.message}`)
-          .join("\n");
+      const extracted = unrecognizedIssues.flatMap((iss) =>
+        extractUnrecognizedPaths({
+          path: iss.path as Array<string | number>,
+          message: String(iss.message ?? ""),
+        }),
+      );
+      if (unrecognizedIssues.length > 0 && extracted.length === 0) {
         throw new Error(
-          `sync_openclaw_config.sh writes keys not in the Zod schema. Add them to core/src/config/zod-schema.ts and types:\n${details}`,
+          `sync-schema guard could not parse unrecognized-key issues:\n${unrecognizedIssues
+            .map((iss) => `  - ${iss.path.map(String).join(".")}: ${iss.message}`)
+            .join("\n")}`,
         );
       }
-      throw result.error;
+      const disallowedUnrecognized = extracted.filter(
+        (pathStr) => !RUNTIME_ONLY_EXTENSION_PATHS.has(pathStr),
+      );
+      if (disallowedUnrecognized.length > 0) {
+        throw new Error(
+          `sync_openclaw_config.sh writes keys not in core schema or workspace extension allowlist:\n${disallowedUnrecognized
+            .toSorted()
+            .map((pathStr) => `  - ${pathStr}`)
+            .join("\n")}`,
+        );
+      }
+
+      const nonUnrecognizedIssues = result.error.issues.filter(
+        (iss) => !isUnrecognizedIssue(String(iss.message ?? "")),
+      );
+      if (nonUnrecognizedIssues.length > 0) {
+        throw result.error;
+      }
+    }
+
+    // Guardrail check: unknown typo keys must still fail fast.
+    const probeConfig: Record<string, unknown> = JSON.parse(JSON.stringify(config));
+    setByPath(probeConfig, "dgx.__syncSchemaUnknownProbe", "bad-key");
+    const probeResult = OpenClawSchema.safeParse(probeConfig);
+    expect(probeResult.success).toBe(false);
+    if (!probeResult.success) {
+      const probeUnrecognizedPaths = probeResult.error.issues.flatMap((iss) =>
+        extractUnrecognizedPaths({
+          path: iss.path as Array<string | number>,
+          message: String(iss.message ?? ""),
+        }),
+      );
+      expect(probeUnrecognizedPaths).toContain("dgx.__syncSchemaUnknownProbe");
     }
   });
 });
