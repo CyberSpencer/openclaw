@@ -2946,6 +2946,11 @@ export class OpenClawApp extends LitElement {
           this.execApprovalQueue = this.execApprovalQueue.filter(
             (queued) => queued.id !== entry.id,
           );
+          this.handleVoiceExecApprovalResolved(entry.id, {
+            wasQueued: true,
+            decision: null,
+            force: true,
+          });
           this.requestUpdate();
         }, delay);
         this.requestUpdate();
