@@ -193,7 +193,10 @@ function percentile(values: number[], p: number): number | null {
   }
   const sorted = [...values].toSorted((a, b) => a - b);
   const clamped = Math.max(0, Math.min(100, p));
-  const index = Math.min(sorted.length - 1, Math.ceil((clamped / 100) * sorted.length) - 1);
+  const index = Math.max(
+    0,
+    Math.min(sorted.length - 1, Math.ceil((clamped / 100) * sorted.length) - 1),
+  );
   return Number(sorted[index]!.toFixed(1));
 }
 

@@ -2941,6 +2941,13 @@ export class OpenClawApp extends LitElement {
         }
         // Auto-resolve failed, hand control back to manual approval queue.
         this.execApprovalQueue = addExecApproval(this.execApprovalQueue, entry);
+        const delay = Math.max(0, entry.expiresAtMs - Date.now() + 500);
+        window.setTimeout(() => {
+          this.execApprovalQueue = this.execApprovalQueue.filter(
+            (queued) => queued.id !== entry.id,
+          );
+          this.requestUpdate();
+        }, delay);
         this.requestUpdate();
       })
       .finally(() => {
