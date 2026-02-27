@@ -449,6 +449,7 @@ function handleGatewayEventUnsafe(host: GatewayHost, evt: GatewayEventFrame) {
       host.handleVoiceExecApprovalResolved?.(resolved.id, {
         wasQueued,
         decision: resolved.decision ?? null,
+        force: true,
       });
     }
   }
