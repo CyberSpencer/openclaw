@@ -3679,7 +3679,17 @@ export class OpenClawApp extends LitElement {
           queueDepth: this.sparkMicChunkQueue.length,
           source: chunk.source,
         });
-        await this.handleSparkMicAudio(chunk);
+        try {
+          await this.handleSparkMicAudio(chunk);
+        } catch (err) {
+          const message = err instanceof Error ? err.message : String(err);
+          this.logSparkMicTelemetry("chunk.processing_error", {
+            chunkId: chunk.chunkId,
+            chunkIndex: chunk.chunkIndex,
+            source: chunk.source,
+            error: message,
+          });
+        }
       }
     } finally {
       this.sparkMicChunkProcessing = false;
