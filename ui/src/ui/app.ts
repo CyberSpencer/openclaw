@@ -3623,7 +3623,7 @@ export class OpenClawApp extends LitElement {
     };
     this.sparkMicTelemetryLog = [entry, ...this.sparkMicTelemetryLog].slice(0, 200);
     this.persistSparkMicTelemetryToStorage();
-    console.info("[spark-mic/telemetry]", entry);
+    console.debug("[spark-mic/telemetry]", entry);
   }
 
   private nextSparkMicChunkMeta(source: "worklet" | "mediarecorder" | "final") {
