@@ -3731,21 +3731,29 @@ export class OpenClawApp extends LitElement {
 
     const frames = this.sparkMicPcmFrames;
     this.sparkMicPcmFrames = [];
-    const sampleCount = frames.reduce((sum, frame) => sum + frame.length, 0);
-    const durationMs = Math.round((sampleCount / this.sparkMicSampleRate) * 1000);
-    const { blob } = pcmFramesToWavBlob(frames, this.sparkMicSampleRate);
-    if (!blob) {
-      return;
+
+    try {
+      const sampleCount = frames.reduce((sum, frame) => sum + frame.length, 0);
+      const durationMs = Math.round((sampleCount / this.sparkMicSampleRate) * 1000);
+      const { blob } = pcmFramesToWavBlob(frames, this.sparkMicSampleRate);
+      if (!blob) {
+        return;
+      }
+      const audioBase64 = await this.blobToBase64(blob);
+      this.enqueueSparkMicChunk({
+        source: "worklet",
+        audioBase64,
+        format: "wav",
+        sampleRate: this.sparkMicSampleRate,
+        durationMs,
+        bytes: blob.size,
+      });
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      this.logSparkMicTelemetry("chunk.error", { source: "worklet", error: message });
+      this.lastError = `Recording failed: ${message}`;
+      this.requestUpdate();
     }
-    const audioBase64 = await this.blobToBase64(blob);
-    this.enqueueSparkMicChunk({
-      source: "worklet",
-      audioBase64,
-      format: "wav",
-      sampleRate: this.sparkMicSampleRate,
-      durationMs,
-      bytes: blob.size,
-    });
   }
 
   private async requestSparkMicStt(params: {
@@ -3983,7 +3991,10 @@ export class OpenClawApp extends LitElement {
       this.sparkMicRecording = true;
       this.scheduleSparkMicLongRecordingNotice();
       this.sparkMicWorkletChunkInterval = setInterval(() => {
-        void this.flushSparkMicWorkletChunk();
+        void this.flushSparkMicWorkletChunk().catch((err) => {
+          const message = err instanceof Error ? err.message : String(err);
+          this.logSparkMicTelemetry("chunk.error", { source: "worklet", error: message });
+        });
       }, SPARK_MIC_CHUNK_MS);
 
       return true;
@@ -4147,19 +4158,26 @@ export class OpenClawApp extends LitElement {
     }
 
     if (frames.length) {
-      const sampleCount = frames.reduce((sum, frame) => sum + frame.length, 0);
-      const durationMs = Math.round((sampleCount / this.sparkMicSampleRate) * 1000);
-      const { blob } = pcmFramesToWavBlob(frames, this.sparkMicSampleRate);
-      if (blob) {
-        const audioBase64 = await this.blobToBase64(blob);
-        this.enqueueSparkMicChunk({
-          source: "final",
-          audioBase64,
-          format: "wav",
-          sampleRate: this.sparkMicSampleRate,
-          durationMs,
-          bytes: blob.size,
-        });
+      try {
+        const sampleCount = frames.reduce((sum, frame) => sum + frame.length, 0);
+        const durationMs = Math.round((sampleCount / this.sparkMicSampleRate) * 1000);
+        const { blob } = pcmFramesToWavBlob(frames, this.sparkMicSampleRate);
+        if (blob) {
+          const audioBase64 = await this.blobToBase64(blob);
+          this.enqueueSparkMicChunk({
+            source: "final",
+            audioBase64,
+            format: "wav",
+            sampleRate: this.sparkMicSampleRate,
+            durationMs,
+            bytes: blob.size,
+          });
+        }
+      } catch (err) {
+        const message = err instanceof Error ? err.message : String(err);
+        this.logSparkMicTelemetry("chunk.error", { source: "final", error: message });
+        this.lastError = `Recording failed: ${message}`;
+        this.requestUpdate();
       }
     }
 

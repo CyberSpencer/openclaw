@@ -146,8 +146,8 @@ function asVoiceTranscriptPayload(value: unknown): VoiceTranscriptUserEventPaylo
   if (!clientMessageId) {
     return null;
   }
-  const message = asRecord(obj.message);
-  return {
+  const message = asRecord(obj.message) ?? undefined;
+  const payload: VoiceTranscriptUserEventPayload = {
     sessionKey: typeof obj.sessionKey === "string" ? obj.sessionKey : undefined,
     conversationId: typeof obj.conversationId === "string" ? obj.conversationId : undefined,
     turnId: typeof obj.turnId === "string" ? obj.turnId : undefined,
@@ -155,7 +155,8 @@ function asVoiceTranscriptPayload(value: unknown): VoiceTranscriptUserEventPaylo
     source: typeof obj.source === "string" ? obj.source : undefined,
     messageId: typeof obj.messageId === "string" ? obj.messageId : undefined,
     message,
-  } as VoiceTranscriptUserEventPayload;
+  };
+  return payload;
 }
 
 function normalizeSessionKeyForDefaults(

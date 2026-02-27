@@ -336,6 +336,19 @@ async function main(): Promise<void> {
   const pendingStreams = new Map<string, PendingSparkTtsStream>();
   let sparkTtsStreamSupported = ttsMode !== "non-stream";
 
+  const failAllPending = (reason: string): void => {
+    for (const [id, waiter] of pending) {
+      pending.delete(id);
+      clearTimeout(waiter.timeout);
+      waiter.reject(new Error(reason));
+    }
+    for (const [streamId, waiter] of pendingStreams) {
+      pendingStreams.delete(streamId);
+      clearTimeout(waiter.timeout);
+      waiter.reject(new Error(reason));
+    }
+  };
+
   const request = (method: string, params?: unknown): Promise<GatewayResFrame> =>
     new Promise((resolve, reject) => {
       if (ws.readyState !== WebSocket.OPEN) {
@@ -409,6 +422,13 @@ async function main(): Promise<void> {
         reject(err instanceof Error ? err : new Error(String(err)));
       });
     });
+
+  ws.on("close", () => {
+    failAllPending("gateway websocket closed");
+  });
+  ws.on("error", (err) => {
+    failAllPending(err instanceof Error ? err.message : "gateway websocket error");
+  });
 
   ws.on("message", (data) => {
     let parsed: GatewayFrame | null = null;

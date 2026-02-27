@@ -282,6 +282,9 @@ export function createMemoryRerankClient(
             fallbackUsed: this.lastFallbackUsed,
           };
         } catch (err) {
+          if (err instanceof Error && err.message.startsWith("reranker request failed:")) {
+            throw err;
+          }
           markEndpointHealth(endpoint, false);
           const message = err instanceof Error ? err.message : String(err);
           endpointErrors.push(`${endpoint.baseUrl}: ${message}`);

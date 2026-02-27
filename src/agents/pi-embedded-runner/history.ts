@@ -47,7 +47,8 @@ export function getDmHistoryLimitFromSessionKey(
     return undefined;
   }
 
-  if (sessionKey === "webchat-voice") {
+  const normalizedSessionKey = stripThreadSuffix(sessionKey);
+  if (normalizedSessionKey === "webchat-voice") {
     const limit = config.voice?.historyTurns;
     return typeof limit === "number" && Number.isFinite(limit) && limit > 0 ? limit : undefined;
   }
