@@ -55,7 +55,7 @@ export type GatewayHost = SettingsHost &
     maybeAutoResolveVoiceExecApproval?: (entry: ExecApprovalRequest) => boolean;
     handleVoiceExecApprovalResolved?: (
       id: string,
-      meta?: { wasQueued?: boolean; decision?: string | null },
+      meta?: { wasQueued?: boolean; decision?: string | null; force?: boolean },
     ) => void;
     handleVoiceChatRunSettled?: (sessionKey: string, state: "final" | "error" | "aborted") => void;
     handleVoiceTranscriptEvent?: (payload: {
