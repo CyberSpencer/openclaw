@@ -154,11 +154,25 @@ export type VoiceSparkTtsConfig = {
   format?: string;
 };
 
+/** Thinking level for voice LLM runs. Lower = faster first token; use "low" or "off" for short-turn latency. */
+export type VoiceThinkingLevel = "off" | "low" | "medium" | "high" | "xhigh";
+
 export type VoiceConfig = {
   /** Voice mode: spark (DGX STT/TTS), option2a (local STT+TTS), personaplex (S2S), hybrid (auto-select). */
   mode?: VoiceMode;
   /** Enable voice mode (default: false). */
   enabled?: boolean;
+  /**
+   * Override thinking level for voice conversation (no tools). When set, used instead of router's thinking
+   * for /think injection when the run is conversation-only. When tools are allowed (e.g. "go do the work"),
+   * router/default thinking is used so the agent runs with full (high) thinking. Use "low" or "off" for fast replies.
+   */
+  thinkingLevel?: VoiceThinkingLevel;
+  /**
+   * Max conversation turns to send as context for voice session (webchat-voice). When set, trims history
+   * to the last N user turns to reduce context size and latency. Omit for no limit (full history).
+   */
+  historyTurns?: number;
   /** Local STT provider (default: whisper). */
   sttProvider?: VoiceSttProvider;
   /** Local TTS provider (default: elevenlabs via sag). */

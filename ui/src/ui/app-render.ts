@@ -1382,6 +1382,8 @@ export function renderApp(state: AppViewState) {
                     state.sparkStatus?.enabled && state.sparkStatus?.voiceAvailable === true,
                   ),
                   sparkMicRecording: state.sparkMicRecording ?? false,
+                  voiceConversationActive: state.voiceState.conversationActive,
+                  voiceMixedModeEnabled: state.settings.voiceMixedModeEnabled,
                   onMicClick: () => state.handleSparkMicClick?.(),
                   onSpeakClick: (text, messageKey) =>
                     void state.handleSpeakText?.(text, messageKey),

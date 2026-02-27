@@ -213,6 +213,7 @@ const FIELD_LABELS: Record<string, string> = {
   "gateway.nodes.allowCommands": "Gateway Node Allowlist (Extra Commands)",
   "gateway.nodes.denyCommands": "Gateway Node Denylist",
   "dgx.accessMode": "DGX Access Mode",
+  "dgx.resolvedAccessMode": "DGX Resolved Access Mode",
   "dgx.wanBaseUrl": "DGX WAN Base URL",
   "dgx.wanHeaders": "DGX WAN Headers",
   "routing.localFallbackModel": "Local Fallback Model",
@@ -241,6 +242,16 @@ const FIELD_LABELS: Record<string, string> = {
   "agents.defaults.memorySearch.remote.apiKey": "Remote Embedding API Key",
   "agents.defaults.memorySearch.remote.headers": "Remote Embedding Headers",
   "agents.defaults.memorySearch.remote.batch.concurrency": "Remote Batch Concurrency",
+  "agents.defaults.memorySearch.rerank": "Memory Search Reranker",
+  "agents.defaults.memorySearch.rerank.enabled": "Memory Search Reranker",
+  "agents.defaults.memorySearch.rerank.candidateLimit": "Reranker Candidate Limit",
+  "agents.defaults.memorySearch.rerank.topN": "Reranker Top N",
+  "agents.defaults.memorySearch.rerank.failOpen": "Reranker Fail Open",
+  "agents.defaults.memorySearch.rerank.timeoutMs": "Reranker Timeout (ms)",
+  "agents.defaults.memorySearch.rerank.model": "Reranker Model",
+  "agents.defaults.memorySearch.rerank.remote.baseUrl": "Reranker Base URL",
+  "agents.defaults.memorySearch.rerank.remote.endpoints": "Reranker Endpoints",
+  "agents.defaults.memorySearch.rerank.remote.headers": "Reranker Headers",
   "agents.defaults.memorySearch.model": "Memory Search Model",
   "agents.defaults.memorySearch.fallback": "Memory Search Fallback",
   "agents.defaults.memorySearch.local.modelPath": "Local Embedding Model Path",
@@ -457,6 +468,8 @@ const FIELD_HELP: Record<string, string> = {
   "gateway.nodes.denyCommands":
     "Commands to block even if present in node claims or default allowlist.",
   "dgx.accessMode": 'DGX access mode for WAN/LAN routing ("auto", "lan", or "wan").',
+  "dgx.resolvedAccessMode":
+    'Observed effective DGX access mode after runtime resolution ("lan" or "wan").',
   "dgx.wanBaseUrl": "WAN base URL for DGX access (e.g. ngrok HTTPS endpoint).",
   "dgx.wanHeaders": "Extra headers to attach to DGX WAN requests (e.g. auth tokens).",
   "routing.localFallbackModel":
@@ -593,6 +606,26 @@ const FIELD_HELP: Record<string, string> = {
     "Polling interval in ms for batch status (default: 2000).",
   "agents.defaults.memorySearch.remote.batch.timeoutMinutes":
     "Timeout in minutes for batch indexing (default: 60).",
+  "agents.defaults.memorySearch.rerank":
+    "Optional reranking pass over memory retrieval candidates using Spark cross-encoder service.",
+  "agents.defaults.memorySearch.rerank.enabled":
+    "Enable optional cross-encoder reranking for top memory candidates (default: false).",
+  "agents.defaults.memorySearch.rerank.candidateLimit":
+    "Max candidates sent to reranker (default: 20, max: 20).",
+  "agents.defaults.memorySearch.rerank.topN":
+    "Top documents requested from reranker (0 = auto min(candidates, 20)).",
+  "agents.defaults.memorySearch.rerank.failOpen":
+    "When true, reranker failures fall back to baseline ranking (default: true).",
+  "agents.defaults.memorySearch.rerank.timeoutMs":
+    "Per-request reranker timeout in ms (default: 500).",
+  "agents.defaults.memorySearch.rerank.model":
+    "Optional reranker model hint sent to Spark (contract-dependent).",
+  "agents.defaults.memorySearch.rerank.remote.baseUrl":
+    "Primary reranker base URL (e.g. http://<dgx>:7999/reranker/).",
+  "agents.defaults.memorySearch.rerank.remote.endpoints":
+    "Ordered reranker endpoints with priority, timeout, health checks, and optional headers.",
+  "agents.defaults.memorySearch.rerank.remote.headers":
+    "Headers merged into reranker requests (endpoint headers override).",
   "agents.defaults.memorySearch.local.modelPath":
     "Local GGUF model path or hf: URI (node-llama-cpp).",
   "agents.defaults.memorySearch.fallback":
@@ -821,6 +854,7 @@ const FIELD_PLACEHOLDERS: Record<string, string> = {
   "channels.mattermost.baseUrl": "https://chat.example.com",
   "agents.list[].identity.avatar": "avatars/openclaw.png",
   "dgx.accessMode": "auto",
+  "dgx.resolvedAccessMode": "wan",
   "dgx.wanBaseUrl": "https://xxxx.ngrok-free.app",
 };
 

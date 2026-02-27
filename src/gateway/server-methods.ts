@@ -109,6 +109,8 @@ const WRITE_METHODS = new Set([
   "router.setEnabled",
   "spark.voice.stt",
   "spark.voice.tts",
+  "spark.voice.tts.stream",
+  "spark.voice.tts.cancel",
   "sessions.spawn",
 ]);
 

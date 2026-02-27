@@ -32,6 +32,27 @@ export type ResolvedMemorySearchConfig = {
       timeoutMinutes: number;
     };
   };
+  rerank: {
+    enabled: boolean;
+    candidateLimit: number;
+    topN: number;
+    failOpen: boolean;
+    timeoutMs: number;
+    model?: string;
+    remote?: {
+      baseUrl?: string;
+      endpoints?: Array<{
+        baseUrl: string;
+        headers?: Record<string, string>;
+        priority?: number;
+        timeoutMs?: number;
+        healthUrl?: string;
+        healthTimeoutMs?: number;
+        healthCacheTtlMs?: number;
+      }>;
+      headers?: Record<string, string>;
+    };
+  };
   experimental: {
     sessionMemory: boolean;
   };
@@ -131,6 +152,11 @@ const DEFAULT_EMERGENCY_FAILOVER_THRESHOLD = 2;
 const DEFAULT_EMERGENCY_RECOVER_THRESHOLD = 2;
 const DEFAULT_EMERGENCY_RECOVER_COOLDOWN_MS = 30_000;
 const DEFAULT_EMERGENCY_PROBE_INTERVAL_MS = 10_000;
+const DEFAULT_RERANK_ENABLED = false;
+const DEFAULT_RERANK_CANDIDATE_LIMIT = 20;
+const DEFAULT_RERANK_TOP_N = 0;
+const DEFAULT_RERANK_TIMEOUT_MS = 500;
+const DEFAULT_RERANK_FAIL_OPEN = true;
 
 function normalizeSources(
   sources: Array<"memory" | "sessions"> | undefined,
@@ -263,6 +289,56 @@ function normalizeQdrantEndpoints(
   });
 }
 
+function normalizeRerankEndpoints(
+  defaults:
+    | NonNullable<NonNullable<MemorySearchConfig["rerank"]>["remote"]>["endpoints"]
+    | undefined,
+  overrides:
+    | NonNullable<NonNullable<MemorySearchConfig["rerank"]>["remote"]>["endpoints"]
+    | undefined,
+): Array<
+  NonNullable<NonNullable<ResolvedMemorySearchConfig["rerank"]["remote"]>["endpoints"]>[number]
+> {
+  const merged = new Map<
+    string,
+    NonNullable<NonNullable<ResolvedMemorySearchConfig["rerank"]["remote"]>["endpoints"]>[number]
+  >();
+  const ingest = (
+    entries:
+      | NonNullable<NonNullable<MemorySearchConfig["rerank"]>["remote"]>["endpoints"]
+      | undefined,
+  ) => {
+    for (const entry of entries ?? []) {
+      const baseUrl = normalizeBaseUrl(entry.baseUrl ?? entry.url);
+      if (!baseUrl) {
+        continue;
+      }
+      const prev = merged.get(baseUrl) ?? { baseUrl };
+      merged.set(baseUrl, {
+        ...prev,
+        ...(entry.headers !== undefined ? { headers: entry.headers } : {}),
+        ...(entry.priority !== undefined ? { priority: entry.priority } : {}),
+        ...(entry.timeoutMs !== undefined ? { timeoutMs: entry.timeoutMs } : {}),
+        ...(entry.healthUrl !== undefined ? { healthUrl: entry.healthUrl } : {}),
+        ...(entry.healthTimeoutMs !== undefined ? { healthTimeoutMs: entry.healthTimeoutMs } : {}),
+        ...(entry.healthCacheTtlMs !== undefined
+          ? { healthCacheTtlMs: entry.healthCacheTtlMs }
+          : {}),
+      });
+    }
+  };
+  ingest(defaults);
+  ingest(overrides);
+  return Array.from(merged.values()).toSorted((a, b) => {
+    const aPriority = a.priority ?? 0;
+    const bPriority = b.priority ?? 0;
+    if (aPriority !== bPriority) {
+      return aPriority - bPriority;
+    }
+    return a.baseUrl.localeCompare(b.baseUrl);
+  });
+}
+
 function mergeConfig(
   defaults: MemorySearchConfig | undefined,
   overrides: MemorySearchConfig | undefined,
@@ -317,6 +393,43 @@ function mergeConfig(
         batch,
       }
     : undefined;
+  const defaultRerank = defaults?.rerank;
+  const overrideRerank = overrides?.rerank;
+  const rerankRemoteDefaults = defaultRerank?.remote;
+  const rerankRemoteOverrides = overrideRerank?.remote;
+  const rerankRemoteHasConfig = Boolean(
+    rerankRemoteDefaults?.baseUrl ||
+    rerankRemoteOverrides?.baseUrl ||
+    (rerankRemoteDefaults?.endpoints?.length ?? 0) > 0 ||
+    (rerankRemoteOverrides?.endpoints?.length ?? 0) > 0 ||
+    rerankRemoteDefaults?.headers ||
+    rerankRemoteOverrides?.headers,
+  );
+  const rerankRemote = rerankRemoteHasConfig
+    ? {
+        baseUrl: rerankRemoteOverrides?.baseUrl ?? rerankRemoteDefaults?.baseUrl,
+        endpoints: (() => {
+          const endpoints = normalizeRerankEndpoints(
+            rerankRemoteDefaults?.endpoints,
+            rerankRemoteOverrides?.endpoints,
+          );
+          return endpoints.length > 0 ? endpoints : undefined;
+        })(),
+        headers: rerankRemoteOverrides?.headers ?? rerankRemoteDefaults?.headers,
+      }
+    : undefined;
+  const rerank = {
+    enabled: overrideRerank?.enabled ?? defaultRerank?.enabled ?? DEFAULT_RERANK_ENABLED,
+    candidateLimit:
+      overrideRerank?.candidateLimit ??
+      defaultRerank?.candidateLimit ??
+      DEFAULT_RERANK_CANDIDATE_LIMIT,
+    topN: overrideRerank?.topN ?? defaultRerank?.topN ?? DEFAULT_RERANK_TOP_N,
+    failOpen: overrideRerank?.failOpen ?? defaultRerank?.failOpen ?? DEFAULT_RERANK_FAIL_OPEN,
+    timeoutMs: overrideRerank?.timeoutMs ?? defaultRerank?.timeoutMs ?? DEFAULT_RERANK_TIMEOUT_MS,
+    model: overrideRerank?.model ?? defaultRerank?.model,
+    remote: rerankRemote,
+  };
   const fallback = overrides?.fallback ?? defaults?.fallback ?? "none";
   const modelDefault =
     provider === "gemini"
@@ -459,12 +572,24 @@ function mergeConfig(
   const deltaBytes = clampInt(sync.sessions.deltaBytes, 0, Number.MAX_SAFE_INTEGER);
   const deltaMessages = clampInt(sync.sessions.deltaMessages, 0, Number.MAX_SAFE_INTEGER);
   const degradedMaxResults = clampInt(degraded.maxResults, 1, 200);
+  const rerankCandidateLimit = clampInt(rerank.candidateLimit, 1, 20);
+  const rerankTopN = clampInt(rerank.topN, 0, 20);
+  const rerankTimeoutMs = clampInt(rerank.timeoutMs, 100, 120_000);
   return {
     enabled,
     sources,
     extraPaths,
     provider,
     remote,
+    rerank: {
+      enabled: Boolean(rerank.enabled),
+      candidateLimit: rerankCandidateLimit,
+      topN: rerankTopN,
+      failOpen: Boolean(rerank.failOpen),
+      timeoutMs: rerankTimeoutMs,
+      model: rerank.model?.trim() ? rerank.model.trim() : undefined,
+      remote: rerank.remote,
+    },
     experimental: {
       sessionMemory,
     },

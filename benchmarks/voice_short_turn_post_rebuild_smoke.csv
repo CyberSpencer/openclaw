@@ -1,0 +1,2 @@
+turn,turn_id,stt_total_ms,llm_first_semantic_text_ms,llm_full_completion_ms,tts_first_byte_ms,tts_full_completion_ms,tts_reported_duration_ms,eos_to_first_semantic_text_ms,eos_to_first_audible_byte_ms,transcription_chars,response_chars,response_empty,route,model,thinking_level,tts_mode_used,stream_chunks,transcription_was_empty,status,error_message
+1,bench-turn-1-ca1c95a8,928,22508,43867,13297,13475,12165,23436,58092,66,198,false,local,openai-codex/gpt-5.3-codex,high,stream,54,false,ok,

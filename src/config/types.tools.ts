@@ -273,6 +273,46 @@ export type MemorySearchConfig = {
       timeoutMinutes?: number;
     };
   };
+  /** Optional reranker pass over top retrieval candidates. */
+  rerank?: {
+    /** Enable reranking (default: false). */
+    enabled?: boolean;
+    /** Max candidates sent to reranker (default: 20, max: 20). */
+    candidateLimit?: number;
+    /** Top results requested from reranker (0 = auto min(candidates, 20); max: 20). */
+    topN?: number;
+    /** Fail-open to baseline ranking when reranker is unavailable (default: true). */
+    failOpen?: boolean;
+    /** Request timeout in ms for reranker calls (default: 500). */
+    timeoutMs?: number;
+    /** Optional reranker model hint. */
+    model?: string;
+    remote?: {
+      /** Optional primary reranker URL (e.g. http://host:7999/reranker/). */
+      baseUrl?: string;
+      /** Optional endpoint list for LAN/WAN failover. */
+      endpoints?: Array<{
+        /** Base URL for this endpoint. */
+        baseUrl?: string;
+        /** URL alias (accepted for compatibility). */
+        url?: string;
+        /** Optional per-endpoint headers merged into requests. */
+        headers?: Record<string, string>;
+        /** Lower numbers are higher priority (default: 0). */
+        priority?: number;
+        /** Optional request timeout override in ms. */
+        timeoutMs?: number;
+        /** Optional health check URL for endpoint selection. */
+        healthUrl?: string;
+        /** Optional health check timeout in ms. */
+        healthTimeoutMs?: number;
+        /** Optional health check cache TTL in ms (default: 10000). */
+        healthCacheTtlMs?: number;
+      }>;
+      /** Optional headers merged into all endpoint requests. */
+      headers?: Record<string, string>;
+    };
+  };
   /** Fallback behavior when embeddings fail. */
   fallback?: "openai" | "gemini" | "local" | "voyage" | "none";
   /** Embedding model id (remote) or alias (local). */

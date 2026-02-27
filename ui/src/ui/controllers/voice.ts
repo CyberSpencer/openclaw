@@ -25,9 +25,79 @@ const BARGE_IN_MIN_SPEECH_MS = 220;
 const WORKLET_VERSION = "20260210-v1";
 const SPARK_STT_TIMEOUT_MS = 10_000;
 const SPARK_LLM_TIMEOUT_MS = 120_000;
+const SPARK_LLM_PROVISIONAL_TIMEOUT_MS = 6_000;
 const SPARK_TTS_TIMEOUT_MS = 60_000;
+const VOICE_RECONCILE_STALE_MS = 15_000;
+const BACKCHANNEL_BEEP_DURATION_MS = 140;
+const SHORT_TURN_MAX_SPEECH_MS = 6_000;
+const SHORT_TURN_MAX_OUTPUT_TOKENS = 120;
+const PROVISIONAL_MAX_OUTPUT_TOKENS = 64;
+const VOICE_SLO_SAMPLE_LIMIT = 120;
+const ACTION_TURN_PREFIX_REGEX =
+  /^\s*(please\s+)?(run|execute|send|email|message|post|publish|deploy|delete|remove|write|edit|update|create|install|commit|push|merge|approve|deny)\b/i;
+const ACTION_TURN_KEYWORD_REGEX =
+  /\b(send|email|message|post|publish|deploy|delete|remove|write|edit|update|create|install|commit|push|merge|approve|deny|chmod|chown|sudo|curl|wget|http request|network call|tool)\b/i;
 
-export type ConversationPhase = "idle" | "listening" | "processing" | "speaking";
+export type ConversationPhase =
+  | "idle"
+  | "listening"
+  | "processing"
+  | "speaking"
+  | "paused_text_run"
+  | "approval_wait"
+  | "error";
+
+export type VoiceInterruptedBy =
+  | "text_send"
+  | "barge_in"
+  | "approval_wait"
+  | "spark_unavailable"
+  | "user_stop";
+
+export type VoicePhaseTransitionMeta = {
+  turnId: string | null;
+  phase: ConversationPhase;
+  interruptedBy: VoiceInterruptedBy | null;
+  resumedAt: number | null;
+  ts: number;
+  seq: number;
+};
+
+export type VoiceTranscriptReconcileEntry = {
+  clientMessageId: string;
+  conversationId: string;
+  turnId: string;
+  optimisticMessageId: string;
+  confirmedMessageId: string | null;
+  createdAtMs: number;
+  updatedAtMs: number;
+  status: "optimistic" | "confirmed" | "stale";
+};
+
+export type VoiceSparkStreamEventName =
+  | "spark.voice.stream.started"
+  | "spark.voice.stream.chunk"
+  | "spark.voice.stream.completed"
+  | "spark.voice.stream.error";
+
+type SparkTtsStreamChunk = {
+  seq: number;
+  audioBase64: string;
+  audioFormat: string;
+  sampleRate?: number;
+  isLast?: boolean;
+  chunkDurationMs?: number;
+};
+
+type SparkTtsStreamPending = {
+  chunks: SparkTtsStreamChunk[];
+  seenSeq: Set<number>;
+  expectedTotalChunks: number | null;
+  resolve: (chunks: SparkTtsStreamChunk[]) => void;
+  reject: (err: Error) => void;
+  timeoutHandle: ReturnType<typeof setTimeout> | null;
+  abortCleanup: (() => void) | null;
+};
 
 export type VoiceState = {
   client: GatewayBrowserClient | null;
@@ -41,6 +111,31 @@ export type VoiceState = {
   // Conversation state
   conversationActive: boolean;
   phase: ConversationPhase;
+  turnAbortController: AbortController | null;
+  conversationId: string | null;
+  conversationSessionKey: string | null;
+  currentTurnId: string | null;
+  currentClientMessageId: string | null;
+  transitionMeta: VoicePhaseTransitionMeta | null;
+  phaseSeq: number;
+  manualStopVersion: number;
+  pausedTextRun: {
+    conversationId: string;
+    sessionKey: string;
+    manualStopVersion: number;
+    interruptedBy: "text_send" | "approval_wait";
+  } | null;
+  completedTurnIds: Set<string>;
+  transcriptReconcileByClientMessageId: Map<string, VoiceTranscriptReconcileEntry>;
+  statusText: string | null;
+  firstStatusTextAtMs: number | null;
+  firstAudibleAtMs: number | null;
+  firstSemanticTextAtMs: number | null;
+  semanticSpokenStartAtMs: number | null;
+  shortTurnSloSamples: VoiceShortTurnSloSample[];
+  shortTurnSloReport: VoiceShortTurnSloReport | null;
+  sparkTtsStreamSupport: "unknown" | "supported" | "unsupported";
+  sparkTtsStreams: Map<string, SparkTtsStreamPending>;
 
   // VAD state
   speechDetected: boolean;
@@ -121,8 +216,43 @@ export type VoiceTimings = {
   sttMs?: number;
   routingMs?: number;
   llmMs?: number;
+  llmFirstSemanticMs?: number;
+  llmFullCompletionMs?: number;
   ttsMs?: number;
   totalMs: number;
+};
+
+export type VoiceShortTurnSloMetric = {
+  count: number;
+  p50Ms: number | null;
+  p95Ms: number | null;
+};
+
+export type VoiceShortTurnSloReport = {
+  generatedAtMs: number;
+  totalTurnCount: number;
+  shortTurnCount: number;
+  shortTurnSpeechMaxMs: number;
+  shortTurnOutputTokenMax: number;
+  metrics: {
+    eosToFirstAssistantStatusText: VoiceShortTurnSloMetric;
+    eosToFirstAudibleByte: VoiceShortTurnSloMetric;
+    eosToFirstSemanticAssistantText: VoiceShortTurnSloMetric;
+    eosToSemanticSpokenAnswerStart: VoiceShortTurnSloMetric;
+  };
+};
+
+type VoiceShortTurnSloSample = {
+  turnId: string;
+  capturedAtMs: number;
+  eosAtMs: number;
+  speechDurationMs: number | null;
+  outputTokenEstimate: number;
+  qualifiesShortTurn: boolean;
+  eosToFirstAssistantStatusTextMs: number | null;
+  eosToFirstAudibleByteMs: number | null;
+  eosToFirstSemanticAssistantTextMs: number | null;
+  eosToSemanticSpokenAnswerStartMs: number | null;
 };
 
 export type VoiceStatusResult = {
@@ -138,12 +268,22 @@ export type VoiceProcessResult = {
   sessionId: string;
   transcription?: string;
   response?: string;
+  spokenResponse?: string;
   audioBase64?: string;
   audioFormat?: string;
+  audioChunks?: Array<{ audioBase64: string; audioFormat?: string }>;
   route?: string;
   model?: string;
   thinkingLevel?: string;
   runId?: string;
+  conversationId?: string;
+  turnId?: string;
+  clientMessageId?: string;
+  source?: string;
+  userTranscriptMessageId?: string;
+  userTranscriptMessage?: Record<string, unknown> | null;
+  provisional?: boolean;
+  toolActivity?: boolean;
   timings?: VoiceTimings;
 };
 
@@ -189,6 +329,544 @@ export function withTurnTelemetry(
   };
 }
 
+function setVoiceStatusText(state: VoiceState, statusText: string): void {
+  state.statusText = statusText;
+  if (state.firstStatusTextAtMs == null) {
+    state.firstStatusTextAtMs = Date.now();
+  }
+}
+
+function isLikelyActionTurn(text: string | null | undefined): boolean {
+  const normalized = typeof text === "string" ? text.trim() : "";
+  if (!normalized) {
+    return false;
+  }
+  return ACTION_TURN_PREFIX_REGEX.test(normalized) || ACTION_TURN_KEYWORD_REGEX.test(normalized);
+}
+
+function toOptionalMs(value: unknown): number | undefined {
+  if (typeof value === "number" && Number.isFinite(value)) {
+    return Math.max(0, Number(value));
+  }
+  if (typeof value === "string" && value.trim()) {
+    const parsed = Number(value);
+    if (Number.isFinite(parsed)) {
+      return Math.max(0, parsed);
+    }
+  }
+  return undefined;
+}
+
+function resolveTimingMsFromRecord(
+  record: Record<string, unknown> | undefined,
+  keys: string[],
+): number | undefined {
+  if (!record) {
+    return undefined;
+  }
+  for (const key of keys) {
+    const value = toOptionalMs(record[key]);
+    if (value != null) {
+      return value;
+    }
+  }
+  return undefined;
+}
+
+function estimateOutputTokens(text: string | null | undefined): number {
+  if (!text || !text.trim()) {
+    return 0;
+  }
+  return Math.max(1, Math.ceil(text.trim().length / 4));
+}
+
+function latencyFromEos(eosAtMs: number, targetAtMs: number | null): number | null {
+  if (targetAtMs == null) {
+    return null;
+  }
+  return Math.max(0, targetAtMs - eosAtMs);
+}
+
+function percentileMs(values: number[], percentile: number): number | null {
+  if (!values.length) {
+    return null;
+  }
+  const sorted = [...values].toSorted((a, b) => a - b);
+  const rank = Math.max(
+    0,
+    Math.min(sorted.length - 1, Math.ceil((percentile / 100) * sorted.length) - 1),
+  );
+  return Math.round(sorted[rank] ?? sorted[sorted.length - 1] ?? 0);
+}
+
+function buildSloMetric(values: number[]): VoiceShortTurnSloMetric {
+  return {
+    count: values.length,
+    p50Ms: percentileMs(values, 50),
+    p95Ms: percentileMs(values, 95),
+  };
+}
+
+function buildShortTurnSloReport(samples: VoiceShortTurnSloSample[]): VoiceShortTurnSloReport {
+  const shortTurnSamples = samples.filter((sample) => sample.qualifiesShortTurn);
+  const statusValues = shortTurnSamples.flatMap((sample) =>
+    sample.eosToFirstAssistantStatusTextMs == null ? [] : [sample.eosToFirstAssistantStatusTextMs],
+  );
+  const firstAudibleValues = shortTurnSamples.flatMap((sample) =>
+    sample.eosToFirstAudibleByteMs == null ? [] : [sample.eosToFirstAudibleByteMs],
+  );
+  const firstSemanticValues = shortTurnSamples.flatMap((sample) =>
+    sample.eosToFirstSemanticAssistantTextMs == null
+      ? []
+      : [sample.eosToFirstSemanticAssistantTextMs],
+  );
+  const semanticSpokenValues = shortTurnSamples.flatMap((sample) =>
+    sample.eosToSemanticSpokenAnswerStartMs == null
+      ? []
+      : [sample.eosToSemanticSpokenAnswerStartMs],
+  );
+  return {
+    generatedAtMs: Date.now(),
+    totalTurnCount: samples.length,
+    shortTurnCount: shortTurnSamples.length,
+    shortTurnSpeechMaxMs: SHORT_TURN_MAX_SPEECH_MS,
+    shortTurnOutputTokenMax: SHORT_TURN_MAX_OUTPUT_TOKENS,
+    metrics: {
+      eosToFirstAssistantStatusText: buildSloMetric(statusValues),
+      eosToFirstAudibleByte: buildSloMetric(firstAudibleValues),
+      eosToFirstSemanticAssistantText: buildSloMetric(firstSemanticValues),
+      eosToSemanticSpokenAnswerStart: buildSloMetric(semanticSpokenValues),
+    },
+  };
+}
+
+export function recordVoiceShortTurnSloSample(
+  state: VoiceState,
+  params: {
+    turnId: string;
+    eosAtMs: number;
+    speechDurationMs: number | null;
+    outputText: string | null | undefined;
+  },
+): void {
+  const outputTokenEstimate = estimateOutputTokens(params.outputText);
+  const qualifiesShortTurn =
+    params.speechDurationMs != null &&
+    params.speechDurationMs <= SHORT_TURN_MAX_SPEECH_MS &&
+    outputTokenEstimate <= SHORT_TURN_MAX_OUTPUT_TOKENS;
+  const sample: VoiceShortTurnSloSample = {
+    turnId: params.turnId,
+    capturedAtMs: Date.now(),
+    eosAtMs: params.eosAtMs,
+    speechDurationMs: params.speechDurationMs,
+    outputTokenEstimate,
+    qualifiesShortTurn,
+    eosToFirstAssistantStatusTextMs: latencyFromEos(params.eosAtMs, state.firstStatusTextAtMs),
+    eosToFirstAudibleByteMs: latencyFromEos(params.eosAtMs, state.firstAudibleAtMs),
+    eosToFirstSemanticAssistantTextMs: latencyFromEos(params.eosAtMs, state.firstSemanticTextAtMs),
+    eosToSemanticSpokenAnswerStartMs: latencyFromEos(params.eosAtMs, state.semanticSpokenStartAtMs),
+  };
+  state.shortTurnSloSamples.push(sample);
+  if (state.shortTurnSloSamples.length > VOICE_SLO_SAMPLE_LIMIT) {
+    state.shortTurnSloSamples.splice(0, state.shortTurnSloSamples.length - VOICE_SLO_SAMPLE_LIMIT);
+  }
+  state.shortTurnSloReport = buildShortTurnSloReport(state.shortTurnSloSamples);
+  console.info("[Voice/SLO] short-turn-report", state.shortTurnSloReport);
+}
+
+function generateVoiceId(prefix: string): string {
+  const random = Math.random().toString(36).slice(2, 10);
+  return `${prefix}-${Date.now()}-${random}`;
+}
+
+function ensureConversationId(state: VoiceState): string {
+  if (!state.conversationId) {
+    state.conversationId = generateVoiceId("voice-conv");
+  }
+  return state.conversationId;
+}
+
+function transitionPhase(
+  state: VoiceState,
+  phase: ConversationPhase,
+  meta?: {
+    turnId?: string | null;
+    interruptedBy?: VoiceInterruptedBy | null;
+    resumedAt?: number | null;
+  },
+): void {
+  state.phase = phase;
+  state.phaseSeq += 1;
+  state.transitionMeta = {
+    turnId: meta?.turnId ?? state.currentTurnId ?? null,
+    phase,
+    interruptedBy: meta?.interruptedBy ?? null,
+    resumedAt: meta?.resumedAt ?? null,
+    ts: Date.now(),
+    seq: state.phaseSeq,
+  };
+}
+
+export function setConversationSessionContext(state: VoiceState, sessionKey: string | null): void {
+  state.sessionKey = sessionKey;
+  state.conversationSessionKey = sessionKey;
+}
+
+export function createVoiceTurnIdentity(state: VoiceState): {
+  conversationId: string;
+  turnId: string;
+  clientMessageId: string;
+} {
+  const conversationId = ensureConversationId(state);
+  const turnId = generateVoiceId("voice-turn");
+  const clientMessageId = generateVoiceId("voice-msg");
+  state.currentTurnId = turnId;
+  state.currentClientMessageId = clientMessageId;
+  return { conversationId, turnId, clientMessageId };
+}
+
+export function registerOptimisticVoiceTranscript(
+  state: VoiceState,
+  params: {
+    clientMessageId: string;
+    conversationId: string;
+    turnId: string;
+    optimisticMessageId: string;
+  },
+): void {
+  const now = Date.now();
+  state.transcriptReconcileByClientMessageId.set(params.clientMessageId, {
+    clientMessageId: params.clientMessageId,
+    conversationId: params.conversationId,
+    turnId: params.turnId,
+    optimisticMessageId: params.optimisticMessageId,
+    confirmedMessageId: null,
+    createdAtMs: now,
+    updatedAtMs: now,
+    status: "optimistic",
+  });
+}
+
+export function markVoiceTranscriptConfirmed(
+  state: VoiceState,
+  params: { clientMessageId: string; confirmedMessageId?: string | null },
+): boolean {
+  const current = state.transcriptReconcileByClientMessageId.get(params.clientMessageId);
+  if (!current) {
+    return false;
+  }
+  current.status = "confirmed";
+  current.confirmedMessageId = params.confirmedMessageId ?? current.confirmedMessageId;
+  current.updatedAtMs = Date.now();
+  state.transcriptReconcileByClientMessageId.set(params.clientMessageId, current);
+  return true;
+}
+
+export function pruneStaleVoiceTranscriptReconciliations(
+  state: VoiceState,
+  now = Date.now(),
+): string[] {
+  const staleIds: string[] = [];
+  for (const [clientMessageId, entry] of state.transcriptReconcileByClientMessageId) {
+    const ageMs = now - entry.createdAtMs;
+    const stale = entry.status !== "confirmed" && ageMs > VOICE_RECONCILE_STALE_MS;
+    if (!stale) {
+      continue;
+    }
+    staleIds.push(clientMessageId);
+    state.transcriptReconcileByClientMessageId.delete(clientMessageId);
+  }
+  return staleIds;
+}
+
+export function pauseConversationForTextRun(
+  state: VoiceState,
+  params: { sessionKey: string; interruptedBy?: "text_send" | "approval_wait" },
+): {
+  conversationId: string;
+  sessionKey: string;
+  manualStopVersion: number;
+} | null {
+  if (!state.conversationActive) {
+    return null;
+  }
+  const conversationId = ensureConversationId(state);
+  const interruptedBy = params.interruptedBy ?? "text_send";
+  state.conversationSessionKey = params.sessionKey;
+  state.pausedTextRun = {
+    conversationId,
+    sessionKey: params.sessionKey,
+    manualStopVersion: state.manualStopVersion,
+    interruptedBy,
+  };
+  if (state.turnAbortController) {
+    state.turnAbortController.abort();
+  }
+  stopPlayback(state);
+  transitionPhase(state, interruptedBy === "approval_wait" ? "approval_wait" : "paused_text_run", {
+    interruptedBy,
+  });
+  return {
+    conversationId,
+    sessionKey: params.sessionKey,
+    manualStopVersion: state.manualStopVersion,
+  };
+}
+
+export function resumeConversationAfterTextRun(
+  state: VoiceState,
+  params: { conversationId: string; sessionKey: string; manualStopVersion: number },
+): boolean {
+  if (!state.conversationActive) {
+    return false;
+  }
+  if (state.manualStopVersion !== params.manualStopVersion) {
+    return false;
+  }
+  if (state.conversationId !== params.conversationId) {
+    return false;
+  }
+  if (state.conversationSessionKey && state.conversationSessionKey !== params.sessionKey) {
+    return false;
+  }
+  state.pausedTextRun = null;
+  transitionPhase(state, "listening", {
+    resumedAt: Date.now(),
+  });
+  return true;
+}
+
+export function clearApprovalWait(state: VoiceState): void {
+  if (state.phase !== "approval_wait") {
+    return;
+  }
+  const resumed = resumeConversationAfterTextRun(state, {
+    conversationId: state.conversationId ?? "",
+    sessionKey: state.conversationSessionKey ?? state.sessionKey ?? "",
+    manualStopVersion: state.manualStopVersion,
+  });
+  if (!resumed) {
+    transitionPhase(state, "processing");
+  }
+}
+
+export function markVoiceTurnCompleted(state: VoiceState, turnId: string | null): boolean {
+  const id = typeof turnId === "string" ? turnId.trim() : "";
+  if (!id) {
+    return false;
+  }
+  if (state.completedTurnIds.has(id)) {
+    return false;
+  }
+  state.completedTurnIds.add(id);
+  if (state.completedTurnIds.size > 128) {
+    const first = state.completedTurnIds.values().next().value;
+    if (typeof first === "string") {
+      state.completedTurnIds.delete(first);
+    }
+  }
+  return true;
+}
+
+function clearSparkTtsStreamPending(entry: SparkTtsStreamPending): void {
+  if (entry.timeoutHandle) {
+    clearTimeout(entry.timeoutHandle);
+    entry.timeoutHandle = null;
+  }
+  if (entry.abortCleanup) {
+    entry.abortCleanup();
+    entry.abortCleanup = null;
+  }
+}
+
+function rejectSparkTtsStream(state: VoiceState, streamId: string, reason: string): void {
+  const pending = state.sparkTtsStreams.get(streamId);
+  if (!pending) {
+    return;
+  }
+  clearSparkTtsStreamPending(pending);
+  state.sparkTtsStreams.delete(streamId);
+  pending.reject(new Error(reason));
+}
+
+function resolveSparkTtsStream(state: VoiceState, streamId: string): void {
+  const pending = state.sparkTtsStreams.get(streamId);
+  if (!pending) {
+    return;
+  }
+  const chunks = [...pending.chunks].toSorted((a, b) => a.seq - b.seq);
+  if (pending.expectedTotalChunks != null && chunks.length !== pending.expectedTotalChunks) {
+    rejectSparkTtsStream(state, streamId, "SPARK_TTS_STREAM_INCOMPLETE");
+    return;
+  }
+  for (let index = 0; index < chunks.length; index += 1) {
+    if (chunks[index]?.seq !== index + 1) {
+      rejectSparkTtsStream(state, streamId, "SPARK_TTS_STREAM_OUT_OF_ORDER");
+      return;
+    }
+  }
+  clearSparkTtsStreamPending(pending);
+  state.sparkTtsStreams.delete(streamId);
+  pending.resolve(chunks);
+}
+
+async function requestSparkTtsCancel(
+  state: VoiceState,
+  params: { streamId?: string; turnId?: string },
+): Promise<void> {
+  if (!state.client || !state.connected) {
+    return;
+  }
+  try {
+    await state.client.request("spark.voice.tts.cancel", {
+      streamId: params.streamId,
+      turnId: params.turnId,
+      sessionKey: state.sessionKey ?? undefined,
+      conversationId: state.conversationId ?? undefined,
+    });
+  } catch (err) {
+    console.warn("[Voice/Spark] cancel request failed", err);
+  }
+}
+
+function cancelAllSparkTtsStreams(state: VoiceState, reason: string): void {
+  const streamIds = [...state.sparkTtsStreams.keys()];
+  for (const streamId of streamIds) {
+    rejectSparkTtsStream(state, streamId, reason);
+  }
+  if (!streamIds.length && !state.currentTurnId) {
+    return;
+  }
+  const cancelOps = streamIds.map((streamId) =>
+    requestSparkTtsCancel(state, {
+      streamId,
+      turnId: state.currentTurnId ?? undefined,
+    }),
+  );
+  if (!streamIds.length && state.currentTurnId) {
+    cancelOps.push(requestSparkTtsCancel(state, { turnId: state.currentTurnId }));
+  }
+  void Promise.all(cancelOps).catch(() => undefined);
+}
+
+async function waitForSparkTtsStream(params: {
+  state: VoiceState;
+  streamId: string;
+  signal?: AbortSignal;
+  timeoutMs: number;
+}): Promise<SparkTtsStreamChunk[]> {
+  return await new Promise<SparkTtsStreamChunk[]>((resolve, reject) => {
+    const pending: SparkTtsStreamPending = {
+      chunks: [],
+      seenSeq: new Set<number>(),
+      expectedTotalChunks: null,
+      resolve,
+      reject,
+      timeoutHandle: null,
+      abortCleanup: null,
+    };
+    pending.timeoutHandle = setTimeout(() => {
+      rejectSparkTtsStream(params.state, params.streamId, "SPARK_TTS_STREAM_TIMEOUT");
+    }, params.timeoutMs);
+
+    if (params.signal) {
+      const onAbort = () => {
+        rejectSparkTtsStream(params.state, params.streamId, "VOICE_TURN_ABORTED");
+      };
+      params.signal.addEventListener("abort", onAbort, { once: true });
+      pending.abortCleanup = () => {
+        params.signal?.removeEventListener("abort", onAbort);
+      };
+    }
+
+    params.state.sparkTtsStreams.set(params.streamId, pending);
+  });
+}
+
+export function handleSparkVoiceStreamEvent(
+  state: VoiceState,
+  event: VoiceSparkStreamEventName,
+  payload: Record<string, unknown>,
+): void {
+  const streamIdRaw = payload.streamId;
+  const streamId =
+    typeof streamIdRaw === "string" && streamIdRaw.trim() ? streamIdRaw.trim() : null;
+  if (!streamId) {
+    return;
+  }
+
+  if (event === "spark.voice.stream.started") {
+    // Stream start is informational, chunk/completed events drive completion.
+    return;
+  }
+
+  if (event === "spark.voice.stream.chunk") {
+    const pending = state.sparkTtsStreams.get(streamId);
+    if (!pending) {
+      return;
+    }
+    const seqRaw = payload.seq;
+    const seq =
+      typeof seqRaw === "number" && Number.isFinite(seqRaw) ? Math.max(1, Math.trunc(seqRaw)) : 1;
+    const audioBase64Raw = payload.audioBase64 ?? payload.audio_base64;
+    const audioBase64 =
+      typeof audioBase64Raw === "string" && audioBase64Raw.length > 0 ? audioBase64Raw : "";
+    if (!audioBase64) {
+      return;
+    }
+    if (pending.seenSeq.has(seq)) {
+      return;
+    }
+    if (pending.expectedTotalChunks != null && seq > pending.expectedTotalChunks) {
+      rejectSparkTtsStream(state, streamId, "SPARK_TTS_STREAM_SEQ_OUT_OF_RANGE");
+      return;
+    }
+    const formatRaw = payload.format;
+    const audioFormat =
+      typeof formatRaw === "string" && formatRaw.trim() ? formatRaw.trim() : "webm";
+    const sampleRateRaw = payload.sampleRate ?? payload.sample_rate;
+    const sampleRate =
+      typeof sampleRateRaw === "number" && Number.isFinite(sampleRateRaw)
+        ? Math.max(1, Math.trunc(sampleRateRaw))
+        : undefined;
+    const isLastRaw = payload.isLast ?? payload.is_last;
+    const isLast = typeof isLastRaw === "boolean" ? isLastRaw : undefined;
+    const chunkDurationRaw = payload.chunkDurationMs ?? payload.chunk_duration_ms;
+    const chunkDurationMs =
+      typeof chunkDurationRaw === "number" && Number.isFinite(chunkDurationRaw)
+        ? Math.max(0, Math.round(chunkDurationRaw))
+        : undefined;
+    pending.seenSeq.add(seq);
+    if (isLast && pending.expectedTotalChunks == null) {
+      pending.expectedTotalChunks = seq;
+    }
+    pending.chunks.push({ seq, audioBase64, audioFormat, sampleRate, isLast, chunkDurationMs });
+    return;
+  }
+
+  if (event === "spark.voice.stream.completed") {
+    const pending = state.sparkTtsStreams.get(streamId);
+    if (pending) {
+      const totalChunksRaw = payload.totalChunks;
+      const totalChunks =
+        typeof totalChunksRaw === "number" && Number.isFinite(totalChunksRaw)
+          ? Math.max(0, Math.trunc(totalChunksRaw))
+          : null;
+      pending.expectedTotalChunks = totalChunks;
+    }
+    resolveSparkTtsStream(state, streamId);
+    return;
+  }
+
+  if (event === "spark.voice.stream.error") {
+    const message =
+      typeof payload.message === "string" && payload.message.trim()
+        ? payload.message.trim()
+        : "SPARK_TTS_STREAM_FAILED";
+    rejectSparkTtsStream(state, streamId, message);
+  }
+}
+
 /**
  * Create initial voice state.
  */
@@ -205,6 +883,26 @@ export function createVoiceState(): VoiceState {
     // Conversation state
     conversationActive: false,
     phase: "idle",
+    turnAbortController: null,
+    conversationId: null,
+    conversationSessionKey: null,
+    currentTurnId: null,
+    currentClientMessageId: null,
+    transitionMeta: null,
+    phaseSeq: 0,
+    manualStopVersion: 0,
+    pausedTextRun: null,
+    completedTurnIds: new Set<string>(),
+    transcriptReconcileByClientMessageId: new Map<string, VoiceTranscriptReconcileEntry>(),
+    statusText: null,
+    firstStatusTextAtMs: null,
+    firstAudibleAtMs: null,
+    firstSemanticTextAtMs: null,
+    semanticSpokenStartAtMs: null,
+    shortTurnSloSamples: [],
+    shortTurnSloReport: null,
+    sparkTtsStreamSupport: "unknown",
+    sparkTtsStreams: new Map<string, SparkTtsStreamPending>(),
 
     // VAD state
     speechDetected: false,
@@ -360,6 +1058,32 @@ function stopPlayback(state: VoiceState): void {
       // ignore
     }
   }
+}
+
+async function playBackchannelBeep(state: VoiceState): Promise<void> {
+  if (!state.conversationActive) {
+    return;
+  }
+  const ctx = state.playbackContext ?? new AudioContext();
+  if (!state.playbackContext) {
+    state.playbackContext = ctx;
+  }
+  if (ctx.state === "suspended") {
+    await ctx.resume().catch(() => undefined);
+  }
+  const oscillator = ctx.createOscillator();
+  const gain = ctx.createGain();
+  oscillator.type = "sine";
+  oscillator.frequency.value = 880;
+  gain.gain.value = 0.0001;
+  oscillator.connect(gain);
+  gain.connect(ctx.destination);
+  const now = ctx.currentTime;
+  gain.gain.exponentialRampToValueAtTime(0.06, now + 0.02);
+  gain.gain.exponentialRampToValueAtTime(0.0001, now + BACKCHANNEL_BEEP_DURATION_MS / 1000);
+  oscillator.start(now);
+  oscillator.stop(now + BACKCHANNEL_BEEP_DURATION_MS / 1000);
+  state.firstAudibleAtMs = Date.now();
 }
 
 function cleanupInterruptMonitor(state: VoiceState): void {
@@ -823,6 +1547,7 @@ function cleanupAudio(state: VoiceState): void {
   stopVAD(state);
   stopPlayback(state);
   cleanupInterruptMonitor(state);
+  cancelAllSparkTtsStreams(state, "VOICE_TURN_ABORTED");
 
   if (state.mediaRecorder && state.mediaRecorder.state !== "inactive") {
     state.mediaRecorder.stop();
@@ -896,6 +1621,7 @@ function cleanupAudio(state: VoiceState): void {
   state.vadSpeechThreshold = VAD_SPEECH_THRESHOLD;
   state.vadSilenceThreshold = VAD_SILENCE_THRESHOLD;
   state.vadSilenceDurationMs = VAD_SILENCE_DURATION_MS;
+  state.statusText = null;
 }
 
 /**
@@ -999,9 +1725,19 @@ function setVoiceAttribution(
 export async function processVoiceInput(
   state: VoiceState,
   audioBase64: string,
+  signal?: AbortSignal,
+  options?: {
+    conversationId?: string;
+    turnId?: string;
+    clientMessageId?: string;
+    source?: "voice";
+  },
 ): Promise<VoiceProcessResult | null> {
   if (!state.client || !state.connected) {
     console.error("[Voice] Not connected to gateway");
+    return null;
+  }
+  if (signal?.aborted) {
     return null;
   }
 
@@ -1015,13 +1751,21 @@ export async function processVoiceInput(
     const request: Record<string, unknown> = {
       audio: audioBase64,
       driveOpenClaw: state.driveOpenClaw,
+      conversationId: options?.conversationId,
+      turnId: options?.turnId,
+      clientMessageId: options?.clientMessageId,
+      source: options?.source ?? "voice",
     };
     if (state.sessionKey) {
       request.sessionKey = state.sessionKey;
     }
-    const result = await state.client.request<VoiceProcessResult>("voice.process", {
-      ...request,
-    });
+    const result = await state.client.request<VoiceProcessResult>(
+      "voice.process",
+      {
+        ...request,
+      },
+      { signal },
+    );
 
     console.log("[Voice] Got response:", {
       hasAudio: !!result.audioBase64,
@@ -1038,33 +1782,158 @@ export async function processVoiceInput(
     state.timings = result.timings ?? null;
     setVoiceAttribution(state, "voice.process", result.route, result.model, result.thinkingLevel);
 
-    return result;
+    return {
+      ...result,
+      conversationId: result.conversationId ?? options?.conversationId,
+      turnId: result.turnId ?? options?.turnId,
+      clientMessageId: result.clientMessageId ?? options?.clientMessageId,
+      source: result.source ?? options?.source ?? "voice",
+      spokenResponse:
+        typeof result.spokenResponse === "string"
+          ? normalizeTextForDisplay(result.spokenResponse)
+          : undefined,
+    };
   } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    if (message === "request aborted" || message === "VOICE_TURN_ABORTED") {
+      state.error = null;
+      return null;
+    }
     console.error("[Voice] Processing error:", err);
     state.error = String(err);
     return null;
   }
 }
 
-async function requestWithTimeout<T>(
-  requestPromise: Promise<T>,
-  timeoutMs: number,
-  timeoutCode: string,
-): Promise<T> {
-  requestPromise.catch(() => undefined);
+async function requestWithTimeout<T>(params: {
+  request: (signal: AbortSignal) => Promise<T>;
+  timeoutMs: number;
+  timeoutCode: string;
+  externalSignal?: AbortSignal;
+}): Promise<T> {
+  const controller = new AbortController();
   let timeoutHandle: ReturnType<typeof setTimeout> | null = null;
-  const timeoutPromise = new Promise<never>((_, reject) => {
-    timeoutHandle = setTimeout(() => {
-      reject(new Error(timeoutCode));
-    }, timeoutMs);
-  });
+  let timedOut = false;
+  let externallyAborted = false;
+
+  const onExternalAbort = () => {
+    externallyAborted = true;
+    controller.abort();
+  };
+
+  if (params.externalSignal?.aborted) {
+    throw new Error("VOICE_TURN_ABORTED");
+  }
+  params.externalSignal?.addEventListener("abort", onExternalAbort, { once: true });
 
   try {
-    return await Promise.race([requestPromise, timeoutPromise]);
+    const timeoutPromise = new Promise<never>((_resolve, reject) => {
+      timeoutHandle = setTimeout(() => {
+        timedOut = true;
+        controller.abort();
+        reject(new Error(params.timeoutCode));
+      }, params.timeoutMs);
+    });
+
+    return await Promise.race([params.request(controller.signal), timeoutPromise]);
+  } catch (err) {
+    if (timedOut) {
+      throw new Error(params.timeoutCode, { cause: err });
+    }
+    if (externallyAborted || params.externalSignal?.aborted) {
+      throw new Error("VOICE_TURN_ABORTED", { cause: err });
+    }
+    throw err;
   } finally {
     if (timeoutHandle) {
       clearTimeout(timeoutHandle);
     }
+    params.externalSignal?.removeEventListener("abort", onExternalAbort);
+  }
+}
+
+async function requestSparkTtsStreamChunks(params: {
+  state: VoiceState;
+  client: GatewayBrowserClient;
+  text: string;
+  format: string;
+  requestId?: string;
+  sessionKey?: string;
+  conversationId?: string;
+  turnId?: string;
+  clientMessageId?: string;
+  source?: string;
+  voice?: string;
+  instruct?: string;
+  language?: string;
+  signal?: AbortSignal;
+}): Promise<SparkTtsStreamChunk[]> {
+  const streamIdRequested = generateVoiceId("spark-tts-stream");
+  let streamIdActive = streamIdRequested;
+  const streamPromise = waitForSparkTtsStream({
+    state: params.state,
+    streamId: streamIdRequested,
+    signal: params.signal,
+    timeoutMs: SPARK_TTS_TIMEOUT_MS + 5_000,
+  });
+
+  try {
+    const streamStartResult = (await requestWithTimeout({
+      request: (requestSignal) =>
+        params.client.request(
+          "spark.voice.tts.stream",
+          {
+            streamId: streamIdRequested,
+            text: params.text,
+            format: params.format,
+            requestId: params.requestId,
+            sessionKey: params.sessionKey,
+            conversationId: params.conversationId,
+            turnId: params.turnId,
+            clientMessageId: params.clientMessageId,
+            source: params.source,
+            voice: params.voice,
+            instruct: params.instruct,
+            language: params.language,
+          },
+          { signal: requestSignal },
+        ) as Promise<Record<string, unknown>>,
+      timeoutMs: SPARK_TTS_TIMEOUT_MS,
+      timeoutCode: "SPARK_TTS_STREAM_START_TIMEOUT",
+      externalSignal: params.signal,
+    })) as Record<string, unknown>;
+
+    const ackStreamIdRaw = streamStartResult?.streamId;
+    const ackStreamId =
+      typeof ackStreamIdRaw === "string" && ackStreamIdRaw.trim()
+        ? ackStreamIdRaw.trim()
+        : streamIdRequested;
+
+    if (ackStreamId !== streamIdRequested) {
+      const pending = params.state.sparkTtsStreams.get(streamIdRequested);
+      if (pending) {
+        params.state.sparkTtsStreams.delete(streamIdRequested);
+        params.state.sparkTtsStreams.set(ackStreamId, pending);
+      }
+      streamIdActive = ackStreamId;
+    }
+
+    if (streamStartResult?.accepted === false) {
+      throw new Error("SPARK_TTS_STREAM_REJECTED");
+    }
+
+    return await streamPromise;
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    rejectSparkTtsStream(params.state, streamIdActive, message);
+    if (streamIdActive !== streamIdRequested) {
+      rejectSparkTtsStream(params.state, streamIdRequested, message);
+    }
+    void requestSparkTtsCancel(params.state, {
+      streamId: streamIdActive,
+      turnId: params.turnId,
+    });
+    throw err;
   }
 }
 
@@ -1076,13 +1945,34 @@ async function requestWithTimeout<T>(
  * 2) voice.processText (skipTts=true) to get assistant text
  * 3) spark.voice.tts for spoken reply
  */
+export type VoiceSparkTurnOptions = {
+  conversationId?: string;
+  turnId?: string;
+  clientMessageId?: string;
+  source?: "voice";
+  spokenOutputMode?: "concise" | "full" | "status";
+  onStatusText?: (statusText: string) => void;
+  onTranscription?: (params: {
+    text: string;
+    conversationId: string;
+    turnId: string;
+    clientMessageId: string;
+  }) => void;
+};
+
 export async function processVoiceInputSpark(
   state: VoiceState,
   audioBase64: string,
   format = "webm",
+  signal?: AbortSignal,
+  options?: VoiceSparkTurnOptions,
 ): Promise<VoiceProcessResult | null> {
-  if (!state.client || !state.connected) {
+  const client = state.client;
+  if (!client || !state.connected) {
     console.error("[Voice/Spark] Not connected to gateway");
+    return null;
+  }
+  if (signal?.aborted) {
     return null;
   }
 
@@ -1093,23 +1983,48 @@ export async function processVoiceInputSpark(
 
   try {
     const startedAt = Date.now();
+    const conversationId = options?.conversationId ?? ensureConversationId(state);
+    const turnId = options?.turnId ?? state.currentTurnId ?? generateVoiceId("voice-turn");
+    const clientMessageId =
+      options?.clientMessageId ?? state.currentClientMessageId ?? generateVoiceId("voice-msg");
+    const voiceSource = options?.source ?? "voice";
+    const sttRequestId = `${turnId}-stt`;
+    const llmRequestId = `${turnId}-llm`;
+    const ttsRequestId = `${turnId}-tts`;
+
+    setVoiceStatusText(state, "Working on it...");
+    options?.onStatusText?.(state.statusText ?? "Working on it...");
 
     // 1) STT
     console.log("[Voice/Spark] Sending audio to spark.voice.stt...");
     const sttStart = Date.now();
     let sttResult: Record<string, unknown>;
     try {
-      sttResult = await requestWithTimeout(
-        state.client.request("spark.voice.stt", {
-          audio_base64: audioBase64,
-          format,
-        }) as Promise<Record<string, unknown>>,
-        SPARK_STT_TIMEOUT_MS,
-        "SPARK_STT_TIMEOUT",
-      );
+      sttResult = await requestWithTimeout({
+        request: (requestSignal) =>
+          client.request(
+            "spark.voice.stt",
+            {
+              audio_base64: audioBase64,
+              format,
+              requestId: sttRequestId,
+              sessionKey: state.sessionKey ?? undefined,
+              conversationId,
+              turnId,
+              clientMessageId,
+              source: voiceSource,
+            },
+            { signal: requestSignal },
+          ) as Promise<Record<string, unknown>>,
+        timeoutMs: SPARK_STT_TIMEOUT_MS,
+        timeoutCode: "SPARK_STT_TIMEOUT",
+        externalSignal: signal,
+      });
     } catch (sttErr) {
       const code = sttErr instanceof Error ? sttErr.message : String(sttErr);
-      if (code === "SPARK_STT_TIMEOUT") {
+      if (code === "VOICE_TURN_ABORTED") {
+        state.error = null;
+      } else if (code === "SPARK_STT_TIMEOUT") {
         state.error = "Speech recognition timed out. Try a shorter phrase.";
       } else {
         state.error = `STT failed: ${code}`;
@@ -1117,10 +2032,27 @@ export async function processVoiceInputSpark(
       state.timings = { sttMs: Date.now() - sttStart, totalMs: Date.now() - startedAt };
       return null;
     }
-    const sttMs = Date.now() - sttStart;
+    const sttTimingsRecord =
+      sttResult?.timings_ms && typeof sttResult.timings_ms === "object"
+        ? (sttResult.timings_ms as Record<string, unknown>)
+        : undefined;
+    const sttMs =
+      resolveTimingMsFromRecord(sttTimingsRecord, [
+        "gateway_total_ms",
+        "total_ms",
+        "dgx_total_ms",
+      ]) ?? Date.now() - sttStart;
 
     const text = sttResult?.text ?? "";
     state.transcription = typeof text === "string" ? normalizeTextForDisplay(text) : "";
+    if (state.transcription.trim()) {
+      options?.onTranscription?.({
+        text: state.transcription,
+        conversationId,
+        turnId,
+        clientMessageId,
+      });
+    }
 
     console.log("[Voice/Spark] STT result:", { text: state.transcription, sttMs });
 
@@ -1137,24 +2069,151 @@ export async function processVoiceInputSpark(
 
     // 2) Generate assistant reply text via normal OpenClaw chat pipeline (no local TTS)
     const llmStart = Date.now();
+    const spokenOutputMode = options?.spokenOutputMode ?? "concise";
+    const requestVoiceProcessText = (params: {
+      requestId: string;
+      provisional: boolean;
+      latencyProfile: "default" | "short_turn_fast";
+      spokenOutputMode?: "concise" | "full" | "status";
+      allowTools: boolean;
+      maxOutputTokens?: number;
+      timeoutMs: number;
+      timeoutCode: string;
+    }) =>
+      requestWithTimeout({
+        request: (requestSignal) =>
+          client.request(
+            "voice.processText",
+            {
+              text: state.transcription,
+              requestId: params.requestId,
+              sessionKey: state.sessionKey ?? undefined,
+              driveOpenClaw: state.driveOpenClaw,
+              skipTts: true,
+              conversationId,
+              turnId,
+              clientMessageId,
+              source: voiceSource,
+              spokenOutputMode: params.spokenOutputMode ?? spokenOutputMode,
+              latencyProfile: params.latencyProfile,
+              allowTools: params.allowTools,
+              maxOutputTokens: params.maxOutputTokens,
+              provisional: params.provisional,
+            },
+            { signal: requestSignal },
+          ) as Promise<Record<string, unknown>>,
+        timeoutMs: params.timeoutMs,
+        timeoutCode: params.timeoutCode,
+        externalSignal: signal,
+      });
+    const canonicalReplyPromise = requestVoiceProcessText({
+      requestId: llmRequestId,
+      provisional: false,
+      latencyProfile: "default",
+      spokenOutputMode,
+      allowTools: true,
+      maxOutputTokens: SHORT_TURN_MAX_OUTPUT_TOKENS,
+      timeoutMs: SPARK_LLM_TIMEOUT_MS,
+      timeoutCode: "SPARK_LLM_TIMEOUT",
+    });
+    const actionTurnLikely = isLikelyActionTurn(state.transcription);
+    const provisionalSpokenOutputMode: "concise" | "full" | "status" = actionTurnLikely
+      ? "status"
+      : spokenOutputMode;
+    const allowProvisionalReply = options?.spokenOutputMode != null;
+    const provisionalReplyPromise = !allowProvisionalReply
+      ? null
+      : requestVoiceProcessText({
+          requestId: `${turnId}-llm-provisional`,
+          provisional: true,
+          latencyProfile: "short_turn_fast",
+          spokenOutputMode: provisionalSpokenOutputMode,
+          allowTools: false,
+          maxOutputTokens: PROVISIONAL_MAX_OUTPUT_TOKENS,
+          timeoutMs: SPARK_LLM_PROVISIONAL_TIMEOUT_MS,
+          timeoutCode: "SPARK_LLM_PROVISIONAL_TIMEOUT",
+        }).catch((err) => {
+          const code = err instanceof Error ? err.message : String(err);
+          if (code !== "VOICE_TURN_ABORTED" && code !== "SPARK_LLM_PROVISIONAL_TIMEOUT") {
+            console.warn("[Voice/Spark] provisional LLM failed:", code);
+          }
+          return null;
+        });
+    const hasReplyText = (
+      payload: Record<string, unknown> | null,
+    ): payload is Record<string, unknown> => {
+      if (!payload) {
+        return false;
+      }
+      const candidate =
+        typeof payload.spokenResponse === "string"
+          ? payload.spokenResponse
+          : typeof payload.response === "string"
+            ? payload.response
+            : "";
+      return candidate.trim().length > 0;
+    };
     let reply: Record<string, unknown>;
+    let usedProvisional = false;
     try {
-      reply = await requestWithTimeout(
-        state.client.request("voice.processText", {
-          text: state.transcription,
-          sessionKey: state.sessionKey ?? undefined,
-          driveOpenClaw: state.driveOpenClaw,
-          skipTts: true,
-        }) as Promise<Record<string, unknown>>,
-        SPARK_LLM_TIMEOUT_MS,
-        "SPARK_LLM_TIMEOUT",
-      );
+      if (provisionalReplyPromise) {
+        const firstSettled = await Promise.race([
+          canonicalReplyPromise.then((payload) => ({ kind: "canonical" as const, payload })),
+          provisionalReplyPromise.then((payload) => ({ kind: "provisional" as const, payload })),
+        ]);
+        if (firstSettled.kind === "provisional" && hasReplyText(firstSettled.payload)) {
+          usedProvisional = true;
+          reply = firstSettled.payload;
+          setVoiceStatusText(state, "Finalizing full answer...");
+          options?.onStatusText?.(state.statusText ?? "Finalizing full answer...");
+          void canonicalReplyPromise
+            .then((canonicalReply) => {
+              const canonicalToolActivity = canonicalReply?.toolActivity === true;
+              if (
+                canonicalToolActivity &&
+                state.currentTurnId === turnId &&
+                state.phase === "speaking"
+              ) {
+                stopPlayback(state);
+                const interimStatus = "Working on that action now...";
+                setVoiceStatusText(state, interimStatus);
+                options?.onStatusText?.(interimStatus);
+              }
+              const canonicalTextRaw = canonicalReply?.response;
+              const canonicalText =
+                typeof canonicalTextRaw === "string"
+                  ? normalizeTextForDisplay(canonicalTextRaw)
+                  : "";
+              if (!canonicalText.trim()) {
+                return;
+              }
+              if (state.currentTurnId !== turnId) {
+                return;
+              }
+              state.response = canonicalText;
+            })
+            .catch((err) => {
+              const code = err instanceof Error ? err.message : String(err);
+              if (code !== "VOICE_TURN_ABORTED") {
+                console.warn("[Voice/Spark] canonical LLM failed after provisional reply:", code);
+              }
+            });
+        } else if (firstSettled.kind === "canonical") {
+          reply = firstSettled.payload;
+        } else {
+          reply = await canonicalReplyPromise;
+        }
+      } else {
+        reply = await canonicalReplyPromise;
+      }
     } catch (llmErr) {
       const code = llmErr instanceof Error ? llmErr.message : String(llmErr);
       state.error =
-        code === "SPARK_LLM_TIMEOUT"
-          ? "Response generation timed out. Try a shorter request."
-          : `LLM failed: ${code}`;
+        code === "VOICE_TURN_ABORTED"
+          ? null
+          : code === "SPARK_LLM_TIMEOUT"
+            ? "Response generation timed out. Try a shorter request."
+            : `LLM failed: ${code}`;
       state.timings = {
         sttMs,
         llmMs: Date.now() - llmStart,
@@ -1162,12 +2221,35 @@ export async function processVoiceInputSpark(
       };
       return null;
     }
-    const llmMs = Date.now() - llmStart;
+    const llmTimingsRecord =
+      reply?.timings && typeof reply.timings === "object"
+        ? (reply.timings as Record<string, unknown>)
+        : undefined;
+    const llmFirstSemanticMs = resolveTimingMsFromRecord(llmTimingsRecord, [
+      "llmFirstSemanticMs",
+      "llm_first_semantic_ms",
+    ]);
+    const llmFullCompletionMs = resolveTimingMsFromRecord(llmTimingsRecord, [
+      "llmFullCompletionMs",
+      "llm_full_completion_ms",
+      "llmMs",
+      "llm_ms",
+    ]);
+    const llmMs = llmFullCompletionMs ?? Date.now() - llmStart;
 
     const responseTextRaw = reply?.response;
     const responseText =
       typeof responseTextRaw === "string" ? normalizeTextForDisplay(responseTextRaw) : "";
+    const spokenResponseRaw = reply?.spokenResponse;
+    const spokenResponse =
+      typeof spokenResponseRaw === "string"
+        ? normalizeTextForDisplay(spokenResponseRaw)
+        : responseText;
     state.response = responseText;
+    if (responseText.trim()) {
+      state.firstSemanticTextAtMs =
+        llmFirstSemanticMs != null ? llmStart + llmFirstSemanticMs : Date.now();
+    }
 
     const baseResult: VoiceProcessResult = {
       sessionId:
@@ -1176,6 +2258,7 @@ export async function processVoiceInputSpark(
           : "",
       transcription: state.transcription,
       response: responseText,
+      spokenResponse,
       route:
         typeof (reply as Record<string, unknown>)?.route === "string"
           ? ((reply as Record<string, unknown>).route as string)
@@ -1192,6 +2275,36 @@ export async function processVoiceInputSpark(
         typeof (reply as Record<string, unknown>)?.runId === "string"
           ? ((reply as Record<string, unknown>).runId as string)
           : undefined,
+      conversationId:
+        typeof (reply as Record<string, unknown>)?.conversationId === "string"
+          ? ((reply as Record<string, unknown>).conversationId as string)
+          : conversationId,
+      turnId:
+        typeof (reply as Record<string, unknown>)?.turnId === "string"
+          ? ((reply as Record<string, unknown>).turnId as string)
+          : turnId,
+      clientMessageId:
+        typeof (reply as Record<string, unknown>)?.clientMessageId === "string"
+          ? ((reply as Record<string, unknown>).clientMessageId as string)
+          : clientMessageId,
+      source:
+        typeof (reply as Record<string, unknown>)?.source === "string"
+          ? ((reply as Record<string, unknown>).source as string)
+          : voiceSource,
+      userTranscriptMessageId:
+        typeof (reply as Record<string, unknown>)?.userTranscriptMessageId === "string"
+          ? ((reply as Record<string, unknown>).userTranscriptMessageId as string)
+          : undefined,
+      userTranscriptMessage:
+        (reply as Record<string, unknown>)?.userTranscriptMessage &&
+        typeof (reply as Record<string, unknown>)?.userTranscriptMessage === "object"
+          ? ((reply as Record<string, unknown>).userTranscriptMessage as Record<string, unknown>)
+          : null,
+      provisional:
+        (reply as Record<string, unknown>)?.provisional === true
+          ? true
+          : usedProvisional || undefined,
+      toolActivity: (reply as Record<string, unknown>)?.toolActivity === true ? true : undefined,
     };
 
     setVoiceAttribution(
@@ -1206,6 +2319,8 @@ export async function processVoiceInputSpark(
       state.timings = {
         sttMs,
         llmMs,
+        ...(llmFirstSemanticMs != null ? { llmFirstSemanticMs } : {}),
+        ...(llmFullCompletionMs != null ? { llmFullCompletionMs } : {}),
         totalMs: Date.now() - startedAt,
       };
       return {
@@ -1215,11 +2330,13 @@ export async function processVoiceInputSpark(
     }
 
     // 3) TTS via Spark
-    const ttsInput = normalizeTextForTts(responseText);
+    const ttsInput = normalizeTextForTts(spokenResponse || responseText);
     if (!ttsInput) {
       state.timings = {
         sttMs,
         llmMs,
+        ...(llmFirstSemanticMs != null ? { llmFirstSemanticMs } : {}),
+        ...(llmFullCompletionMs != null ? { llmFullCompletionMs } : {}),
         totalMs: Date.now() - startedAt,
       };
       return {
@@ -1230,50 +2347,142 @@ export async function processVoiceInputSpark(
 
     const ttsStart = Date.now();
     let ttsResult: Record<string, unknown> | null = null;
-    const ttsParams: Record<string, string> = { text: ttsInput, format: "webm" };
-    if (state.ttsVoice != null && state.ttsVoice.trim() !== "") {
-      ttsParams.voice = state.ttsVoice.trim();
+    let streamedChunks: SparkTtsStreamChunk[] | null = null;
+    const ttsParams: Record<string, unknown> = {
+      text: ttsInput,
+      format: "webm",
+      requestId: ttsRequestId,
+      sessionKey: state.sessionKey ?? undefined,
+      conversationId,
+      turnId,
+      clientMessageId,
+      source: voiceSource,
+    };
+    const ttsVoice =
+      state.ttsVoice != null && state.ttsVoice.trim() !== "" ? state.ttsVoice.trim() : undefined;
+    const ttsInstruct =
+      state.ttsInstruct != null && state.ttsInstruct.trim() !== ""
+        ? state.ttsInstruct.trim()
+        : undefined;
+    const ttsLanguage =
+      state.ttsLanguage != null && state.ttsLanguage.trim() !== ""
+        ? state.ttsLanguage.trim()
+        : undefined;
+    if (ttsVoice) {
+      ttsParams.voice = ttsVoice;
     }
-    if (state.ttsInstruct != null && state.ttsInstruct.trim() !== "") {
-      ttsParams.instruct = state.ttsInstruct.trim();
+    if (ttsInstruct) {
+      ttsParams.instruct = ttsInstruct;
     }
-    if (state.ttsLanguage != null && state.ttsLanguage.trim() !== "") {
-      ttsParams.language = state.ttsLanguage.trim();
+    if (ttsLanguage) {
+      ttsParams.language = ttsLanguage;
     }
-    try {
-      ttsResult = await requestWithTimeout(
-        state.client.request("spark.voice.tts", ttsParams) as Promise<Record<string, unknown>>,
-        SPARK_TTS_TIMEOUT_MS,
-        "SPARK_TTS_TIMEOUT",
-      );
-    } catch (ttsErr) {
-      const code = ttsErr instanceof Error ? ttsErr.message : String(ttsErr);
-      if (code === "SPARK_TTS_TIMEOUT") {
-        state.error = "TTS timed out. Returning text response only.";
-      } else {
-        console.error("[Voice/Spark] TTS error:", ttsErr);
-        state.error = `TTS failed: ${code}`;
+    if (state.sparkTtsStreamSupport !== "unsupported") {
+      try {
+        streamedChunks = await requestSparkTtsStreamChunks({
+          state,
+          client,
+          text: ttsInput,
+          format: "webm",
+          requestId: ttsRequestId,
+          sessionKey: state.sessionKey ?? undefined,
+          conversationId,
+          turnId,
+          clientMessageId,
+          source: voiceSource,
+          voice: ttsVoice,
+          instruct: ttsInstruct,
+          language: ttsLanguage,
+          signal,
+        });
+        if (streamedChunks.length > 0) {
+          state.sparkTtsStreamSupport = "supported";
+        }
+      } catch (streamErr) {
+        const code = streamErr instanceof Error ? streamErr.message : String(streamErr);
+        if (
+          code.toLowerCase().includes("unknown method") ||
+          code.toLowerCase().includes("spark.voice.tts.stream")
+        ) {
+          state.sparkTtsStreamSupport = "unsupported";
+        }
+        console.warn("[Voice/Spark] TTS stream unavailable, falling back:", code);
       }
     }
-    const ttsMs = Date.now() - ttsStart;
 
-    const audio = ttsResult?.audio_base64;
-    const fmt = ttsResult?.format;
+    if (!streamedChunks || streamedChunks.length === 0) {
+      try {
+        ttsResult = await requestWithTimeout({
+          request: (requestSignal) =>
+            client.request("spark.voice.tts", ttsParams, {
+              signal: requestSignal,
+            }) as Promise<Record<string, unknown>>,
+          timeoutMs: SPARK_TTS_TIMEOUT_MS,
+          timeoutCode: "SPARK_TTS_TIMEOUT",
+          externalSignal: signal,
+        });
+      } catch (ttsErr) {
+        const code = ttsErr instanceof Error ? ttsErr.message : String(ttsErr);
+        if (code === "VOICE_TURN_ABORTED") {
+          state.error = null;
+        } else if (code === "SPARK_TTS_TIMEOUT") {
+          state.error = "TTS timed out. Returning text response only.";
+        } else {
+          console.error("[Voice/Spark] TTS error:", ttsErr);
+          state.error = `TTS failed: ${code}`;
+        }
+      }
+    }
+    const ttsTimingsRecord =
+      ttsResult?.timings_ms && typeof ttsResult.timings_ms === "object"
+        ? (ttsResult.timings_ms as Record<string, unknown>)
+        : undefined;
+    const ttsMs =
+      resolveTimingMsFromRecord(ttsTimingsRecord, ["total_ms", "tts_total_ms", "compute_ms"]) ??
+      Date.now() - ttsStart;
+
+    const fallbackAudio = ttsResult?.audio_base64;
+    const fallbackFormat = ttsResult?.format;
+    const audioChunks =
+      streamedChunks && streamedChunks.length > 0
+        ? streamedChunks.map((chunk) => ({
+            audioBase64: chunk.audioBase64,
+            audioFormat: chunk.audioFormat,
+          }))
+        : typeof fallbackAudio === "string" && fallbackAudio.length > 0
+          ? [
+              {
+                audioBase64: fallbackAudio,
+                audioFormat: typeof fallbackFormat === "string" ? fallbackFormat : "webm",
+              },
+            ]
+          : [];
+    if (audioChunks.length > 0) {
+      state.semanticSpokenStartAtMs = Date.now();
+    }
 
     state.timings = {
       sttMs,
       llmMs,
+      ...(llmFirstSemanticMs != null ? { llmFirstSemanticMs } : {}),
+      ...(llmFullCompletionMs != null ? { llmFullCompletionMs } : {}),
       ttsMs,
       totalMs: Date.now() - startedAt,
     };
 
     return {
       ...baseResult,
-      audioBase64: typeof audio === "string" ? audio : undefined,
-      audioFormat: typeof fmt === "string" ? fmt : "webm",
+      audioBase64: audioChunks[0]?.audioBase64,
+      audioFormat: audioChunks[0]?.audioFormat ?? "webm",
+      audioChunks,
       timings: state.timings,
     };
   } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    if (message === "VOICE_TURN_ABORTED" || message === "request aborted") {
+      state.error = null;
+      return null;
+    }
     console.error("[Voice/Spark] Pipeline error:", err);
     state.error = String(err);
     return null;
@@ -1286,6 +2495,18 @@ export async function processVoiceInputSpark(
 export async function processTextToVoice(
   state: VoiceState,
   text: string,
+  signal?: AbortSignal,
+  options?: {
+    conversationId?: string;
+    turnId?: string;
+    clientMessageId?: string;
+    source?: "voice";
+    spokenOutputMode?: "concise" | "full" | "status";
+    latencyProfile?: "default" | "short_turn_fast";
+    allowTools?: boolean;
+    maxOutputTokens?: number;
+    provisional?: boolean;
+  },
 ): Promise<VoiceProcessResult | null> {
   if (!state.client || !state.connected) {
     return null;
@@ -1297,11 +2518,24 @@ export async function processTextToVoice(
   state.timings = null;
 
   try {
-    const result = await state.client.request<VoiceProcessResult>("voice.processText", {
-      text,
-      sessionKey: state.sessionKey ?? undefined,
-      driveOpenClaw: state.driveOpenClaw,
-    });
+    const result = await state.client.request<VoiceProcessResult>(
+      "voice.processText",
+      {
+        text,
+        sessionKey: state.sessionKey ?? undefined,
+        driveOpenClaw: state.driveOpenClaw,
+        conversationId: options?.conversationId,
+        turnId: options?.turnId,
+        clientMessageId: options?.clientMessageId,
+        source: options?.source ?? "voice",
+        spokenOutputMode: options?.spokenOutputMode ?? "concise",
+        latencyProfile: options?.latencyProfile,
+        allowTools: options?.allowTools,
+        maxOutputTokens: options?.maxOutputTokens,
+        provisional: options?.provisional,
+      },
+      { signal },
+    );
 
     state.response =
       typeof result.response === "string" ? normalizeTextForDisplay(result.response) : null;
@@ -1314,8 +2548,23 @@ export async function processTextToVoice(
       result.thinkingLevel,
     );
 
-    return result;
+    return {
+      ...result,
+      conversationId: result.conversationId ?? options?.conversationId,
+      turnId: result.turnId ?? options?.turnId,
+      clientMessageId: result.clientMessageId ?? options?.clientMessageId,
+      source: result.source ?? options?.source ?? "voice",
+      spokenResponse:
+        typeof result.spokenResponse === "string"
+          ? normalizeTextForDisplay(result.spokenResponse)
+          : undefined,
+    };
   } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    if (message === "request aborted" || message === "VOICE_TURN_ABORTED") {
+      state.error = null;
+      return null;
+    }
     state.error = String(err);
     return null;
   }
@@ -1385,7 +2634,8 @@ export async function playAudioBase64(
   const mime = fmt === "webm" ? "audio/webm" : fmt ? `audio/${fmt}` : "audio/wav";
 
   if (state) {
-    state.phase = "speaking";
+    transitionPhase(state, "speaking");
+    state.semanticSpokenStartAtMs = Date.now();
     stopPlayback(state);
     state.playbackAbort = new AbortController();
   }
@@ -1536,38 +2786,85 @@ export async function playAudioBase64(
 export async function startConversation(
   state: VoiceState,
   onUpdate: () => void,
-  onProcess: (input: { audioBase64: string; format: string }) => Promise<VoiceProcessResult | null>,
+  onProcess: (input: {
+    audioBase64: string;
+    format: string;
+    signal: AbortSignal;
+    conversationId: string;
+    turnId: string;
+    clientMessageId: string;
+  }) => Promise<VoiceProcessResult | null>,
 ): Promise<void> {
   if (state.conversationActive) {
     return;
   }
   if (state.mode === "spark" && !state.sparkVoiceAvailable) {
     state.error = "Spark voice is unavailable. Check DGX voice health and try again.";
-    state.phase = "idle";
+    transitionPhase(state, "idle", { interruptedBy: "spark_unavailable" });
     onUpdate();
     return;
   }
 
   console.log("[Voice] Starting conversation...");
+  state.conversationId = generateVoiceId("voice-conv");
+  state.conversationSessionKey = state.sessionKey;
   state.conversationActive = true;
-  state.phase = "listening";
+  state.manualStopVersion += 1;
+  state.pausedTextRun = null;
+  state.currentTurnId = null;
+  state.currentClientMessageId = null;
+  transitionPhase(state, "listening");
   state.error = null;
   state.transcription = null;
   state.response = null;
+  state.statusText = null;
+  state.firstStatusTextAtMs = null;
+  state.firstAudibleAtMs = null;
+  state.firstSemanticTextAtMs = null;
+  state.semanticSpokenStartAtMs = null;
   state.lastRoute = null;
   state.lastModel = null;
   state.lastThinkingLevel = null;
   state.routeModelWarning = null;
   onUpdate();
 
+  const waitForConversationResume = async () => {
+    while (
+      state.conversationActive &&
+      (state.phase === "paused_text_run" || state.phase === "approval_wait")
+    ) {
+      await new Promise((r) => setTimeout(r, 80));
+    }
+  };
+
   // Conversation loop - continues until user clicks stop
   while (state.conversationActive && state.connected && state.enabled) {
+    await waitForConversationResume();
+    if (!state.conversationActive) {
+      break;
+    }
+
+    const turnId = generateVoiceId("voice-turn");
+    const clientMessageId = generateVoiceId("voice-msg");
+    state.currentTurnId = turnId;
+    state.currentClientMessageId = clientMessageId;
+    state.statusText = null;
+    state.firstStatusTextAtMs = null;
+    state.firstAudibleAtMs = null;
+    state.firstSemanticTextAtMs = null;
+    state.semanticSpokenStartAtMs = null;
+    transitionPhase(state, "listening", { turnId });
+
+    const turnAbortController = new AbortController();
+    state.turnAbortController = turnAbortController;
     try {
       console.log("[Voice] Starting new turn, phase: listening");
 
       const turnStartedAt = Date.now();
       const micStartPerf = performance.now();
       const micStartEpochMs = Date.now();
+      let eosAtMs: number | null = null;
+      let speechDurationMs: number | null = null;
 
       // Promise that resolves when VAD detects end of speech
       let speechEndResolve: () => void;
@@ -1605,7 +2902,14 @@ export async function startConversation(
 
       // Stop recording and get audio
       console.log("[Voice] Getting recorded audio...");
-      state.phase = "processing";
+      eosAtMs = Date.now();
+      speechDurationMs =
+        state.speechStart != null
+          ? Math.max(0, (state.silenceStart ?? eosAtMs) - state.speechStart)
+          : null;
+      transitionPhase(state, "processing", { turnId });
+      setVoiceStatusText(state, "Working on it...");
+      void playBackchannelBeep(state).catch(() => undefined);
       onUpdate();
 
       const audioBlob = await stopRecordingGetAudio(state);
@@ -1621,7 +2925,7 @@ export async function startConversation(
           firstSpeechMs,
           totalMs: Math.max(0, Date.now() - turnStartedAt),
         });
-        state.phase = "listening";
+        transitionPhase(state, "listening", { turnId });
         state.speechDetected = false;
         continue;
       }
@@ -1631,7 +2935,14 @@ export async function startConversation(
       state.audioChunks = [];
       const format = audioBlob.type.toLowerCase().includes("wav") ? "wav" : "webm";
 
-      const result = await onProcess({ audioBase64: base64, format });
+      const result = await onProcess({
+        audioBase64: base64,
+        format,
+        signal: turnAbortController.signal,
+        conversationId: state.conversationId ?? ensureConversationId(state),
+        turnId,
+        clientMessageId,
+      });
       const totalMs = Math.max(0, Date.now() - turnStartedAt);
       state.timings = withTurnTelemetry(result?.timings, {
         micStartMs,
@@ -1641,6 +2952,9 @@ export async function startConversation(
       console.info("[Voice/Telemetry] turn", state.timings);
       if (result) {
         result.timings = state.timings;
+        markVoiceTurnCompleted(state, result.turnId ?? turnId);
+      } else {
+        markVoiceTurnCompleted(state, turnId);
       }
       console.log("[Voice] Process result:", {
         hasResult: !!result,
@@ -1656,20 +2970,49 @@ export async function startConversation(
 
       // Play the response (with barge-in monitor)
       let interrupted = false;
-      if (result?.audioBase64) {
+      const playbackChunks =
+        Array.isArray(result?.audioChunks) && result.audioChunks.length > 0
+          ? result.audioChunks.filter(
+              (chunk): chunk is { audioBase64: string; audioFormat?: string } =>
+                Boolean(
+                  chunk && typeof chunk.audioBase64 === "string" && chunk.audioBase64.length > 0,
+                ),
+            )
+          : result?.audioBase64
+            ? [{ audioBase64: result.audioBase64, audioFormat: result.audioFormat }]
+            : [];
+      if (playbackChunks.length > 0) {
         console.log("[Voice] Playing audio response...");
-        state.phase = "speaking";
+        transitionPhase(state, "speaking", { turnId });
         onUpdate();
 
         await startBargeInMonitor(state, () => {
           interrupted = true;
           console.log("[Voice] Barge-in detected, interrupting playback");
           stopPlayback(state);
+          transitionPhase(state, "listening", {
+            turnId,
+            interruptedBy: "barge_in",
+          });
         });
 
-        await playAudioBase64(result.audioBase64, state, result.audioFormat);
+        for (const chunk of playbackChunks) {
+          if (!state.conversationActive || interrupted) {
+            break;
+          }
+          await playAudioBase64(chunk.audioBase64, state, chunk.audioFormat);
+        }
         cleanupInterruptMonitor(state);
         onUpdate();
+      }
+
+      if (result && eosAtMs != null) {
+        recordVoiceShortTurnSloSample(state, {
+          turnId: result.turnId ?? turnId,
+          eosAtMs,
+          speechDurationMs,
+          outputText: result.response,
+        });
       }
 
       // If user stopped conversation or we interrupted playback, transition quickly.
@@ -1683,26 +3026,54 @@ export async function startConversation(
       }
 
       // Reset for next turn
-      state.phase = "listening";
+      transitionPhase(state, "listening", { turnId });
       state.speechDetected = false;
       state.silenceStart = null;
       state.speechStart = null;
       onUpdate();
     } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      if (
+        !state.conversationActive ||
+        message === "VOICE_TURN_ABORTED" ||
+        message === "request aborted"
+      ) {
+        state.error = null;
+        if (!state.conversationActive) {
+          transitionPhase(state, "idle", { turnId, interruptedBy: "user_stop" });
+          onUpdate();
+          break;
+        }
+        if (state.phase === "paused_text_run" || state.phase === "approval_wait") {
+          onUpdate();
+          await waitForConversationResume();
+          continue;
+        }
+        transitionPhase(state, "listening", { turnId });
+        onUpdate();
+        continue;
+      }
       stopPlayback(state);
       cleanupInterruptMonitor(state);
-      state.error = String(err);
+      state.error = message;
+      transitionPhase(state, "error", { turnId });
       onUpdate();
       // Try to continue conversation despite error
-      state.phase = "listening";
+      transitionPhase(state, "listening", { turnId });
       await new Promise((r) => setTimeout(r, 1000));
+    } finally {
+      if (state.turnAbortController === turnAbortController) {
+        state.turnAbortController = null;
+      }
     }
   }
 
   // Cleanup
   cleanupAudio(state);
   state.conversationActive = false;
-  state.phase = "idle";
+  state.currentTurnId = null;
+  state.currentClientMessageId = null;
+  transitionPhase(state, "idle");
   onUpdate();
 }
 
@@ -1720,9 +3091,20 @@ async function waitForConversationEnd(state: VoiceState): Promise<void> {
  * Called when user clicks the stop button.
  */
 export function stopConversation(state: VoiceState): void {
+  if (!state.conversationActive && state.phase === "idle") {
+    return;
+  }
+  state.manualStopVersion += 1;
   state.conversationActive = false;
+  if (state.turnAbortController) {
+    state.turnAbortController.abort();
+    state.turnAbortController = null;
+  }
   cleanupAudio(state);
-  state.phase = "idle";
+  state.pausedTextRun = null;
+  state.currentTurnId = null;
+  state.currentClientMessageId = null;
+  transitionPhase(state, "idle", { interruptedBy: "user_stop" });
 }
 
 /**

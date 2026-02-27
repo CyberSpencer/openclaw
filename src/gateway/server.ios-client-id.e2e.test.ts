@@ -1,9 +1,16 @@
 import { afterAll, beforeAll, test } from "vitest";
 import WebSocket from "ws";
 import { PROTOCOL_VERSION } from "./protocol/index.js";
-import { getFreePort, onceMessage, startGatewayServer } from "./test-helpers.server.js";
+import {
+  getFreePort,
+  installGatewayTestHooks,
+  onceMessage,
+  startGatewayServer,
+} from "./test-helpers.server.js";
 
-let server: Awaited<ReturnType<typeof startGatewayServer>>;
+installGatewayTestHooks({ scope: "suite" });
+
+let server: Awaited<ReturnType<typeof startGatewayServer>> | null = null;
 let port = 0;
 
 beforeAll(async () => {
@@ -12,7 +19,10 @@ beforeAll(async () => {
 });
 
 afterAll(async () => {
-  await server.close();
+  if (server) {
+    await server.close();
+    server = null;
+  }
 });
 
 function connectReq(

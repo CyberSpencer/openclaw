@@ -10,6 +10,10 @@ export type ExecApprovalRequestPayload = {
   agentId?: string | null;
   resolvedPath?: string | null;
   sessionKey?: string | null;
+  actionKind?: string | null;
+  riskTags?: string[] | null;
+  requiresOutbound?: boolean | null;
+  requiresElevation?: boolean | null;
 };
 
 export type ExecApprovalRecord = {

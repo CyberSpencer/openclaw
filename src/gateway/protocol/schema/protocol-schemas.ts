@@ -129,6 +129,16 @@ import {
 } from "./sessions.js";
 import { PresenceEntrySchema, SnapshotSchema, StateVersionSchema } from "./snapshot.js";
 import {
+  SparkVoiceTtsCancelParamsSchema,
+  SparkVoiceTtsCancelResultSchema,
+  SparkVoiceStreamChunkEventSchema,
+  SparkVoiceStreamCompletedEventSchema,
+  SparkVoiceStreamErrorEventSchema,
+  SparkVoiceStreamStartedEventSchema,
+  SparkVoiceTtsStreamAckSchema,
+  SparkVoiceTtsStreamParamsSchema,
+} from "./voice-stream.js";
+import {
   WizardCancelParamsSchema,
   WizardNextParamsSchema,
   WizardNextResultSchema,
@@ -257,6 +267,14 @@ export const ProtocolSchemas: Record<string, TSchema> = {
   UpdateRunParams: UpdateRunParamsSchema,
   TickEvent: TickEventSchema,
   ShutdownEvent: ShutdownEventSchema,
+  SparkVoiceTtsStreamParams: SparkVoiceTtsStreamParamsSchema,
+  SparkVoiceTtsStreamAck: SparkVoiceTtsStreamAckSchema,
+  SparkVoiceTtsCancelParams: SparkVoiceTtsCancelParamsSchema,
+  SparkVoiceTtsCancelResult: SparkVoiceTtsCancelResultSchema,
+  SparkVoiceStreamStartedEvent: SparkVoiceStreamStartedEventSchema,
+  SparkVoiceStreamChunkEvent: SparkVoiceStreamChunkEventSchema,
+  SparkVoiceStreamCompletedEvent: SparkVoiceStreamCompletedEventSchema,
+  SparkVoiceStreamErrorEvent: SparkVoiceStreamErrorEventSchema,
 };
 
 export const PROTOCOL_VERSION = 3 as const;

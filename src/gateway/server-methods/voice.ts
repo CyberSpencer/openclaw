@@ -66,6 +66,9 @@ type TranscriptAppendResult = {
 };
 
 type AppendMessageArg = Parameters<SessionManager["appendMessage"]>[0];
+type VoiceSource = "voice";
+type SpokenOutputMode = "concise" | "full" | "status";
+type VoiceLatencyProfile = "default" | "short_turn_fast";
 
 function resolveTranscriptPath(params: {
   sessionId: string;
@@ -171,6 +174,361 @@ function appendAssistantTranscriptMessage(params: {
   }
 }
 
+function asOptionalVoiceId(value: unknown): string | undefined {
+  if (typeof value !== "string") {
+    return undefined;
+  }
+  const normalized = value.trim();
+  if (!normalized) {
+    return undefined;
+  }
+  return normalized;
+}
+
+function asVoiceSource(value: unknown): VoiceSource | undefined {
+  if (typeof value !== "string") {
+    return undefined;
+  }
+  const normalized = value.trim().toLowerCase();
+  return normalized === "voice" ? "voice" : undefined;
+}
+
+function asSpokenOutputMode(value: unknown): SpokenOutputMode {
+  if (value === "full" || value === "status") {
+    return value;
+  }
+  return "concise";
+}
+
+function asVoiceLatencyProfile(value: unknown): VoiceLatencyProfile {
+  return value === "short_turn_fast" ? "short_turn_fast" : "default";
+}
+
+function asOptionalBoolean(value: unknown): boolean | undefined {
+  return typeof value === "boolean" ? value : undefined;
+}
+
+function asOptionalMaxOutputTokens(value: unknown): number | undefined {
+  if (typeof value !== "number" || !Number.isFinite(value)) {
+    return undefined;
+  }
+  const normalized = Math.max(1, Math.trunc(value));
+  return Math.min(1024, normalized);
+}
+
+type RuntimeThinkingLevel = "off" | "minimal" | "low" | "medium" | "high" | "xhigh";
+
+function normalizeRuntimeThinkingLevel(value: unknown): RuntimeThinkingLevel | undefined {
+  if (typeof value !== "string") {
+    return undefined;
+  }
+  const normalized = value.trim().toLowerCase();
+  if (!normalized) {
+    return undefined;
+  }
+  if (normalized === "none") {
+    return "off";
+  }
+  switch (normalized) {
+    case "off":
+    case "minimal":
+    case "low":
+    case "medium":
+    case "high":
+    case "xhigh":
+      return normalized;
+    default:
+      return undefined;
+  }
+}
+
+function resolveVoiceThinkingLevel(params: {
+  allowTools: boolean;
+  latencyProfile: VoiceLatencyProfile;
+  configuredThinking: unknown;
+  routedThinking: unknown;
+}): RuntimeThinkingLevel | undefined {
+  const configured = normalizeRuntimeThinkingLevel(params.configuredThinking);
+  const routed = normalizeRuntimeThinkingLevel(params.routedThinking);
+
+  if (params.allowTools) {
+    // Tool-capable runs should preserve full reasoning depth by default.
+    return routed;
+  }
+
+  if (configured) {
+    return configured;
+  }
+
+  // Conversation-only lane defaults to low thinking for responsiveness.
+  if (params.latencyProfile === "short_turn_fast") {
+    return "low";
+  }
+
+  // Preserve routed value when valid, otherwise fail safe to low for conversational mode.
+  return routed ?? "low";
+}
+
+function estimateTokenCount(text: string): number {
+  const normalized = text.trim();
+  if (!normalized) {
+    return 0;
+  }
+  // Heuristic for English-ish text/tokenization.
+  return Math.max(1, Math.ceil(normalized.length / 4));
+}
+
+function truncateToTokenBudget(text: string, maxTokens?: number): string {
+  if (!maxTokens || maxTokens <= 0) {
+    return text;
+  }
+  const normalized = text.trim();
+  if (!normalized) {
+    return normalized;
+  }
+  if (estimateTokenCount(normalized) <= maxTokens) {
+    return normalized;
+  }
+  const approxChars = Math.max(12, maxTokens * 4);
+  const sliced = normalized.slice(0, approxChars);
+  const boundary = sliced.lastIndexOf(" ");
+  const safe = (boundary > 24 ? sliced.slice(0, boundary) : sliced).trimEnd();
+  return safe ? `${safe}...` : normalized;
+}
+
+function truncateText(text: string, maxChars: number): string {
+  if (text.length <= maxChars) {
+    return text;
+  }
+  const sliced = text.slice(0, maxChars - 3).trimEnd();
+  return `${sliced}...`;
+}
+
+function deriveSpokenResponse(text: string, mode: SpokenOutputMode): string {
+  const normalized = text.replace(/\s+/g, " ").trim();
+  if (!normalized) {
+    return "";
+  }
+  if (mode === "full") {
+    return normalized;
+  }
+
+  const sentences = normalized.split(/(?<=[.!?])\s+/).filter(Boolean);
+  const firstSentence = sentences[0] ?? normalized;
+  if (mode === "status") {
+    return truncateText(firstSentence, 96);
+  }
+
+  const concise = sentences.length > 1 ? `${sentences[0]} ${sentences[1]}` : firstSentence;
+  return truncateText(concise, 220);
+}
+
+type VoiceAdaptiveTurn = {
+  user: string;
+  assistant: string;
+  allowTools: boolean;
+  timestamp: number;
+};
+
+type VoiceAdaptiveState = {
+  turns: VoiceAdaptiveTurn[];
+  pinnedFacts: string[];
+  rollingSummary: string;
+  updatedAt: number;
+};
+
+const VOICE_ADAPTIVE_STATE = new Map<string, VoiceAdaptiveState>();
+const VOICE_ADAPTIVE_MAX_TURNS = 18;
+const VOICE_ADAPTIVE_MAX_PINNED_FACTS = 10;
+const VOICE_ADAPTIVE_SUMMARY_TURNS = 4;
+
+function compactVoiceText(text: string, maxChars = 180): string {
+  const normalized = text.replace(/\s+/g, " ").trim();
+  if (normalized.length <= maxChars) {
+    return normalized;
+  }
+  return `${normalized.slice(0, Math.max(1, maxChars - 3)).trimEnd()}...`;
+}
+
+function shouldRehydrateVoiceContext(text: string): boolean {
+  if (!text) {
+    return false;
+  }
+  return /\b(earlier|previously|as we said|as discussed|that number|that deadline|recap|remind me|what did we decide)\b/i.test(
+    text,
+  );
+}
+
+function extractPinnedFacts(text: string): string[] {
+  const normalized = text.replace(/\s+/g, " ").trim();
+  if (!normalized) {
+    return [];
+  }
+  const candidates = normalized
+    .split(/(?<=[.!?])\s+/)
+    .map((part) => part.trim())
+    .filter(Boolean)
+    .filter((part) => {
+      return (
+        /\d/.test(part) ||
+        /\b(deadline|due|budget|price|cost|must|cannot|can't|always|never|ship|before|after|today|tomorrow|next week|priority|critical)\b/i.test(
+          part,
+        )
+      );
+    })
+    .map((part) => compactVoiceText(part, 160));
+  return Array.from(new Set(candidates)).slice(0, 4);
+}
+
+function buildRollingVoiceSummary(turns: VoiceAdaptiveTurn[]): string {
+  const relevant = turns.slice(-VOICE_ADAPTIVE_SUMMARY_TURNS);
+  if (relevant.length === 0) {
+    return "";
+  }
+  return relevant
+    .map((turn, idx) => {
+      const user = compactVoiceText(turn.user, 110);
+      const assistant = compactVoiceText(turn.assistant, 110);
+      return `${idx + 1}) U: ${user}\n   J: ${assistant}`;
+    })
+    .join("\n");
+}
+
+function getVoiceAdaptiveState(sessionKey: string): VoiceAdaptiveState {
+  const existing = VOICE_ADAPTIVE_STATE.get(sessionKey);
+  if (existing) {
+    return existing;
+  }
+  const created: VoiceAdaptiveState = {
+    turns: [],
+    pinnedFacts: [],
+    rollingSummary: "",
+    updatedAt: Date.now(),
+  };
+  VOICE_ADAPTIVE_STATE.set(sessionKey, created);
+  return created;
+}
+
+function updateVoiceAdaptiveState(params: {
+  sessionKey: string;
+  userText: string;
+  assistantText: string;
+  allowTools: boolean;
+}): void {
+  const userText = compactVoiceText(params.userText, 220);
+  const assistantText = compactVoiceText(params.assistantText, 220);
+  if (!userText || !assistantText) {
+    return;
+  }
+
+  const state = getVoiceAdaptiveState(params.sessionKey);
+  state.turns.push({
+    user: userText,
+    assistant: assistantText,
+    allowTools: params.allowTools,
+    timestamp: Date.now(),
+  });
+  if (state.turns.length > VOICE_ADAPTIVE_MAX_TURNS) {
+    state.turns = state.turns.slice(-VOICE_ADAPTIVE_MAX_TURNS);
+  }
+
+  const factCandidates = extractPinnedFacts(params.userText);
+  if (factCandidates.length) {
+    const merged = [...state.pinnedFacts, ...factCandidates].map((fact) =>
+      compactVoiceText(fact, 140),
+    );
+    state.pinnedFacts = Array.from(new Set(merged)).slice(-VOICE_ADAPTIVE_MAX_PINNED_FACTS);
+  }
+
+  state.rollingSummary = buildRollingVoiceSummary(state.turns);
+  state.updatedAt = Date.now();
+}
+
+function buildVoiceAdaptiveContextPrefix(params: {
+  sessionKey: string;
+  includeRecentTurns: boolean;
+  allowTools: boolean;
+}): string {
+  const state = VOICE_ADAPTIVE_STATE.get(params.sessionKey);
+  if (!state) {
+    return "";
+  }
+
+  const sections: string[] = [];
+
+  if (state.rollingSummary) {
+    sections.push(`Rolling summary:\n${state.rollingSummary}`);
+  }
+
+  if (state.pinnedFacts.length) {
+    sections.push(`Pinned facts:\n${state.pinnedFacts.map((fact) => `- ${fact}`).join("\n")}`);
+  }
+
+  if (params.includeRecentTurns) {
+    const recentTurns = state.turns.slice(params.allowTools ? -6 : -3);
+    if (recentTurns.length) {
+      const rendered = recentTurns
+        .map((turn, idx) => {
+          return `${idx + 1}) U: ${compactVoiceText(turn.user, 90)}\n   J: ${compactVoiceText(turn.assistant, 90)}`;
+        })
+        .join("\n");
+      sections.push(`Recent context:\n${rendered}`);
+    }
+  }
+
+  if (sections.length === 0) {
+    return "";
+  }
+
+  const contextBlock = `Conversation context to preserve continuity and constraints:\n${sections.join("\n\n")}`;
+  const tokenBudget = params.allowTools ? 360 : 220;
+  return truncateToTokenBudget(contextBlock, tokenBudget);
+}
+
+function applyVoiceLatencyProfile<T extends { router?: Record<string, unknown> }>(
+  config: T,
+  latencyProfile: VoiceLatencyProfile,
+): T {
+  if (latencyProfile !== "short_turn_fast") {
+    return config;
+  }
+  if (!config.router || typeof config.router !== "object") {
+    return config;
+  }
+  return {
+    ...config,
+    router: {
+      ...config.router,
+      mode: "local",
+      useComplexity: false,
+      complexityThreshold: 10,
+    },
+  };
+}
+
+function buildVoiceUserTranscriptMessage(params: {
+  messageId: string;
+  text: string;
+  conversationId?: string;
+  turnId?: string;
+  source?: VoiceSource;
+}): Record<string, unknown> {
+  const message: Record<string, unknown> = {
+    id: params.messageId,
+    role: "user",
+    source: params.source ?? "voice",
+    content: [{ type: "text", text: params.text }],
+    timestamp: Date.now(),
+  };
+  if (params.conversationId) {
+    message.conversationId = params.conversationId;
+  }
+  if (params.turnId) {
+    message.turnId = params.turnId;
+  }
+  return message;
+}
+
 function nextChatSeq(context: { agentRunSeq: Map<string, number> }, runId: string) {
   const next = (context.agentRunSeq.get(runId) ?? 0) + 1;
   context.agentRunSeq.set(runId, next);
@@ -197,6 +555,34 @@ function broadcastChatFinal(params: {
   };
   params.context.broadcast("chat", payload);
   params.context.nodeSendToSession(params.sessionKey, "chat", payload);
+}
+
+function broadcastVoiceUserTranscript(params: {
+  context: {
+    broadcast: (event: string, payload: unknown, opts?: { dropIfSlow?: boolean }) => void;
+    nodeSendToSession: (sessionKey: string, event: string, payload: unknown) => void;
+  };
+  sessionKey: string;
+  conversationId?: string;
+  turnId?: string;
+  clientMessageId: string;
+  source?: VoiceSource;
+  message: Record<string, unknown>;
+}) {
+  const payload = {
+    sessionKey: params.sessionKey,
+    conversationId: params.conversationId,
+    turnId: params.turnId,
+    clientMessageId: params.clientMessageId,
+    source: params.source ?? "voice",
+    message: params.message,
+    messageId:
+      typeof params.message.id === "string" && params.message.id.trim()
+        ? params.message.id.trim()
+        : params.clientMessageId,
+  };
+  params.context.broadcast("voice.transcript.user", payload, { dropIfSlow: true });
+  params.context.nodeSendToSession(params.sessionKey, "voice.transcript.user", payload);
 }
 
 async function withTemporaryVoiceModelOverride<T>(params: {
@@ -377,6 +763,12 @@ export const voiceHandlers: GatewayRequestHandlers = {
         ? Math.trunc(params.seed)
         : undefined;
     const cpuOffload = typeof params.cpuOffload === "boolean" ? params.cpuOffload : undefined;
+    const conversationId = asOptionalVoiceId(params.conversationId);
+    const turnId = asOptionalVoiceId(params.turnId);
+    const clientMessageId = asOptionalVoiceId(params.clientMessageId);
+    const source = asVoiceSource(params.source);
+    const spokenOutputMode = asSpokenOutputMode(params.spokenOutputMode);
+    const allowTools = asOptionalBoolean(params.allowTools) ?? false;
 
     try {
       const audioBuffer = Buffer.from(audioBase64, "base64");
@@ -401,6 +793,7 @@ export const voiceHandlers: GatewayRequestHandlers = {
       const selectedModelRef: {
         value: { provider: string; model: string; thinkLevel?: string } | null;
       } = { value: null };
+      const appliedThinkingRef: { value: RuntimeThinkingLevel | null } = { value: null };
       const agentRunIdRef: { value: string | null } = { value: null };
 
       const llmInvoke = async (
@@ -413,15 +806,40 @@ export const voiceHandlers: GatewayRequestHandlers = {
         agentRunIdRef.value = runId;
         let agentRunStarted = false;
 
-        const trimmed = text.trim();
-        const injectThinking = Boolean(thinking && trimmed && !trimmed.startsWith("/"));
-        const commandBody = injectThinking ? `/think ${thinking} ${text}` : text;
+        const rehydrate = shouldRehydrateVoiceContext(text);
+        const adaptiveContext = buildVoiceAdaptiveContextPrefix({
+          sessionKey,
+          includeRecentTurns: allowTools || rehydrate,
+          allowTools,
+        });
+        const contextAwareInput = adaptiveContext
+          ? `${adaptiveContext}\n\nCurrent user request:\n${text}`
+          : text;
+
+        const promptText = !allowTools
+          ? `Respond directly in plain text only. Do not run tools, commands, or external actions.\n\n${contextAwareInput}`
+          : contextAwareInput;
+        const trimmed = promptText.trim();
+        // Conversation lane should stay low-latency, action lane keeps full reasoning depth.
+        const effectiveThinking = resolveVoiceThinkingLevel({
+          allowTools,
+          latencyProfile: "default",
+          configuredThinking: voiceConfig.thinkingLevel,
+          routedThinking: thinking,
+        });
+        appliedThinkingRef.value = effectiveThinking ?? null;
+        const injectThinking = Boolean(
+          effectiveThinking && effectiveThinking !== "off" && trimmed && !trimmed.startsWith("/"),
+        );
+        const commandBody = injectThinking
+          ? `/think ${effectiveThinking} ${promptText}`
+          : promptText;
 
         const ctx: MsgContext = {
-          Body: text,
-          BodyForAgent: text,
+          Body: promptText,
+          BodyForAgent: promptText,
           BodyForCommands: commandBody,
-          RawBody: text,
+          RawBody: promptText,
           CommandBody: commandBody,
           SessionKey: sessionKey,
           Provider: INTERNAL_MESSAGE_CHANNEL,
@@ -429,7 +847,7 @@ export const voiceHandlers: GatewayRequestHandlers = {
           OriginatingChannel: INTERNAL_MESSAGE_CHANNEL,
           ChatType: "direct",
           CommandAuthorized: true,
-          MessageSid: runId,
+          MessageSid: clientMessageId ?? runId,
         };
 
         const agentId = resolveSessionAgentId({ sessionKey, config: cfg });
@@ -469,6 +887,7 @@ export const voiceHandlers: GatewayRequestHandlers = {
               replyOptions: {
                 runId,
                 disableBlockStreaming: true,
+                ...(allowTools ? {} : { skillFilter: [] as string[] }),
                 onAgentRunStart: (agentRunId) => {
                   agentRunStarted = true;
                   const connId = typeof client?.connId === "string" ? client.connId : undefined;
@@ -476,7 +895,7 @@ export const voiceHandlers: GatewayRequestHandlers = {
                     client?.connect?.caps,
                     GATEWAY_CLIENT_CAPS.TOOL_EVENTS,
                   );
-                  if (connId && wantsToolEvents) {
+                  if (allowTools && connId && wantsToolEvents) {
                     context.registerToolEventRecipient(agentRunId, connId);
                   }
                 },
@@ -528,23 +947,61 @@ export const voiceHandlers: GatewayRequestHandlers = {
           broadcastChatFinal({ context, runId, sessionKey, message });
         }
 
+        updateVoiceAdaptiveState({
+          sessionKey,
+          userText: text,
+          assistantText: combinedReply,
+          allowTools,
+        });
+
         return combinedReply;
       };
 
       const result = await processVoiceInput(audioBuffer, config, llmInvoke);
+      const transcriptionText =
+        typeof result.transcription === "string" ? result.transcription : "";
+      const userTranscriptMessage =
+        source === "voice" && clientMessageId && transcriptionText.trim()
+          ? buildVoiceUserTranscriptMessage({
+              messageId: clientMessageId,
+              text: transcriptionText,
+              conversationId,
+              turnId,
+              source,
+            })
+          : null;
+      const spokenResponse = deriveSpokenResponse(result.response ?? "", spokenOutputMode);
+      if (userTranscriptMessage && clientMessageId) {
+        broadcastVoiceUserTranscript({
+          context,
+          sessionKey,
+          conversationId,
+          turnId,
+          clientMessageId,
+          source,
+          message: userTranscriptMessage,
+        });
+      }
 
       if (result.success) {
         respond(true, {
           sessionId: result.sessionId,
           transcription: result.transcription,
           response: result.response,
+          spokenResponse,
           audioBase64: result.audioBuffer?.toString("base64"),
           route: result.routerDecision?.route,
           model: selectedModelRef.value
             ? `${selectedModelRef.value.provider}/${selectedModelRef.value.model}`
             : result.routerDecision?.model,
-          thinkingLevel: selectedModelRef.value?.thinkLevel,
+          thinkingLevel: appliedThinkingRef.value ?? selectedModelRef.value?.thinkLevel,
           runId: agentRunIdRef.value,
+          conversationId,
+          turnId,
+          clientMessageId,
+          source,
+          userTranscriptMessageId: userTranscriptMessage ? clientMessageId : undefined,
+          userTranscriptMessage,
           timings: result.timings,
         });
       } else {
@@ -553,6 +1010,13 @@ export const voiceHandlers: GatewayRequestHandlers = {
           {
             sessionId: result.sessionId,
             transcription: result.transcription,
+            spokenResponse,
+            conversationId,
+            turnId,
+            clientMessageId,
+            source,
+            userTranscriptMessageId: userTranscriptMessage ? clientMessageId : undefined,
+            userTranscriptMessage,
             timings: result.timings,
           },
           errorShape(ErrorCodes.UNAVAILABLE, result.error ?? "Voice processing failed"),
@@ -586,11 +1050,24 @@ export const voiceHandlers: GatewayRequestHandlers = {
     const sessionKey = typeof params.sessionKey === "string" ? params.sessionKey : "webchat-voice";
     const skipTts = params.skipTts === true;
     const driveOpenClaw = params.driveOpenClaw === true;
+    const conversationId = asOptionalVoiceId(params.conversationId);
+    const turnId = asOptionalVoiceId(params.turnId);
+    const clientMessageId = asOptionalVoiceId(params.clientMessageId);
+    const source = asVoiceSource(params.source);
+    const spokenOutputMode = asSpokenOutputMode(params.spokenOutputMode);
+    const latencyProfile = asVoiceLatencyProfile(params.latencyProfile);
+    const provisional = params.provisional === true;
+    const allowTools = asOptionalBoolean(params.allowTools) ?? !provisional;
+    const maxOutputTokens =
+      asOptionalMaxOutputTokens(params.maxOutputTokens) ?? (provisional ? 64 : undefined);
 
     try {
       const voiceConfig = getVoiceConfig();
       const configBase = resolveVoiceConfig(voiceConfig);
-      const config = driveOpenClaw ? { ...configBase, mode: "option2a" as const } : configBase;
+      const profiledConfig = applyVoiceLatencyProfile(configBase, latencyProfile);
+      const config = driveOpenClaw
+        ? { ...profiledConfig, mode: "option2a" as const }
+        : profiledConfig;
       if (!config.enabled) {
         respond(false, undefined, errorShape(ErrorCodes.UNAVAILABLE, "Voice mode is disabled"));
         return;
@@ -599,7 +1076,11 @@ export const voiceHandlers: GatewayRequestHandlers = {
       const selectedModelRef: {
         value: { provider: string; model: string; thinkLevel?: string } | null;
       } = { value: null };
+      const appliedThinkingRef: { value: RuntimeThinkingLevel | null } = { value: null };
       const agentRunIdRef: { value: string | null } = { value: null };
+      const llmInvokeStartedAtRef: { value: number | null } = { value: null };
+      const llmFirstSemanticAtRef: { value: number | null } = { value: null };
+      const toolReplyObservedRef: { value: boolean } = { value: false };
 
       const llmInvoke = async (
         inputText: string,
@@ -610,16 +1091,42 @@ export const voiceHandlers: GatewayRequestHandlers = {
         const runId = randomUUID();
         agentRunIdRef.value = runId;
         let agentRunStarted = false;
+        llmInvokeStartedAtRef.value = Date.now();
 
-        const trimmed = inputText.trim();
-        const injectThinking = Boolean(thinking && trimmed && !trimmed.startsWith("/"));
-        const commandBody = injectThinking ? `/think ${thinking} ${inputText}` : inputText;
+        const rehydrate = shouldRehydrateVoiceContext(inputText);
+        const adaptiveContext = buildVoiceAdaptiveContextPrefix({
+          sessionKey,
+          includeRecentTurns: allowTools || rehydrate,
+          allowTools,
+        });
+        const contextAwareInput = adaptiveContext
+          ? `${adaptiveContext}\n\nCurrent user request:\n${inputText}`
+          : inputText;
+
+        const promptText = !allowTools
+          ? `Respond directly in plain text only. Do not run tools, commands, or external actions.\n\n${contextAwareInput}`
+          : contextAwareInput;
+        const trimmed = promptText.trim();
+        // Use fast-thinking for conversational turns, keep full reasoning for tool-capable action turns.
+        const effectiveThinking = resolveVoiceThinkingLevel({
+          allowTools,
+          latencyProfile,
+          configuredThinking: voiceConfig.thinkingLevel,
+          routedThinking: thinking,
+        });
+        appliedThinkingRef.value = effectiveThinking ?? null;
+        const injectThinking = Boolean(
+          effectiveThinking && effectiveThinking !== "off" && trimmed && !trimmed.startsWith("/"),
+        );
+        const commandBody = injectThinking
+          ? `/think ${effectiveThinking} ${promptText}`
+          : promptText;
 
         const ctx: MsgContext = {
-          Body: inputText,
-          BodyForAgent: inputText,
+          Body: promptText,
+          BodyForAgent: promptText,
           BodyForCommands: commandBody,
-          RawBody: inputText,
+          RawBody: promptText,
           CommandBody: commandBody,
           SessionKey: sessionKey,
           Provider: INTERNAL_MESSAGE_CHANNEL,
@@ -627,7 +1134,7 @@ export const voiceHandlers: GatewayRequestHandlers = {
           OriginatingChannel: INTERNAL_MESSAGE_CHANNEL,
           ChatType: "direct",
           CommandAuthorized: true,
-          MessageSid: runId,
+          MessageSid: clientMessageId ?? runId,
         };
 
         const agentId = resolveSessionAgentId({ sessionKey, config: cfg });
@@ -635,6 +1142,7 @@ export const voiceHandlers: GatewayRequestHandlers = {
           identityName: resolveIdentityName(cfg, agentId),
         };
         const finalReplyParts: string[] = [];
+        const blockReplyParts: string[] = [];
         const dispatcher = createReplyDispatcher({
           responsePrefix: resolveEffectiveMessagesConfig(cfg, agentId).responsePrefix,
           responsePrefixContextProvider: () => prefixContext,
@@ -642,14 +1150,22 @@ export const voiceHandlers: GatewayRequestHandlers = {
             context.logGateway.warn(`voice dispatch failed: ${formatForLog(err)}`);
           },
           deliver: async (payload, info) => {
-            if (info.kind !== "final") {
+            const deliveredText = payload.text?.trim() ?? "";
+            if (!deliveredText) {
               return;
             }
-            const text = payload.text?.trim() ?? "";
-            if (!text) {
+            if (llmFirstSemanticAtRef.value == null) {
+              llmFirstSemanticAtRef.value = Date.now();
+            }
+            if (info.kind === "tool") {
+              toolReplyObservedRef.value = true;
               return;
             }
-            finalReplyParts.push(text);
+            if (info.kind === "final") {
+              finalReplyParts.push(deliveredText);
+              return;
+            }
+            blockReplyParts.push(deliveredText);
           },
         });
 
@@ -666,7 +1182,8 @@ export const voiceHandlers: GatewayRequestHandlers = {
               dispatcher,
               replyOptions: {
                 runId,
-                disableBlockStreaming: true,
+                disableBlockStreaming: !provisional,
+                ...(allowTools ? {} : { skillFilter: [] as string[] }),
                 onAgentRunStart: (agentRunId) => {
                   agentRunStarted = true;
                   const connId = typeof client?.connId === "string" ? client.connId : undefined;
@@ -674,7 +1191,7 @@ export const voiceHandlers: GatewayRequestHandlers = {
                     client?.connect?.caps,
                     GATEWAY_CLIENT_CAPS.TOOL_EVENTS,
                   );
-                  if (connId && wantsToolEvents) {
+                  if (allowTools && connId && wantsToolEvents) {
                     context.registerToolEventRecipient(agentRunId, connId);
                   }
                 },
@@ -699,12 +1216,27 @@ export const voiceHandlers: GatewayRequestHandlers = {
           .filter(Boolean)
           .join("\n\n")
           .trim();
+        const blockReply = blockReplyParts
+          .map((part) => part.trim())
+          .filter(Boolean)
+          .join("\n\n")
+          .trim();
+        let resolvedReply = truncateToTokenBudget(combinedReply || blockReply, maxOutputTokens);
+        if (!resolvedReply) {
+          if (allowTools && toolReplyObservedRef.value) {
+            // Keep voice turns conversational when tool execution begins before a textual summary is emitted.
+            resolvedReply = "Working on that action now.";
+          } else {
+            // Guarantee a spoken fallback so voice turns never return an empty assistant response.
+            resolvedReply = "Still working on that. Please try again in a moment.";
+          }
+        }
 
-        if (!agentRunStarted && combinedReply) {
+        if (!provisional && !agentRunStarted && resolvedReply) {
           const { storePath, entry } = loadSessionEntry(sessionKey);
           const sessionId = entry?.sessionId ?? runId;
           const appended = appendAssistantTranscriptMessage({
-            message: combinedReply,
+            message: resolvedReply,
             label: "voice",
             sessionId,
             storePath,
@@ -716,7 +1248,7 @@ export const voiceHandlers: GatewayRequestHandlers = {
               ? appended.message
               : {
                   role: "assistant",
-                  content: [{ type: "text", text: combinedReply }],
+                  content: [{ type: "text", text: resolvedReply }],
                   timestamp: Date.now(),
                   stopReason: "injected",
                   usage: { input: 0, output: 0, totalTokens: 0 },
@@ -724,29 +1256,111 @@ export const voiceHandlers: GatewayRequestHandlers = {
           broadcastChatFinal({ context, runId, sessionKey, message });
         }
 
-        return combinedReply;
+        if (toolReplyObservedRef.value && !allowTools) {
+          context.logGateway.warn("voice.processText provisional run observed tool output");
+        }
+        if (!provisional) {
+          updateVoiceAdaptiveState({
+            sessionKey,
+            userText: inputText,
+            assistantText: resolvedReply,
+            allowTools,
+          });
+        }
+        return resolvedReply;
       };
 
       const result = await processTextToVoice(text, config, llmInvoke, { skipTts });
+      const timingsRecord =
+        result.timings && typeof result.timings === "object"
+          ? (result.timings as Record<string, unknown>)
+          : undefined;
+      const llmFullCompletionMsRaw =
+        typeof timingsRecord?.llmFullCompletionMs === "number"
+          ? timingsRecord.llmFullCompletionMs
+          : typeof timingsRecord?.llmMs === "number"
+            ? timingsRecord.llmMs
+            : undefined;
+      const llmFirstSemanticMsRaw =
+        llmInvokeStartedAtRef.value != null && llmFirstSemanticAtRef.value != null
+          ? Math.max(0, llmFirstSemanticAtRef.value - llmInvokeStartedAtRef.value)
+          : undefined;
+      const llmFullCompletionMs =
+        llmFullCompletionMsRaw != null ? Math.max(0, llmFullCompletionMsRaw) : undefined;
+      const llmFirstSemanticMs =
+        llmFirstSemanticMsRaw != null
+          ? llmFirstSemanticMsRaw
+          : llmFullCompletionMs != null
+            ? llmFullCompletionMs
+            : undefined;
+      const resultTimings = {
+        ...result.timings,
+        ...(llmFullCompletionMs != null ? { llmMs: llmFullCompletionMs } : {}),
+        ...(llmFullCompletionMs != null ? { llmFullCompletionMs } : {}),
+        ...(llmFirstSemanticMs != null ? { llmFirstSemanticMs } : {}),
+      };
+      const userTranscriptMessage =
+        !provisional && source === "voice" && clientMessageId && text
+          ? buildVoiceUserTranscriptMessage({
+              messageId: clientMessageId,
+              text,
+              conversationId,
+              turnId,
+              source,
+            })
+          : null;
+      const spokenResponse = deriveSpokenResponse(result.response ?? "", spokenOutputMode);
+      if (userTranscriptMessage && clientMessageId) {
+        broadcastVoiceUserTranscript({
+          context,
+          sessionKey,
+          conversationId,
+          turnId,
+          clientMessageId,
+          source,
+          message: userTranscriptMessage,
+        });
+      }
 
       if (result.success) {
         respond(true, {
           sessionId: result.sessionId,
           transcription: result.transcription,
           response: result.response,
+          spokenResponse,
           audioBase64: result.audioBuffer?.toString("base64"),
           route: result.routerDecision?.route,
           model: selectedModelRef.value
             ? `${selectedModelRef.value.provider}/${selectedModelRef.value.model}`
             : result.routerDecision?.model,
-          thinkingLevel: selectedModelRef.value?.thinkLevel,
+          thinkingLevel: appliedThinkingRef.value ?? selectedModelRef.value?.thinkLevel,
           runId: agentRunIdRef.value,
-          timings: result.timings,
+          conversationId,
+          turnId,
+          clientMessageId,
+          source,
+          userTranscriptMessageId: userTranscriptMessage ? clientMessageId : undefined,
+          userTranscriptMessage,
+          toolActivity: toolReplyObservedRef.value || undefined,
+          provisional,
+          timings: resultTimings,
         });
       } else {
         respond(
           false,
-          { sessionId: result.sessionId, timings: result.timings },
+          {
+            sessionId: result.sessionId,
+            spokenResponse,
+            conversationId,
+            turnId,
+            clientMessageId,
+            source,
+            userTranscriptMessageId: userTranscriptMessage ? clientMessageId : undefined,
+            userTranscriptMessage,
+            toolActivity: toolReplyObservedRef.value || undefined,
+            provisional,
+            timings: resultTimings,
+          },
           errorShape(ErrorCodes.UNAVAILABLE, result.error ?? "Voice processing failed"),
         );
       }

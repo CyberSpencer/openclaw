@@ -1,5 +1,10 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { createVoiceState, playAudioBase64 } from "./voice.ts";
+import {
+  createVoiceState,
+  playAudioBase64,
+  recordVoiceShortTurnSloSample,
+  stopConversation,
+} from "./voice.ts";
 
 const OriginalAudio = globalThis.Audio;
 const OriginalAudioContext = globalThis.AudioContext;
@@ -102,5 +107,70 @@ describe("playAudioBase64", () => {
     expect(addModule).toHaveBeenCalledTimes(1);
     expect(audioConstruct).toHaveBeenCalledTimes(1);
     expect(state.phase).toBe("speaking");
+  });
+
+  it("aborts an active turn when conversation is stopped", () => {
+    const state = createVoiceState();
+    state.conversationActive = true;
+    const controller = new AbortController();
+    state.turnAbortController = controller;
+
+    stopConversation(state);
+
+    expect(controller.signal.aborted).toBe(true);
+    expect(state.turnAbortController).toBeNull();
+    expect(state.conversationActive).toBe(false);
+    expect(state.phase).toBe("idle");
+  });
+});
+
+describe("voice short-turn SLO report", () => {
+  it("tracks p50/p95 latency metrics for short turns", () => {
+    const state = createVoiceState();
+
+    state.firstStatusTextAtMs = 1_100;
+    state.firstAudibleAtMs = 1_200;
+    state.firstSemanticTextAtMs = 1_700;
+    state.semanticSpokenStartAtMs = 1_900;
+    recordVoiceShortTurnSloSample(state, {
+      turnId: "turn-1",
+      eosAtMs: 1_000,
+      speechDurationMs: 2_100,
+      outputText: "short answer",
+    });
+
+    state.firstStatusTextAtMs = 2_300;
+    state.firstAudibleAtMs = 2_450;
+    state.firstSemanticTextAtMs = 2_900;
+    state.semanticSpokenStartAtMs = 3_050;
+    recordVoiceShortTurnSloSample(state, {
+      turnId: "turn-2",
+      eosAtMs: 2_000,
+      speechDurationMs: 3_000,
+      outputText: "another short answer",
+    });
+
+    // Excluded from short-turn buckets (speech > 6s).
+    state.firstStatusTextAtMs = 3_300;
+    state.firstAudibleAtMs = 3_450;
+    state.firstSemanticTextAtMs = 3_900;
+    state.semanticSpokenStartAtMs = 4_050;
+    recordVoiceShortTurnSloSample(state, {
+      turnId: "turn-3",
+      eosAtMs: 3_000,
+      speechDurationMs: 6_500,
+      outputText: "still collected in total turns",
+    });
+
+    expect(state.shortTurnSloReport).toMatchObject({
+      totalTurnCount: 3,
+      shortTurnCount: 2,
+      metrics: {
+        eosToFirstAssistantStatusText: { count: 2, p50Ms: 100, p95Ms: 300 },
+        eosToFirstAudibleByte: { count: 2, p50Ms: 200, p95Ms: 450 },
+        eosToFirstSemanticAssistantText: { count: 2, p50Ms: 700, p95Ms: 900 },
+        eosToSemanticSpokenAnswerStart: { count: 2, p50Ms: 900, p95Ms: 1050 },
+      },
+    });
   });
 });

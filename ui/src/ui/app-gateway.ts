@@ -1,6 +1,11 @@
 import type { EventLogEntry } from "./app-events.ts";
 import type { ExecApprovalRequest } from "./controllers/exec-approval.ts";
-import type { GatewayEventFrame, GatewayHelloOk } from "./gateway.ts";
+import type {
+  GatewayEventFrame,
+  GatewayHelloOk,
+  VoiceSparkStreamEventName,
+  VoiceTranscriptUserEventPayload,
+} from "./gateway.ts";
 import type { HealthSnapshot, PresenceEntry } from "./types.ts";
 import { flushChatQueueForEvent, type ChatHost } from "./app-chat.ts";
 import {
@@ -47,6 +52,25 @@ export type GatewayHost = SettingsHost &
     resetAllSessionRunState: () => void;
     execApprovalQueue: ExecApprovalRequest[];
     execApprovalError: string | null;
+    maybeAutoResolveVoiceExecApproval?: (entry: ExecApprovalRequest) => boolean;
+    handleVoiceExecApprovalResolved?: (
+      id: string,
+      meta?: { wasQueued?: boolean; decision?: string | null },
+    ) => void;
+    handleVoiceChatRunSettled?: (sessionKey: string, state: "final" | "error" | "aborted") => void;
+    handleVoiceTranscriptEvent?: (payload: {
+      sessionKey?: string;
+      conversationId?: string;
+      turnId?: string;
+      clientMessageId?: string;
+      source?: string;
+      messageId?: string;
+      message?: Record<string, unknown>;
+    }) => void;
+    handleVoiceSparkStreamEvent?: (
+      event: VoiceSparkStreamEventName,
+      payload: Record<string, unknown>,
+    ) => void;
     handleOrchestratorAgentEvent?: (payload: AgentEventPayload) => void;
     handleOrchestratorStoreEvent?: (payload: unknown) => void;
     handleChatThreadFinalEvent?: (sessionKey: string) => void;
@@ -100,6 +124,38 @@ function asChatEventPayload(
     return null;
   }
   return obj as import("./controllers/chat.ts").ChatEventPayload;
+}
+
+function asSparkVoiceStreamPayload(value: unknown): Record<string, unknown> | null {
+  const obj = asRecord(value);
+  if (!obj) {
+    return null;
+  }
+  if (typeof obj.streamId !== "string" || !obj.streamId.trim()) {
+    return null;
+  }
+  return obj;
+}
+
+function asVoiceTranscriptPayload(value: unknown): VoiceTranscriptUserEventPayload | null {
+  const obj = asRecord(value);
+  if (!obj) {
+    return null;
+  }
+  const clientMessageId = typeof obj.clientMessageId === "string" ? obj.clientMessageId.trim() : "";
+  if (!clientMessageId) {
+    return null;
+  }
+  const message = asRecord(obj.message);
+  return {
+    sessionKey: typeof obj.sessionKey === "string" ? obj.sessionKey : undefined,
+    conversationId: typeof obj.conversationId === "string" ? obj.conversationId : undefined,
+    turnId: typeof obj.turnId === "string" ? obj.turnId : undefined,
+    clientMessageId,
+    source: typeof obj.source === "string" ? obj.source : undefined,
+    messageId: typeof obj.messageId === "string" ? obj.messageId : undefined,
+    message,
+  } as VoiceTranscriptUserEventPayload;
 }
 
 function normalizeSessionKeyForDefaults(
@@ -237,6 +293,27 @@ function handleGatewayEventUnsafe(host: GatewayHost, evt: GatewayEventFrame) {
     return;
   }
 
+  if (evt.event === "voice.transcript.user") {
+    const payload = asVoiceTranscriptPayload(evt.payload);
+    if (payload) {
+      host.handleVoiceTranscriptEvent?.(payload);
+    }
+    return;
+  }
+
+  if (
+    evt.event === "spark.voice.stream.started" ||
+    evt.event === "spark.voice.stream.chunk" ||
+    evt.event === "spark.voice.stream.completed" ||
+    evt.event === "spark.voice.stream.error"
+  ) {
+    const payload = asSparkVoiceStreamPayload(evt.payload);
+    if (payload) {
+      host.handleVoiceSparkStreamEvent?.(evt.event, payload);
+    }
+    return;
+  }
+
   if (evt.event === "chat") {
     const payload = asChatEventPayload(evt.payload);
     if (payload?.sessionKey) {
@@ -300,6 +377,12 @@ function handleGatewayEventUnsafe(host: GatewayHost, evt: GatewayEventFrame) {
     };
 
     const state = handleChatEvent(chatProxy, payload ?? undefined);
+    if (
+      (state === "final" || state === "error" || state === "aborted") &&
+      typeof payload?.sessionKey === "string"
+    ) {
+      host.handleVoiceChatRunSettled?.(payload.sessionKey, state);
+    }
 
     if ((state === "final" || state === "error" || state === "aborted") && isActive) {
       void flushChatQueueForEvent(host);
@@ -343,6 +426,10 @@ function handleGatewayEventUnsafe(host: GatewayHost, evt: GatewayEventFrame) {
   if (evt.event === "exec.approval.requested") {
     const entry = parseExecApprovalRequested(evt.payload);
     if (entry) {
+      const autoResolved = host.maybeAutoResolveVoiceExecApproval?.(entry) ?? false;
+      if (autoResolved) {
+        return;
+      }
       host.execApprovalQueue = addExecApproval(host.execApprovalQueue, entry);
       host.execApprovalError = null;
       const delay = Math.max(0, entry.expiresAtMs - Date.now() + 500);
@@ -356,7 +443,12 @@ function handleGatewayEventUnsafe(host: GatewayHost, evt: GatewayEventFrame) {
   if (evt.event === "exec.approval.resolved") {
     const resolved = parseExecApprovalResolved(evt.payload);
     if (resolved) {
+      const wasQueued = host.execApprovalQueue.some((entry) => entry.id === resolved.id);
       host.execApprovalQueue = removeExecApproval(host.execApprovalQueue, resolved.id);
+      host.handleVoiceExecApprovalResolved?.(resolved.id, {
+        wasQueued,
+        decision: resolved.decision ?? null,
+      });
     }
   }
 }

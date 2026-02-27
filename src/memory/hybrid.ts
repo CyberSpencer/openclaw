@@ -44,6 +44,7 @@ export function mergeHybridResults(params: {
   vectorWeight: number;
   textWeight: number;
 }): Array<{
+  id: string;
   path: string;
   startLine: number;
   endLine: number;
@@ -102,6 +103,7 @@ export function mergeHybridResults(params: {
   const merged = Array.from(byId.values()).map((entry) => {
     const score = params.vectorWeight * entry.vectorScore + params.textWeight * entry.textScore;
     return {
+      id: entry.id,
       path: entry.path,
       startLine: entry.startLine,
       endLine: entry.endLine,

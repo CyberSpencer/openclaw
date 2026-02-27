@@ -88,12 +88,20 @@ import {
 import { loadAssistantIdentity as loadAssistantIdentityInternal } from "./controllers/assistant-identity.ts";
 import { pcmFramesToWavBlob } from "./controllers/audio-capture.ts";
 import { loadChatThreads } from "./controllers/chat-threads.ts";
+import { addExecApproval } from "./controllers/exec-approval.ts";
 import { loadSubagentMonitor } from "./controllers/subagent-monitor.ts";
 import {
   createVoiceState,
+  handleSparkVoiceStreamEvent,
   loadVoiceStatus,
+  markVoiceTranscriptConfirmed,
+  pauseConversationForTextRun,
   processVoiceInput,
   processVoiceInputSpark,
+  pruneStaleVoiceTranscriptReconciliations,
+  registerOptimisticVoiceTranscript,
+  resumeConversationAfterTextRun,
+  setConversationSessionContext,
   startConversation,
   stopConversation,
   type VoiceState,
@@ -743,6 +751,12 @@ export class OpenClawApp extends LitElement {
   @state() voiceBarVisible = false;
   @state() voiceBarExpanded = false;
   voiceState: VoiceState = createVoiceState();
+  private voiceResumeContextAfterTextRun: {
+    conversationId: string;
+    sessionKey: string;
+    manualStopVersion: number;
+  } | null = null;
+  private voiceAutoResolvingApprovals = new Set<string>();
   @state() memorySearchEnabled: boolean | null = null;
   @state() memorySearchBusy = false;
   @state() memoryStoreLabel: string | null = null;
@@ -2486,11 +2500,183 @@ export class OpenClawApp extends LitElement {
     messageOverride?: string,
     opts?: Parameters<typeof handleSendChatInternal>[2],
   ) {
+    const message = (messageOverride ?? this.chatMessage).trim();
+    const hasAttachments = (this.chatAttachments?.length ?? 0) > 0 && messageOverride == null;
+    if (
+      this.voiceState.conversationActive &&
+      this.settings.voiceMixedModeEnabled &&
+      (message.length > 0 || hasAttachments)
+    ) {
+      const pause = pauseConversationForTextRun(this.voiceState, {
+        sessionKey: this.sessionKey,
+        interruptedBy: "text_send",
+      });
+      this.voiceResumeContextAfterTextRun = pause;
+      this.requestUpdate();
+    }
+    if (this.voiceState.conversationActive && !this.settings.voiceMixedModeEnabled) {
+      this.lastError =
+        "Voice conversation is active. Disable voice or enable mixed mode to send text.";
+      return;
+    }
     await handleSendChatInternal(
       this as unknown as Parameters<typeof handleSendChatInternal>[0],
       messageOverride,
       opts,
     );
+    if (
+      this.voiceResumeContextAfterTextRun &&
+      !this.chatRunId &&
+      this.chatStream === null &&
+      !this.chatSending
+    ) {
+      const resumed = resumeConversationAfterTextRun(
+        this.voiceState,
+        this.voiceResumeContextAfterTextRun,
+      );
+      if (resumed) {
+        this.voiceResumeContextAfterTextRun = null;
+      }
+      this.requestUpdate();
+    }
+  }
+
+  private appendOptimisticVoiceTranscript(params: {
+    text: string;
+    clientMessageId: string;
+    conversationId: string;
+    turnId: string;
+  }) {
+    const normalized = params.text.trim();
+    if (!normalized) {
+      return;
+    }
+    const existing = this.chatMessages.find((entry) => {
+      const rec = entry as Record<string, unknown>;
+      return rec.clientMessageId === params.clientMessageId;
+    });
+    if (existing) {
+      return;
+    }
+    const optimisticMessageId = `voice-opt:${params.clientMessageId}`;
+    this.chatMessages = [
+      ...this.chatMessages,
+      {
+        id: optimisticMessageId,
+        role: "user",
+        source: "voice",
+        optimistic: true,
+        clientMessageId: params.clientMessageId,
+        conversationId: params.conversationId,
+        turnId: params.turnId,
+        content: [{ type: "text", text: normalized }],
+        timestamp: Date.now(),
+      },
+    ];
+    registerOptimisticVoiceTranscript(this.voiceState, {
+      clientMessageId: params.clientMessageId,
+      conversationId: params.conversationId,
+      turnId: params.turnId,
+      optimisticMessageId,
+    });
+  }
+
+  private reconcileVoiceTranscriptById(params: {
+    clientMessageId?: string;
+    persistedMessage?: Record<string, unknown> | null;
+    persistedMessageId?: string | null;
+  }) {
+    const id = typeof params.clientMessageId === "string" ? params.clientMessageId.trim() : "";
+    if (!id) {
+      return;
+    }
+    markVoiceTranscriptConfirmed(this.voiceState, {
+      clientMessageId: id,
+      confirmedMessageId: params.persistedMessageId ?? undefined,
+    });
+    this.chatMessages = this.chatMessages.map((entry) => {
+      const rec = entry as Record<string, unknown>;
+      if (rec.clientMessageId !== id) {
+        return entry;
+      }
+      if (params.persistedMessage) {
+        return {
+          ...params.persistedMessage,
+          id:
+            typeof params.persistedMessage.id === "string"
+              ? params.persistedMessage.id
+              : (rec.id ?? `voice:${id}`),
+          clientMessageId: id,
+          source: "voice",
+          optimistic: false,
+        };
+      }
+      return {
+        ...rec,
+        optimistic: false,
+      };
+    });
+    const staleIds = pruneStaleVoiceTranscriptReconciliations(this.voiceState);
+    if (staleIds.length === 0) {
+      return;
+    }
+    this.chatMessages = this.chatMessages.filter((entry) => {
+      const rec = entry as Record<string, unknown>;
+      const clientMessageId =
+        typeof rec.clientMessageId === "string" ? rec.clientMessageId : undefined;
+      return !clientMessageId || !staleIds.includes(clientMessageId);
+    });
+  }
+
+  handleVoiceTranscriptEvent(payload: {
+    sessionKey?: string;
+    conversationId?: string;
+    turnId?: string;
+    clientMessageId?: string;
+    source?: string;
+    messageId?: string;
+    message?: Record<string, unknown>;
+  }): void {
+    if (payload.sessionKey && payload.sessionKey !== this.sessionKey) {
+      return;
+    }
+    this.reconcileVoiceTranscriptById({
+      clientMessageId: payload.clientMessageId,
+      persistedMessage: payload.message ?? null,
+      persistedMessageId: payload.messageId ?? null,
+    });
+    this.requestUpdate();
+  }
+
+  handleVoiceChatRunSettled(sessionKey: string, state: "final" | "error" | "aborted") {
+    if (!this.voiceResumeContextAfterTextRun) {
+      return;
+    }
+    if (sessionKey !== this.voiceResumeContextAfterTextRun.sessionKey) {
+      return;
+    }
+    if (state !== "final" && state !== "error" && state !== "aborted") {
+      return;
+    }
+    const resumed = resumeConversationAfterTextRun(
+      this.voiceState,
+      this.voiceResumeContextAfterTextRun,
+    );
+    this.voiceResumeContextAfterTextRun = null;
+    if (resumed) {
+      this.requestUpdate();
+    }
+  }
+
+  handleVoiceSparkStreamEvent(
+    event:
+      | "spark.voice.stream.started"
+      | "spark.voice.stream.chunk"
+      | "spark.voice.stream.completed"
+      | "spark.voice.stream.error",
+    payload: Record<string, unknown>,
+  ): void {
+    handleSparkVoiceStreamEvent(this.voiceState, event, payload);
   }
 
   private resolveDefaultAgentIdForNewThread(): string {
@@ -2661,6 +2847,143 @@ export class OpenClawApp extends LitElement {
     }
   }
 
+  private evaluateStrictVoiceApprovalPolicy(request: ExecApprovalRequest["request"]): boolean {
+    const actionKind =
+      typeof request.actionKind === "string" ? request.actionKind.toLowerCase() : "";
+    const riskTags = Array.isArray(request.riskTags)
+      ? request.riskTags.map((tag) => String(tag).trim().toLowerCase()).filter(Boolean)
+      : [];
+    if (request.requiresOutbound === true || request.requiresElevation === true) {
+      return false;
+    }
+    const blockedRiskTags = new Set([
+      "outbound",
+      "network_write",
+      "network-write",
+      "deploy",
+      "publish",
+      "destructive",
+      "privileged",
+      "elevated",
+      "credential",
+      "security_mutation",
+      "security-mutation",
+      "filesystem_write",
+      "system_write",
+    ]);
+    if (riskTags.some((tag) => blockedRiskTags.has(tag))) {
+      return false;
+    }
+    if (!actionKind) {
+      return false;
+    }
+    if (
+      /(send|email|message|post|publish|deploy|delete|remove|destroy|rm|chmod|chown|sudo|elevat|credential|secret|token|password|curl|wget|http|network|write|overwrite)/i.test(
+        actionKind,
+      )
+    ) {
+      return false;
+    }
+    if (/(read|list|inspect|query|show|diff|search|grep|find|stat|ls|cat|pwd)/i.test(actionKind)) {
+      return true;
+    }
+    // Unknown/ambiguous => manual by default.
+    return false;
+  }
+
+  maybeAutoResolveVoiceExecApproval(entry: ExecApprovalRequest): boolean {
+    if (!this.voiceState.conversationActive) {
+      return false;
+    }
+    const requestSession =
+      typeof entry.request.sessionKey === "string" ? entry.request.sessionKey : "";
+    const activeSession =
+      this.voiceState.conversationSessionKey ?? this.voiceState.sessionKey ?? "";
+    if (!requestSession || !activeSession || requestSession !== activeSession) {
+      return false;
+    }
+    if (!this.settings.voiceAutoApproveOnce || this.settings.voiceApprovalPolicyMode !== "strict") {
+      return false;
+    }
+
+    // Enter approval wait while we evaluate and potentially resolve.
+    pauseConversationForTextRun(this.voiceState, {
+      sessionKey: activeSession,
+      interruptedBy: "approval_wait",
+    });
+    this.requestUpdate();
+
+    const allow = this.evaluateStrictVoiceApprovalPolicy(entry.request);
+    if (!allow || !this.client || this.voiceAutoResolvingApprovals.has(entry.id)) {
+      return false;
+    }
+    this.voiceAutoResolvingApprovals.add(entry.id);
+    void this.client
+      .request("exec.approval.resolve", { id: entry.id, decision: "allow-once" })
+      .then(() => {
+        this.handleVoiceExecApprovalResolved(entry.id, {
+          wasQueued: false,
+          decision: "allow-once",
+          force: true,
+        });
+      })
+      .catch((err) => {
+        const message = String(err);
+        this.execApprovalError = `Exec approval auto-resolve failed: ${message}`;
+        if (/unknown approval id/i.test(message)) {
+          // Approval may have timed out or been resolved elsewhere, resume voice loop.
+          this.handleVoiceExecApprovalResolved(entry.id, {
+            wasQueued: false,
+            decision: null,
+            force: true,
+          });
+          return;
+        }
+        // Auto-resolve failed, hand control back to manual approval queue.
+        this.execApprovalQueue = addExecApproval(this.execApprovalQueue, entry);
+        this.requestUpdate();
+      })
+      .finally(() => {
+        this.voiceAutoResolvingApprovals.delete(entry.id);
+      });
+    return true;
+  }
+
+  handleVoiceExecApprovalResolved(
+    id: string,
+    meta?: { wasQueued?: boolean; decision?: string | null; force?: boolean },
+  ): void {
+    const wasAutoResolving = this.voiceAutoResolvingApprovals.has(id);
+    this.voiceAutoResolvingApprovals.delete(id);
+    const wasQueued = meta?.wasQueued === true;
+    const force = meta?.force === true;
+    if (!force && !wasQueued && !wasAutoResolving) {
+      return;
+    }
+    if (this.voiceState.phase !== "approval_wait") {
+      return;
+    }
+    const activeSession = this.voiceState.conversationSessionKey ?? this.voiceState.sessionKey;
+    if (!activeSession) {
+      return;
+    }
+    const hasPendingForSession = this.execApprovalQueue.some(
+      (entry) => entry.request.sessionKey === activeSession,
+    );
+    if (hasPendingForSession) {
+      this.requestUpdate();
+      return;
+    }
+    const resumed = resumeConversationAfterTextRun(this.voiceState, {
+      conversationId: this.voiceState.conversationId ?? "",
+      sessionKey: activeSession,
+      manualStopVersion: this.voiceState.manualStopVersion,
+    });
+    if (resumed) {
+      this.requestUpdate();
+    }
+  }
+
   handleGatewayUrlConfirm() {
     const nextGatewayUrl = this.pendingGatewayUrl;
     if (!nextGatewayUrl) {
@@ -2769,11 +3092,7 @@ export class OpenClawApp extends LitElement {
       this.voiceState.ttsVoice = this.settings.ttsVoice || null;
       this.voiceState.ttsInstruct = this.settings.ttsInstruct || null;
       this.voiceState.ttsLanguage = this.settings.ttsLanguage || null;
-      if (this.voiceState.mode === "spark") {
-        this.voiceState.enabled = true;
-      } else if (!this.voiceState.capabilities) {
-        void this.loadVoiceStatus();
-      }
+      void this.loadVoiceStatus();
       void this.loadSparkVoices();
     }
   }
@@ -2795,19 +3114,86 @@ export class OpenClawApp extends LitElement {
       this.requestUpdate();
       return;
     }
-    this.voiceState.sessionKey = this.sessionKey;
+    if (this.chatRunId || this.chatStream !== null) {
+      this.voiceState.error =
+        "A text run is already active in this chat. Stop or wait for it before starting voice conversation.";
+      this.requestUpdate();
+      return;
+    }
+    setConversationSessionContext(this.voiceState, this.sessionKey);
     this.voiceState.sparkVoiceAvailable = this.isSparkVoiceAvailable();
     this.voiceState.ttsVoice = this.settings.ttsVoice || null;
     this.voiceState.ttsInstruct = this.settings.ttsInstruct || null;
     this.voiceState.ttsLanguage = this.settings.ttsLanguage || null;
+    this.voiceResumeContextAfterTextRun = null;
     void startConversation(
       this.voiceState,
       () => this.requestUpdate(),
-      async ({ audioBase64, format }: { audioBase64: string; format: string }) => {
+      async ({
+        audioBase64,
+        format,
+        signal,
+        conversationId,
+        turnId,
+        clientMessageId,
+      }: {
+        audioBase64: string;
+        format: string;
+        signal: AbortSignal;
+        conversationId: string;
+        turnId: string;
+        clientMessageId: string;
+      }) => {
         if (this.voiceState.mode === "spark") {
-          return await processVoiceInputSpark(this.voiceState, audioBase64, format);
+          const result = await processVoiceInputSpark(
+            this.voiceState,
+            audioBase64,
+            format,
+            signal,
+            {
+              conversationId,
+              turnId,
+              clientMessageId,
+              source: "voice",
+              spokenOutputMode: this.settings.voiceSpokenOutputMode,
+              onStatusText: (statusText) => {
+                this.voiceState.statusText = statusText;
+                this.requestUpdate();
+              },
+              onTranscription: ({
+                text,
+                clientMessageId: transcriptId,
+                conversationId,
+                turnId,
+              }) => {
+                this.appendOptimisticVoiceTranscript({
+                  text,
+                  clientMessageId: transcriptId,
+                  conversationId,
+                  turnId,
+                });
+                this.requestUpdate();
+              },
+            },
+          );
+          if (result?.clientMessageId) {
+            this.reconcileVoiceTranscriptById({
+              clientMessageId: result.clientMessageId,
+              persistedMessage:
+                result.userTranscriptMessage && typeof result.userTranscriptMessage === "object"
+                  ? result.userTranscriptMessage
+                  : null,
+              persistedMessageId: result.userTranscriptMessageId ?? null,
+            });
+          }
+          return result;
         }
-        return await processVoiceInput(this.voiceState, audioBase64);
+        return await processVoiceInput(this.voiceState, audioBase64, signal, {
+          conversationId,
+          turnId,
+          clientMessageId,
+          source: "voice",
+        });
       },
     ).catch((err) => {
       this.voiceState.error = String(err);
@@ -2821,6 +3207,7 @@ export class OpenClawApp extends LitElement {
    */
   handleVoiceStopConversation() {
     stopConversation(this.voiceState);
+    this.voiceResumeContextAfterTextRun = null;
     this.requestUpdate();
   }
 
@@ -2837,6 +3224,7 @@ export class OpenClawApp extends LitElement {
 
   handleVoiceClose() {
     stopConversation(this.voiceState);
+    this.voiceResumeContextAfterTextRun = null;
     this.voiceBarVisible = false;
     this.requestUpdate();
   }

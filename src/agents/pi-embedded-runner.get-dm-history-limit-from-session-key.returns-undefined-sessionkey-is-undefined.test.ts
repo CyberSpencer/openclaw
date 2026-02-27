@@ -143,6 +143,26 @@ describe("getDmHistoryLimitFromSessionKey", () => {
       9,
     );
   });
+  it("returns voice.historyTurns for webchat-voice session when set", () => {
+    const config = { voice: { historyTurns: 5 } } as OpenClawConfig;
+    expect(getDmHistoryLimitFromSessionKey("webchat-voice", config)).toBe(5);
+  });
+  it("returns undefined for webchat-voice when voice.historyTurns is missing or invalid", () => {
+    expect(getDmHistoryLimitFromSessionKey("webchat-voice", {} as OpenClawConfig)).toBeUndefined();
+    expect(
+      getDmHistoryLimitFromSessionKey("webchat-voice", { voice: {} } as OpenClawConfig),
+    ).toBeUndefined();
+    expect(
+      getDmHistoryLimitFromSessionKey("webchat-voice", {
+        voice: { historyTurns: 0 },
+      } as OpenClawConfig),
+    ).toBeUndefined();
+    expect(
+      getDmHistoryLimitFromSessionKey("webchat-voice", {
+        voice: { historyTurns: NaN },
+      } as OpenClawConfig),
+    ).toBeUndefined();
+  });
   it("returns undefined for non-dm session kinds", () => {
     const config = {
       channels: {

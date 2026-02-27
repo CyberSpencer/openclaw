@@ -697,12 +697,15 @@ export const OpenClawSchema = z
         bufferMs: z.number().int().positive().optional(),
         maxRecordingSeconds: z.number().int().positive().optional(),
         vadSensitivity: z.number().min(0).max(1).optional(),
+        thinkingLevel: z.enum(["off", "low", "medium", "high", "xhigh"]).optional(),
+        historyTurns: z.number().int().positive().optional(),
       })
       .strict()
       .optional(),
     dgx: z
       .object({
         accessMode: z.union([z.literal("auto"), z.literal("lan"), z.literal("wan")]).optional(),
+        resolvedAccessMode: z.union([z.literal("lan"), z.literal("wan")]).optional(),
         wanBaseUrl: z.string().optional(),
         wanHeaders: z.record(z.string(), z.string()).optional(),
       })

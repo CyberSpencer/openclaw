@@ -188,6 +188,83 @@ function buildHost(overrides?: Partial<GatewayHost>): GatewayHost {
 }
 
 describe("app-gateway event contracts", () => {
+  it("skips manual queue insert when voice auto-resolve handles approval request", () => {
+    const maybeAutoResolveVoiceExecApproval = vi.fn(() => true);
+    const host = buildHost({
+      maybeAutoResolveVoiceExecApproval,
+    });
+    const evt: GatewayEventFrame = {
+      type: "event",
+      event: "exec.approval.requested",
+      payload: {
+        id: "approval-1",
+        request: { command: "ls" },
+        createdAtMs: Date.now(),
+        expiresAtMs: Date.now() + 60_000,
+      },
+    };
+
+    handleGatewayEvent(host, evt);
+    expect(maybeAutoResolveVoiceExecApproval).toHaveBeenCalledTimes(1);
+    expect(host.execApprovalQueue).toHaveLength(0);
+  });
+
+  it("passes queue-match metadata to voice approval resolve handler", () => {
+    const handleVoiceExecApprovalResolved = vi.fn();
+    const now = Date.now();
+    const host = buildHost({
+      execApprovalQueue: [
+        {
+          id: "approval-queued",
+          request: { command: "ls" },
+          createdAtMs: now,
+          expiresAtMs: now + 60_000,
+        },
+      ],
+      handleVoiceExecApprovalResolved,
+    });
+    const evt: GatewayEventFrame = {
+      type: "event",
+      event: "exec.approval.resolved",
+      payload: {
+        id: "approval-queued",
+        decision: "allow-once",
+        resolvedBy: "operator",
+        ts: now + 100,
+      },
+    };
+
+    handleGatewayEvent(host, evt);
+    expect(handleVoiceExecApprovalResolved).toHaveBeenCalledWith(
+      "approval-queued",
+      expect.objectContaining({ wasQueued: true, decision: "allow-once" }),
+    );
+    expect(host.execApprovalQueue).toHaveLength(0);
+  });
+
+  it("marks non-queued approval resolved events with wasQueued=false", () => {
+    const handleVoiceExecApprovalResolved = vi.fn();
+    const host = buildHost({
+      handleVoiceExecApprovalResolved,
+    });
+    const evt: GatewayEventFrame = {
+      type: "event",
+      event: "exec.approval.resolved",
+      payload: {
+        id: "approval-other",
+        decision: "deny",
+        resolvedBy: "operator",
+        ts: Date.now(),
+      },
+    };
+
+    handleGatewayEvent(host, evt);
+    expect(handleVoiceExecApprovalResolved).toHaveBeenCalledWith(
+      "approval-other",
+      expect.objectContaining({ wasQueued: false, decision: "deny" }),
+    );
+  });
+
   it("routes orchestrator events to store handler", () => {
     const handleOrchestratorStoreEvent = vi.fn();
     const host = buildHost({ handleOrchestratorStoreEvent });

@@ -1,4 +1,4 @@
-import { connectGateway, type GatewayHost } from "./app-gateway.ts";
+import type { GatewayHost } from "./app-gateway.ts";
 import {
   startLogsPolling,
   startNodesPolling,
@@ -21,6 +21,7 @@ type LifecycleHost = GatewayHost & {
   chatManualRefreshInFlight: boolean;
   logsAutoFollow: boolean;
   popStateHandler: () => void;
+  connect: () => void;
 };
 
 export function handleConnected(host: LifecycleHost) {
@@ -30,7 +31,7 @@ export function handleConnected(host: LifecycleHost) {
   syncThemeWithSettings(host);
   attachThemeListener(host);
   window.addEventListener("popstate", host.popStateHandler);
-  connectGateway(host);
+  host.connect();
   startNodesPolling(host);
   if (host.tab === "logs") {
     startLogsPolling(host);

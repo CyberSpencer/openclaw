@@ -351,6 +351,7 @@ export const MemorySearchSchema = z
                 healthUrl: z.string().optional(),
                 healthTimeoutMs: z.number().int().positive().optional(),
                 healthCacheTtlMs: z.number().int().positive().optional(),
+                role: z.string().optional(),
               })
               .strict()
               .superRefine((value, ctx) => {
@@ -372,6 +373,50 @@ export const MemorySearchSchema = z
             concurrency: z.number().int().positive().optional(),
             pollIntervalMs: z.number().int().nonnegative().optional(),
             timeoutMinutes: z.number().int().positive().optional(),
+          })
+          .strict()
+          .optional(),
+      })
+      .strict()
+      .optional(),
+    rerank: z
+      .object({
+        enabled: z.boolean().optional(),
+        candidateLimit: z.number().int().positive().optional(),
+        topN: z.number().int().nonnegative().optional(),
+        failOpen: z.boolean().optional(),
+        timeoutMs: z.number().int().positive().optional(),
+        model: z.string().optional(),
+        remote: z
+          .object({
+            baseUrl: z.string().optional(),
+            endpoints: z
+              .array(
+                z
+                  .object({
+                    baseUrl: z.string().optional(),
+                    url: z.string().optional(),
+                    headers: z.record(z.string(), z.string()).optional(),
+                    priority: z.number().int().optional(),
+                    timeoutMs: z.number().int().positive().optional(),
+                    healthUrl: z.string().optional(),
+                    healthTimeoutMs: z.number().int().positive().optional(),
+                    healthCacheTtlMs: z.number().int().positive().optional(),
+                    role: z.string().optional(),
+                  })
+                  .strict()
+                  .superRefine((value, ctx) => {
+                    if (!value.baseUrl && !value.url) {
+                      ctx.addIssue({
+                        code: z.ZodIssueCode.custom,
+                        message:
+                          "memorySearch.rerank.remote.endpoints entry requires baseUrl or url",
+                      });
+                    }
+                  }),
+              )
+              .optional(),
+            headers: z.record(z.string(), z.string()).optional(),
           })
           .strict()
           .optional(),
@@ -414,6 +459,8 @@ export const MemorySearchSchema = z
                     healthUrl: z.string().optional(),
                     healthTimeoutMs: z.number().int().positive().optional(),
                     healthCacheTtlMs: z.number().int().positive().optional(),
+                    healthMaxLatencyMs: z.number().int().positive().optional(),
+                    role: z.string().optional(),
                   })
                   .strict(),
               )

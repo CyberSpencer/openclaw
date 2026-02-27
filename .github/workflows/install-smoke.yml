@@ -1,7 +1,11 @@
 name: Install Smoke
 
 on:
-  # Cost-control mode: run install smoke on demand only.
+  # Re-enabled so installer regressions are caught on PR/push.
+  pull_request:
+    branches: [main, staging]
+  push:
+    branches: [main, staging]
   workflow_dispatch:
 
 concurrency:

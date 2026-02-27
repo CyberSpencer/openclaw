@@ -1,0 +1,11 @@
+turn,turn_id,stt_total_ms,llm_first_semantic_text_ms,llm_full_completion_ms,tts_first_byte_ms,tts_full_completion_ms,tts_reported_duration_ms,eos_to_first_semantic_text_ms,eos_to_first_audible_byte_ms,transcription_chars,response_chars,response_empty,route,model,thinking_level,tts_mode_used,stream_chunks,transcription_was_empty,status,error_message
+1,bench-turn-1-ceda129f,1668,27267,32526,10089,10230,8955,28935,44283,66,152,false,local,openai-codex/gpt-5.3-codex,low,stream,42,false,ok,
+2,bench-turn-2-dbdb7ddb,1567,29188,34457,7226,7369,6071,30755,43250,66,126,false,local,openai-codex/gpt-5.3-codex,low,stream,29,false,ok,
+3,bench-turn-3-72bb6ad2,1527,30820,36174,10110,10286,9036,32347,47811,66,160,false,local,openai-codex/gpt-5.3-codex,low,stream,42,false,ok,
+4,bench-turn-4-a23a0686,1625,35791,35791,5108,5220,4044,37416,42524,66,52,false,local,openai-codex/gpt-5.3-codex,low,stream,19,false,ok,
+5,bench-turn-5-89c10bd1,799,,,,,,,,66,0,false,,,,,,false,error,timeout waiting for voice.processText
+6,bench-turn-6-a0430337,1594,,,,,,,,66,0,false,,,,,,false,error,LLM invocation failed: timeout acquiring session store lock: /Users/spencerthomson/.openclaw/agents/main/sessions/sessions.json.lock
+7,bench-turn-7-81684581,,,,,,,,,0,0,false,,,,,,false,error,Spark STT failed: fetch failed
+8,bench-turn-8-69781b8d,,,,,,,,,0,0,false,,,,,,false,error,Spark STT failed: fetch failed
+9,bench-turn-9-e9f61e0d,1831,45364,45364,,,,,,66,52,false,local,ollama/nemotron-3-nano:30b,low,stream,,false,error,SPARK_TTS_STREAM_FAILED: Spark TTS stream failed: fetch failed
+10,bench-turn-10-9a362d97,,,,,,,,,0,0,false,,,,,,false,error,Spark STT failed: fetch failed

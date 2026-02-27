@@ -1,0 +1,11 @@
+turn,turn_id,stt_total_ms,llm_first_semantic_text_ms,llm_full_completion_ms,tts_first_byte_ms,tts_full_completion_ms,tts_reported_duration_ms,eos_to_first_semantic_text_ms,eos_to_first_audible_byte_ms,transcription_chars,response_chars,response_empty,route,model,thinking_level,tts_mode_used,stream_chunks,transcription_was_empty,status,error_message
+1,bench-turn-1-211f630e,1646,24436,27079,10837,10982,9771,26082,39562,66,148,false,local,openai-codex/gpt-5.3-codex,high,stream,45,false,ok,
+2,bench-turn-2-ee234db5,1530,23163,25775,9392,9533,8445,24693,36697,66,139,false,local,openai-codex/gpt-5.3-codex,high,stream,40,false,ok,
+3,bench-turn-3-b5e0aa89,1538,26840,31723,7001,7141,5975,28378,40262,66,122,false,local,openai-codex/gpt-5.3-codex,high,stream,28,false,ok,
+4,bench-turn-4-ccf6c98d,1504,27542,32260,9823,10001,6585,29046,43587,66,148,false,local,openai-codex/gpt-5.3-codex,high,stream,29,false,ok,
+5,bench-turn-5-add2b592,1504,31288,33842,7471,7615,7287,32792,42817,66,148,false,local,openai-codex/gpt-5.3-codex,high,stream,34,false,ok,
+6,bench-turn-6-9fcf09cf,841,28783,33819,10543,10643,9534,29624,45203,66,155,false,local,openai-codex/gpt-5.3-codex,high,stream,44,false,ok,
+7,bench-turn-7-875fad28,1562,29262,34339,7173,7225,6726,30824,43074,66,132,false,local,openai-codex/gpt-5.3-codex,high,stream,31,false,ok,
+8,bench-turn-8-554cc9ef,1504,26649,29297,12885,13018,9684,28153,43686,66,221,false,local,openai-codex/gpt-5.3-codex,high,stream,45,false,ok,
+9,bench-turn-9-58a29c4b,821,27159,32247,9097,9099,7781,27980,42165,66,161,false,local,openai-codex/gpt-5.3-codex,high,stream,35,false,ok,
+10,bench-turn-10-50c3519c,1619,29099,31587,12419,12557,9283,30718,45625,66,151,false,local,openai-codex/gpt-5.3-codex,high,stream,43,false,ok,

@@ -17,6 +17,38 @@ export type GatewayEventFrame = {
   stateVersion?: { presence: number; health: number };
 };
 
+export type VoiceSparkStreamEventName =
+  | "spark.voice.stream.started"
+  | "spark.voice.stream.chunk"
+  | "spark.voice.stream.completed"
+  | "spark.voice.stream.error";
+
+export type VoiceSparkStreamEventPayload = {
+  streamId: string;
+  sessionKey?: string;
+  conversationId?: string;
+  turnId?: string;
+  seq?: number;
+  audioBase64?: string;
+  format?: string;
+  sampleRate?: number;
+  totalChunks?: number;
+  durationMs?: number;
+  code?: string;
+  message?: string;
+  ts?: number;
+};
+
+export type VoiceTranscriptUserEventPayload = {
+  sessionKey?: string;
+  conversationId?: string;
+  turnId?: string;
+  clientMessageId: string;
+  source?: string;
+  messageId?: string;
+  message?: Record<string, unknown>;
+};
+
 export type GatewayResponseFrame = {
   type: "res";
   id: string;
@@ -286,16 +318,72 @@ export class GatewayBrowserClient {
     }
   }
 
-  request<T = unknown>(method: string, params?: unknown): Promise<T> {
+  request<T = unknown>(
+    method: string,
+    params?: unknown,
+    opts?: { signal?: AbortSignal },
+  ): Promise<T> {
     if (!this.ws || this.ws.readyState !== WebSocket.OPEN) {
       return Promise.reject(new Error("gateway not connected"));
     }
+    if (opts?.signal?.aborted) {
+      return Promise.reject(new Error("request aborted"));
+    }
+
     const id = generateUUID();
     const frame = { type: "req", id, method, params };
+    const signal = opts?.signal;
+    let abortHandler: (() => void) | null = null;
+    let settled = false;
+
     const p = new Promise<T>((resolve, reject) => {
-      this.pending.set(id, { resolve: (v) => resolve(v as T), reject });
+      const cleanup = () => {
+        if (signal && abortHandler) {
+          signal.removeEventListener("abort", abortHandler);
+        }
+        abortHandler = null;
+      };
+      const settleResolve = (value: unknown) => {
+        if (settled) {
+          return;
+        }
+        settled = true;
+        cleanup();
+        resolve(value as T);
+      };
+      const settleReject = (err: unknown) => {
+        if (settled) {
+          return;
+        }
+        settled = true;
+        cleanup();
+        reject(err);
+      };
+
+      this.pending.set(id, { resolve: settleResolve, reject: settleReject });
+      if (signal) {
+        abortHandler = () => {
+          const pending = this.pending.get(id);
+          if (!pending) {
+            return;
+          }
+          this.pending.delete(id);
+          pending.reject(new Error("request aborted"));
+        };
+        signal.addEventListener("abort", abortHandler, { once: true });
+      }
     });
-    this.ws.send(JSON.stringify(frame));
+
+    try {
+      this.ws.send(JSON.stringify(frame));
+    } catch (err) {
+      const pending = this.pending.get(id);
+      if (pending) {
+        this.pending.delete(id);
+        pending.reject(err);
+      }
+    }
+
     return p;
   }
 

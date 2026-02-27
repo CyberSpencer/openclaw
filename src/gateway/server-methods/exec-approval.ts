@@ -39,6 +39,10 @@ export function createExecApprovalHandlers(
         agentId?: string;
         resolvedPath?: string;
         sessionKey?: string;
+        actionKind?: string | null;
+        riskTags?: string[] | null;
+        requiresOutbound?: boolean | null;
+        requiresElevation?: boolean | null;
         timeoutMs?: number;
       };
       const timeoutMs = typeof p.timeoutMs === "number" ? p.timeoutMs : 120_000;
@@ -60,6 +64,18 @@ export function createExecApprovalHandlers(
         agentId: p.agentId ?? null,
         resolvedPath: p.resolvedPath ?? null,
         sessionKey: p.sessionKey ?? null,
+        actionKind: p.actionKind ?? null,
+        riskTags: Array.isArray(p.riskTags)
+          ? p.riskTags.map((value) => String(value).trim()).filter((value) => value.length > 0)
+          : null,
+        requiresOutbound:
+          typeof p.requiresOutbound === "boolean"
+            ? p.requiresOutbound
+            : (p.requiresOutbound ?? null),
+        requiresElevation:
+          typeof p.requiresElevation === "boolean"
+            ? p.requiresElevation
+            : (p.requiresElevation ?? null),
       };
       const record = manager.create(request, timeoutMs, explicitId);
       const decisionPromise = manager.waitForDecision(record, timeoutMs);

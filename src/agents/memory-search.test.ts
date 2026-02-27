@@ -456,4 +456,109 @@ describe("memory search config", () => {
     expect(resolved?.chunking.tokens).toBe(800);
     expect(resolved?.chunking.overlap).toBe(100);
   });
+
+  it("applies rerank defaults when unset", () => {
+    const cfg = {
+      agents: {
+        defaults: {
+          memorySearch: {
+            enabled: true,
+            provider: "openai",
+          },
+        },
+      },
+    };
+    const resolved = resolveMemorySearchConfig(cfg, "main");
+    expect(resolved?.rerank).toEqual({
+      enabled: false,
+      candidateLimit: 20,
+      topN: 0,
+      failOpen: true,
+      timeoutMs: 500,
+      model: undefined,
+      remote: undefined,
+    });
+  });
+
+  it("merges rerank endpoints and preserves priority ordering", () => {
+    const cfg = {
+      agents: {
+        defaults: {
+          memorySearch: {
+            rerank: {
+              enabled: true,
+              timeoutMs: 500,
+              remote: {
+                endpoints: [
+                  {
+                    baseUrl: "https://spark-wan.example/reranker/",
+                    priority: 5,
+                    headers: { "ngrok-skip-browser-warning": "true" },
+                  },
+                  {
+                    baseUrl: "http://spark-lan:7999/reranker/",
+                    priority: 10,
+                  },
+                ],
+              },
+            },
+          },
+        },
+        list: [
+          {
+            id: "main",
+            default: true,
+            memorySearch: {
+              rerank: {
+                remote: {
+                  endpoints: [
+                    {
+                      baseUrl: "http://spark-lan:7999/reranker",
+                      priority: 0,
+                      timeoutMs: 650,
+                    },
+                  ],
+                },
+              },
+            },
+          },
+        ],
+      },
+    };
+    const resolved = resolveMemorySearchConfig(cfg, "main");
+    expect(resolved?.rerank.remote?.endpoints).toEqual([
+      {
+        baseUrl: "http://spark-lan:7999/reranker",
+        priority: 0,
+        timeoutMs: 650,
+      },
+      {
+        baseUrl: "https://spark-wan.example/reranker",
+        priority: 5,
+        headers: { "ngrok-skip-browser-warning": "true" },
+      },
+    ]);
+  });
+
+  it("clamps rerank limits to Spark contract bounds", () => {
+    const cfg = {
+      agents: {
+        defaults: {
+          memorySearch: {
+            rerank: {
+              enabled: true,
+              candidateLimit: 999,
+              topN: -3,
+              timeoutMs: 10,
+            },
+          },
+        },
+      },
+    };
+    const resolved = resolveMemorySearchConfig(cfg, "main");
+    expect(resolved?.rerank.enabled).toBe(true);
+    expect(resolved?.rerank.candidateLimit).toBe(20);
+    expect(resolved?.rerank.topN).toBe(0);
+    expect(resolved?.rerank.timeoutMs).toBe(100);
+  });
 });

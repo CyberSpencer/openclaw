@@ -101,6 +101,8 @@ const BASE_METHODS = [
   "spark.status",
   "spark.voice.stt",
   "spark.voice.tts",
+  "spark.voice.tts.stream",
+  "spark.voice.tts.cancel",
   "spark.voice.voices",
 ];
 
@@ -129,4 +131,9 @@ export const GATEWAY_EVENTS = [
   "voicewake.changed",
   "exec.approval.requested",
   "exec.approval.resolved",
+  "voice.transcript.user",
+  "spark.voice.stream.started",
+  "spark.voice.stream.chunk",
+  "spark.voice.stream.completed",
+  "spark.voice.stream.error",
 ];

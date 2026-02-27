@@ -7,6 +7,10 @@ export type ExecApprovalRequestPayload = {
   agentId?: string | null;
   resolvedPath?: string | null;
   sessionKey?: string | null;
+  actionKind?: string | null;
+  riskTags?: string[] | null;
+  requiresOutbound?: boolean | null;
+  requiresElevation?: boolean | null;
 };
 
 export type ExecApprovalRequest = {
@@ -56,6 +60,14 @@ export function parseExecApprovalRequested(payload: unknown): ExecApprovalReques
       agentId: typeof request.agentId === "string" ? request.agentId : null,
       resolvedPath: typeof request.resolvedPath === "string" ? request.resolvedPath : null,
       sessionKey: typeof request.sessionKey === "string" ? request.sessionKey : null,
+      actionKind: typeof request.actionKind === "string" ? request.actionKind : null,
+      riskTags: Array.isArray(request.riskTags)
+        ? request.riskTags.map((value) => String(value).trim()).filter((value) => value.length > 0)
+        : null,
+      requiresOutbound:
+        typeof request.requiresOutbound === "boolean" ? request.requiresOutbound : null,
+      requiresElevation:
+        typeof request.requiresElevation === "boolean" ? request.requiresElevation : null,
     },
     createdAtMs,
     expiresAtMs,

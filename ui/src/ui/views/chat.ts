@@ -77,6 +77,8 @@ export type ChatProps = {
   // Spark voice mic
   sparkVoiceAvailable?: boolean;
   sparkMicRecording?: boolean;
+  voiceConversationActive?: boolean;
+  voiceMixedModeEnabled?: boolean;
   onMicClick?: () => void;
   // Per-message actions (speaker = DGX TTS, copy = clipboard)
   onSpeakClick?: (text: string, messageKey?: string) => void;
@@ -1199,14 +1201,22 @@ function renderTerminalCard(props: ChatProps) {
     (props.draft.trim().length > 0 || (props.attachments?.length ?? 0) > 0);
 
   const hasAttachments = (props.attachments?.length ?? 0) > 0;
+  const voiceConversationActive = props.voiceConversationActive === true;
+  const voiceMixedModeEnabled = props.voiceMixedModeEnabled !== false;
+  const composeDisabled = !props.connected || (voiceConversationActive && !voiceMixedModeEnabled);
+  const micDisabled = !props.connected || !props.sparkVoiceAvailable || voiceConversationActive;
   const composePlaceholder = props.connected
-    ? isRunning
-      ? hasAttachments
-        ? "Agent is running (attachments will be queued)..."
-        : "Steer the agent (↩ to inject, Shift+↩ for line breaks)"
-      : hasAttachments
-        ? "Add a message or paste more images..."
-        : "Message (↩ to send, Shift+↩ for line breaks, paste images)"
+    ? voiceConversationActive
+      ? voiceMixedModeEnabled
+        ? "Voice conversation active. Send text to interrupt and continue in mixed mode."
+        : "Voice conversation active. End voice mode to send text."
+      : isRunning
+        ? hasAttachments
+          ? "Agent is running (attachments will be queued)..."
+          : "Steer the agent (↩ to inject, Shift+↩ for line breaks)"
+        : hasAttachments
+          ? "Add a message or paste more images..."
+          : "Message (↩ to send, Shift+↩ for line breaks, paste images)"
     : "Connect to the gateway to start chatting...";
 
   const splitRatio = props.splitRatio ?? 0.6;
@@ -1327,7 +1337,7 @@ function renderTerminalCard(props: ChatProps) {
             <textarea
               ${ref((el) => el && adjustTextareaHeight(el as HTMLTextAreaElement))}
               .value=${props.draft}
-              ?disabled=${!props.connected}
+              ?disabled=${composeDisabled}
               @keydown=${(e: KeyboardEvent) => {
                 if (e.key !== "Enter") {
                   return;
@@ -1338,7 +1348,7 @@ function renderTerminalCard(props: ChatProps) {
                 if (e.shiftKey) {
                   return;
                 }
-                if (!props.connected) {
+                if (composeDisabled) {
                   return;
                 }
                 e.preventDefault();
@@ -1377,7 +1387,7 @@ function renderTerminalCard(props: ChatProps) {
                     <button
                       class="btn"
                       type="button"
-                      ?disabled=${!props.connected || !canQueue}
+                      ?disabled=${composeDisabled || !canQueue}
                       @click=${() => props.onQueue?.()}
                       title="Queue message to send after the run finishes"
                     >
@@ -1390,30 +1400,40 @@ function renderTerminalCard(props: ChatProps) {
               class="btn agent-terminal__mic ${!props.sparkVoiceAvailable ? "agent-terminal__mic--unavailable" : "agent-terminal__mic--available"} ${props.sparkMicRecording ? "agent-terminal__mic--recording" : ""}"
               ?hidden=${props.ttsSpeaking}
               type="button"
-              ?disabled=${!props.connected || !props.sparkVoiceAvailable}
+              ?disabled=${micDisabled}
               @click=${() => props.onMicClick?.()}
               title=${
-                props.sparkVoiceAvailable
-                  ? props.sparkMicRecording
-                    ? "Stop recording"
-                    : "Voice input (Spark STT)"
-                  : "Spark unavailable"
+                voiceConversationActive
+                  ? "Voice conversation is already active"
+                  : props.sparkVoiceAvailable
+                    ? props.sparkMicRecording
+                      ? "Stop recording"
+                      : "Voice input (Spark STT)"
+                    : "Spark unavailable"
               }
               aria-label=${
-                props.sparkVoiceAvailable
-                  ? props.sparkMicRecording
-                    ? "Stop recording"
-                    : "Start voice input"
-                  : "Voice input unavailable (Spark down)"
+                voiceConversationActive
+                  ? "Voice conversation active"
+                  : props.sparkVoiceAvailable
+                    ? props.sparkMicRecording
+                      ? "Stop recording"
+                      : "Start voice input"
+                    : "Voice input unavailable (Spark down)"
               }
             >
               ${icons.mic}
             </button>
             <button
               class="btn primary"
-              ?disabled=${!props.connected}
+              ?disabled=${composeDisabled}
               @click=${props.onSend}
-              title=${isRunning ? "Steer the running agent" : "Send message"}
+              title=${
+                voiceConversationActive
+                  ? "Voice conversation active"
+                  : isRunning
+                    ? "Steer the running agent"
+                    : "Send message"
+              }
             >
               ${isRunning ? "Steer" : "Send"}<kbd class="btn-kbd">↵</kbd>
             </button>

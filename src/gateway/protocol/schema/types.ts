@@ -122,6 +122,16 @@ import type {
 } from "./sessions.js";
 import type { PresenceEntrySchema, SnapshotSchema, StateVersionSchema } from "./snapshot.js";
 import type {
+  SparkVoiceTtsCancelParamsSchema,
+  SparkVoiceTtsCancelResultSchema,
+  SparkVoiceStreamChunkEventSchema,
+  SparkVoiceStreamCompletedEventSchema,
+  SparkVoiceStreamErrorEventSchema,
+  SparkVoiceStreamStartedEventSchema,
+  SparkVoiceTtsStreamAckSchema,
+  SparkVoiceTtsStreamParamsSchema,
+} from "./voice-stream.js";
+import type {
   WizardCancelParamsSchema,
   WizardNextParamsSchema,
   WizardNextResultSchema,
@@ -242,3 +252,11 @@ export type ChatEvent = Static<typeof ChatEventSchema>;
 export type UpdateRunParams = Static<typeof UpdateRunParamsSchema>;
 export type TickEvent = Static<typeof TickEventSchema>;
 export type ShutdownEvent = Static<typeof ShutdownEventSchema>;
+export type SparkVoiceTtsStreamParams = Static<typeof SparkVoiceTtsStreamParamsSchema>;
+export type SparkVoiceTtsStreamAck = Static<typeof SparkVoiceTtsStreamAckSchema>;
+export type SparkVoiceTtsCancelParams = Static<typeof SparkVoiceTtsCancelParamsSchema>;
+export type SparkVoiceTtsCancelResult = Static<typeof SparkVoiceTtsCancelResultSchema>;
+export type SparkVoiceStreamStartedEvent = Static<typeof SparkVoiceStreamStartedEventSchema>;
+export type SparkVoiceStreamChunkEvent = Static<typeof SparkVoiceStreamChunkEventSchema>;
+export type SparkVoiceStreamCompletedEvent = Static<typeof SparkVoiceStreamCompletedEventSchema>;
+export type SparkVoiceStreamErrorEvent = Static<typeof SparkVoiceStreamErrorEventSchema>;

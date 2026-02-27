@@ -182,6 +182,13 @@ export function resolveVoiceConfig(config?: VoiceConfig): ResolvedVoiceConfig {
     enabled: config?.enabled ?? false,
     sttProvider: config?.sttProvider ?? "whisper", // Local fallback STT path
     ttsProvider: config?.ttsProvider ?? "macos", // Local fallback TTS path
+    thinkingLevel: config?.thinkingLevel ?? "low",
+    historyTurns:
+      typeof config?.historyTurns === "number" &&
+      Number.isFinite(config.historyTurns) &&
+      config.historyTurns > 0
+        ? Math.max(1, Math.trunc(config.historyTurns))
+        : 6,
     streaming: config?.streaming ?? false,
     bufferMs: config?.bufferMs ?? DEFAULT_BUFFER_MS,
     maxRecordingSeconds: config?.maxRecordingSeconds ?? DEFAULT_MAX_RECORDING_SECONDS,

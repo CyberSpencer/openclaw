@@ -1,7 +1,11 @@
 name: Formal models (informational conformance)
 
 on:
-  # Cost-control mode: run formal conformance only when explicitly requested.
+  # Re-enabled to surface conformance drift during PR/push.
+  pull_request:
+    branches: [main, staging]
+  push:
+    branches: [main, staging]
   workflow_dispatch:
 
 concurrency:

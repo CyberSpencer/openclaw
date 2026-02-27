@@ -9,7 +9,12 @@
  */
 
 import { html, nothing } from "lit";
-import type { VoiceState, VoiceCapabilities, VoiceTimings } from "../controllers/voice.ts";
+import type {
+  VoiceState,
+  VoiceCapabilities,
+  VoiceTimings,
+  VoiceShortTurnSloReport,
+} from "../controllers/voice.ts";
 import { icons } from "../icons.ts";
 
 /** Preset mood labels -> instruct strings for TTS (backend accepts natural-language style instructions). */
@@ -109,6 +114,60 @@ function renderTimings(timings: VoiceTimings | null) {
           </span>
         `,
       )}
+    </div>
+  `;
+}
+
+function formatSloMs(value: number | null): string {
+  return value == null ? "n/a" : `${value}ms`;
+}
+
+function renderShortTurnSlo(report: VoiceShortTurnSloReport | null) {
+  if (!report) {
+    return nothing;
+  }
+  const rows = [
+    {
+      label: "EOS -> first assistant status text",
+      metric: report.metrics.eosToFirstAssistantStatusText,
+    },
+    {
+      label: "EOS -> first audible byte",
+      metric: report.metrics.eosToFirstAudibleByte,
+    },
+    {
+      label: "EOS -> first semantic assistant text",
+      metric: report.metrics.eosToFirstSemanticAssistantText,
+    },
+    {
+      label: "EOS -> semantic spoken answer start",
+      metric: report.metrics.eosToSemanticSpokenAnswerStart,
+    },
+  ];
+
+  return html`
+    <div class="voice-bar__slo">
+      <span class="voice-bar__label">
+        Short-turn latency report (${report.shortTurnCount}/${report.totalTurnCount} turns)
+      </span>
+      <div class="voice-bar__slo-grid">
+        <span class="voice-bar__slo-head">Metric</span>
+        <span class="voice-bar__slo-head">Count</span>
+        <span class="voice-bar__slo-head">p50</span>
+        <span class="voice-bar__slo-head">p95</span>
+        ${rows.map(
+          (row) => html`
+            <span class="voice-bar__slo-metric">${row.label}</span>
+            <span class="mono">${row.metric.count}</span>
+            <span class="mono">${formatSloMs(row.metric.p50Ms)}</span>
+            <span class="mono">${formatSloMs(row.metric.p95Ms)}</span>
+          `,
+        )}
+      </div>
+      <div class="voice-bar__slo-note mono">
+        Short turn gate: speech <= ${Math.round(report.shortTurnSpeechMaxMs / 1000)}s and output <=
+        ${report.shortTurnOutputTokenMax} tokens
+      </div>
     </div>
   `;
 }
@@ -246,7 +305,7 @@ export function renderVoiceBar(props: VoiceBarProps) {
   const canStart = state.connected && state.enabled && sparkGate && !state.conversationActive;
   const isActive = state.conversationActive;
   const isRecording = isActive && state.phase === "listening";
-  const modeLabel = state.driveOpenClaw ? "Tools" : state.mode === "spark" ? "Spark" : "Fallback";
+  const modeLabel = state.mode === "spark" ? "Spark" : state.driveOpenClaw ? "Fallback" : "Native";
 
   // Simple toggle: start or stop conversation
   const mainButtonLabel = isActive ? "End Conversation" : "Start Conversation";
@@ -351,19 +410,28 @@ export function renderVoiceBar(props: VoiceBarProps) {
                   `
                   : nothing
               }
-              <label class="field checkbox voice-bar__parity-toggle">
-                <input
-                  type="checkbox"
-                  .checked=${state.driveOpenClaw}
-                  @change=${(e: Event) =>
-                    onDriveOpenClawChange((e.target as HTMLInputElement).checked)}
-                />
-                <span title="When enabled, voice uses the normal chat agent pipeline (tools, memory, routing).">
-                  Drive OpenClaw (tools)
-                </span>
-              </label>
+              ${
+                state.mode !== "spark"
+                  ? html`
+                      <label class="field checkbox voice-bar__parity-toggle">
+                        <input
+                          type="checkbox"
+                          .checked=${state.driveOpenClaw}
+                          @change=${(e: Event) =>
+                            onDriveOpenClawChange((e.target as HTMLInputElement).checked)}
+                        />
+                        <span
+                          title="When enabled, voice forces fallback processing mode (option2a) instead of native mode."
+                        >
+                          Force fallback voice mode
+                        </span>
+                      </label>
+                    `
+                  : nothing
+              }
               ${renderCapabilityIndicator(state.capabilities)}
               ${renderTimings(state.timings)}
+              ${renderShortTurnSlo(state.shortTurnSloReport)}
               ${renderTranscription(state.transcription)}
               ${renderResponse(state.response)}
               ${renderAttribution(state)}
@@ -724,6 +792,36 @@ export const voiceBarStyles = `
   gap: 0.5rem;
   margin-bottom: 1rem;
   font-size: 0.75rem;
+}
+
+.voice-bar__slo {
+  margin-bottom: 1rem;
+}
+
+.voice-bar__slo-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto auto auto;
+  gap: 0.25rem 0.5rem;
+  margin-top: 0.25rem;
+  padding: 0.5rem;
+  background: var(--bg-secondary, #f5f5f5);
+  border-radius: 4px;
+  font-size: 0.75rem;
+}
+
+.voice-bar__slo-head {
+  font-weight: 600;
+  color: var(--text-muted, #666);
+}
+
+.voice-bar__slo-metric {
+  min-width: 0;
+}
+
+.voice-bar__slo-note {
+  margin-top: 0.35rem;
+  font-size: 0.7rem;
+  color: var(--text-muted, #666);
 }
 
 .voice-bar__timing {

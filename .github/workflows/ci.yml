@@ -1,8 +1,11 @@
 name: CI
 
 on:
-  # Cost-control mode: run CI only on explicit manual trigger.
-  # Daily development validation should run locally via `pnpm ci:local`.
+  # Re-enabled for PR/push gate integrity.
+  pull_request:
+    branches: [main, staging]
+  push:
+    branches: [main, staging]
   workflow_dispatch:
 
 concurrency:

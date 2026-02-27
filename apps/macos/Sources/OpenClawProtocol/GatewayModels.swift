@@ -2505,6 +2505,10 @@ public struct ExecApprovalRequestParams: Codable, Sendable {
     public let agentid: AnyCodable?
     public let resolvedpath: AnyCodable?
     public let sessionkey: AnyCodable?
+    public let actionkind: AnyCodable?
+    public let risktags: AnyCodable?
+    public let requiresoutbound: AnyCodable?
+    public let requireselevation: AnyCodable?
     public let timeoutms: Int?
 
     public init(
@@ -2517,6 +2521,10 @@ public struct ExecApprovalRequestParams: Codable, Sendable {
         agentid: AnyCodable?,
         resolvedpath: AnyCodable?,
         sessionkey: AnyCodable?,
+        actionkind: AnyCodable?,
+        risktags: AnyCodable?,
+        requiresoutbound: AnyCodable?,
+        requireselevation: AnyCodable?,
         timeoutms: Int?
     ) {
         self.id = id
@@ -2528,6 +2536,10 @@ public struct ExecApprovalRequestParams: Codable, Sendable {
         self.agentid = agentid
         self.resolvedpath = resolvedpath
         self.sessionkey = sessionkey
+        self.actionkind = actionkind
+        self.risktags = risktags
+        self.requiresoutbound = requiresoutbound
+        self.requireselevation = requireselevation
         self.timeoutms = timeoutms
     }
     private enum CodingKeys: String, CodingKey {
@@ -2540,6 +2552,10 @@ public struct ExecApprovalRequestParams: Codable, Sendable {
         case agentid = "agentId"
         case resolvedpath = "resolvedPath"
         case sessionkey = "sessionKey"
+        case actionkind = "actionKind"
+        case risktags = "riskTags"
+        case requiresoutbound = "requiresOutbound"
+        case requireselevation = "requiresElevation"
         case timeoutms = "timeoutMs"
     }
 }
@@ -2924,6 +2940,310 @@ public struct ShutdownEvent: Codable, Sendable {
     private enum CodingKeys: String, CodingKey {
         case reason
         case restartexpectedms = "restartExpectedMs"
+    }
+}
+
+public struct SparkVoiceTtsStreamParams: Codable, Sendable {
+    public let text: String
+    public let streamid: String?
+    public let requestid: String?
+    public let sessionkey: String?
+    public let conversationid: String?
+    public let turnid: String?
+    public let clientmessageid: String?
+    public let source: String?
+    public let voice: String?
+    public let speaker: String?
+    public let language: String?
+    public let instruct: String?
+    public let stylePrompt: String?
+    public let format: String?
+
+    public init(
+        text: String,
+        streamid: String?,
+        requestid: String?,
+        sessionkey: String?,
+        conversationid: String?,
+        turnid: String?,
+        clientmessageid: String?,
+        source: String?,
+        voice: String?,
+        speaker: String?,
+        language: String?,
+        instruct: String?,
+        stylePrompt: String?,
+        format: String?
+    ) {
+        self.text = text
+        self.streamid = streamid
+        self.requestid = requestid
+        self.sessionkey = sessionkey
+        self.conversationid = conversationid
+        self.turnid = turnid
+        self.clientmessageid = clientmessageid
+        self.source = source
+        self.voice = voice
+        self.speaker = speaker
+        self.language = language
+        self.instruct = instruct
+        self.stylePrompt = stylePrompt
+        self.format = format
+    }
+    private enum CodingKeys: String, CodingKey {
+        case text
+        case streamid = "streamId"
+        case requestid = "requestId"
+        case sessionkey = "sessionKey"
+        case conversationid = "conversationId"
+        case turnid = "turnId"
+        case clientmessageid = "clientMessageId"
+        case source
+        case voice
+        case speaker
+        case language
+        case instruct
+        case stylePrompt = "style_prompt"
+        case format
+    }
+}
+
+public struct SparkVoiceTtsStreamAck: Codable, Sendable {
+    public let streamid: String
+    public let accepted: Bool
+    public let sessionkey: String?
+    public let conversationid: String?
+    public let turnid: String?
+
+    public init(
+        streamid: String,
+        accepted: Bool,
+        sessionkey: String?,
+        conversationid: String?,
+        turnid: String?
+    ) {
+        self.streamid = streamid
+        self.accepted = accepted
+        self.sessionkey = sessionkey
+        self.conversationid = conversationid
+        self.turnid = turnid
+    }
+    private enum CodingKeys: String, CodingKey {
+        case streamid = "streamId"
+        case accepted
+        case sessionkey = "sessionKey"
+        case conversationid = "conversationId"
+        case turnid = "turnId"
+    }
+}
+
+public struct SparkVoiceTtsCancelParams: Codable, Sendable {
+    public let streamid: String?
+    public let turnid: String?
+    public let sessionkey: String?
+    public let conversationid: String?
+
+    public init(
+        streamid: String?,
+        turnid: String?,
+        sessionkey: String?,
+        conversationid: String?
+    ) {
+        self.streamid = streamid
+        self.turnid = turnid
+        self.sessionkey = sessionkey
+        self.conversationid = conversationid
+    }
+    private enum CodingKeys: String, CodingKey {
+        case streamid = "streamId"
+        case turnid = "turnId"
+        case sessionkey = "sessionKey"
+        case conversationid = "conversationId"
+    }
+}
+
+public struct SparkVoiceTtsCancelResult: Codable, Sendable {
+    public let cancelled: Bool
+    public let cancelledstreamids: [String]
+    public let remotecancelattempted: Bool
+    public let remotecancelok: AnyCodable
+
+    public init(
+        cancelled: Bool,
+        cancelledstreamids: [String],
+        remotecancelattempted: Bool,
+        remotecancelok: AnyCodable
+    ) {
+        self.cancelled = cancelled
+        self.cancelledstreamids = cancelledstreamids
+        self.remotecancelattempted = remotecancelattempted
+        self.remotecancelok = remotecancelok
+    }
+    private enum CodingKeys: String, CodingKey {
+        case cancelled
+        case cancelledstreamids = "cancelledStreamIds"
+        case remotecancelattempted = "remoteCancelAttempted"
+        case remotecancelok = "remoteCancelOk"
+    }
+}
+
+public struct SparkVoiceStreamStartedEvent: Codable, Sendable {
+    public let streamid: String
+    public let sessionkey: String?
+    public let conversationid: String?
+    public let turnid: String?
+    public let format: String?
+    public let ts: Int?
+
+    public init(
+        streamid: String,
+        sessionkey: String?,
+        conversationid: String?,
+        turnid: String?,
+        format: String?,
+        ts: Int?
+    ) {
+        self.streamid = streamid
+        self.sessionkey = sessionkey
+        self.conversationid = conversationid
+        self.turnid = turnid
+        self.format = format
+        self.ts = ts
+    }
+    private enum CodingKeys: String, CodingKey {
+        case streamid = "streamId"
+        case sessionkey = "sessionKey"
+        case conversationid = "conversationId"
+        case turnid = "turnId"
+        case format
+        case ts
+    }
+}
+
+public struct SparkVoiceStreamChunkEvent: Codable, Sendable {
+    public let streamid: String
+    public let sessionkey: String?
+    public let conversationid: String?
+    public let turnid: String?
+    public let seq: Int
+    public let audiobase64: String
+    public let islast: Bool?
+    public let chunkdurationms: Int?
+    public let format: String?
+    public let samplerate: Int?
+    public let ts: Int?
+
+    public init(
+        streamid: String,
+        sessionkey: String?,
+        conversationid: String?,
+        turnid: String?,
+        seq: Int,
+        audiobase64: String,
+        islast: Bool?,
+        chunkdurationms: Int?,
+        format: String?,
+        samplerate: Int?,
+        ts: Int?
+    ) {
+        self.streamid = streamid
+        self.sessionkey = sessionkey
+        self.conversationid = conversationid
+        self.turnid = turnid
+        self.seq = seq
+        self.audiobase64 = audiobase64
+        self.islast = islast
+        self.chunkdurationms = chunkdurationms
+        self.format = format
+        self.samplerate = samplerate
+        self.ts = ts
+    }
+    private enum CodingKeys: String, CodingKey {
+        case streamid = "streamId"
+        case sessionkey = "sessionKey"
+        case conversationid = "conversationId"
+        case turnid = "turnId"
+        case seq
+        case audiobase64 = "audioBase64"
+        case islast = "isLast"
+        case chunkdurationms = "chunkDurationMs"
+        case format
+        case samplerate = "sampleRate"
+        case ts
+    }
+}
+
+public struct SparkVoiceStreamCompletedEvent: Codable, Sendable {
+    public let streamid: String
+    public let sessionkey: String?
+    public let conversationid: String?
+    public let turnid: String?
+    public let totalchunks: Int
+    public let durationms: Int?
+    public let ts: Int?
+
+    public init(
+        streamid: String,
+        sessionkey: String?,
+        conversationid: String?,
+        turnid: String?,
+        totalchunks: Int,
+        durationms: Int?,
+        ts: Int?
+    ) {
+        self.streamid = streamid
+        self.sessionkey = sessionkey
+        self.conversationid = conversationid
+        self.turnid = turnid
+        self.totalchunks = totalchunks
+        self.durationms = durationms
+        self.ts = ts
+    }
+    private enum CodingKeys: String, CodingKey {
+        case streamid = "streamId"
+        case sessionkey = "sessionKey"
+        case conversationid = "conversationId"
+        case turnid = "turnId"
+        case totalchunks = "totalChunks"
+        case durationms = "durationMs"
+        case ts
+    }
+}
+
+public struct SparkVoiceStreamErrorEvent: Codable, Sendable {
+    public let streamid: String
+    public let sessionkey: String?
+    public let conversationid: String?
+    public let turnid: String?
+    public let code: String?
+    public let message: String
+    public let ts: Int?
+
+    public init(
+        streamid: String,
+        sessionkey: String?,
+        conversationid: String?,
+        turnid: String?,
+        code: String?,
+        message: String,
+        ts: Int?
+    ) {
+        self.streamid = streamid
+        self.sessionkey = sessionkey
+        self.conversationid = conversationid
+        self.turnid = turnid
+        self.code = code
+        self.message = message
+        self.ts = ts
+    }
+    private enum CodingKeys: String, CodingKey {
+        case streamid = "streamId"
+        case sessionkey = "sessionKey"
+        case conversationid = "conversationId"
+        case turnid = "turnId"
+        case code
+        case message
+        case ts
     }
 }
 

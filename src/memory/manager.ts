@@ -54,6 +54,7 @@ import {
 } from "./internal.js";
 import { searchKeyword, searchVector } from "./manager-search.js";
 import { ensureMemoryIndexSchema } from "./memory-schema.js";
+import { createMemoryRerankClient, type MemoryRerankClient } from "./reranker.js";
 import { loadSqliteVecExtension } from "./sqlite-vec.js";
 import { requireNodeSqlite } from "./sqlite.js";
 
@@ -92,6 +93,8 @@ type SessionFileEntry = {
   content: string;
 };
 
+type MemorySearchCandidate = MemorySearchResult & { id: string };
+
 type MemorySyncProgressState = {
   completed: number;
   total: number;
@@ -127,6 +130,9 @@ const INDEX_CACHE = new Map<string, MemoryIndexManager>();
 
 const QDRANT_HEALTH_TTL_MS = 10_000;
 const QDRANT_HEALTH_TIMEOUT_MS = 1500;
+const RERANK_MAX_QUERY_CHARS = 4096;
+const RERANK_MAX_DOC_CHARS = 2048;
+const RERANK_MAX_TOTAL_PAYLOAD_BYTES = 256 * 1024;
 const qdrantHealthCache = new Map<string, { ok: boolean; checkedAt: number }>();
 
 type QdrantEndpointConfig = {
@@ -274,6 +280,10 @@ export class MemoryIndexManager {
   private batchFailureLastError?: string;
   private batchFailureLastProvider?: string;
   private batchFailureLock: Promise<void> = Promise.resolve();
+  private readonly reranker: MemoryRerankClient | null;
+  private rerankLastEndpoint?: string;
+  private rerankLastError?: string;
+  private rerankFallbackUsed = false;
   private db: DatabaseSync;
   private readonly sources: Set<MemorySource>;
   private providerKey: string;
@@ -403,6 +413,12 @@ export class MemoryIndexManager {
     this.ensureIntervalSync();
     this.dirty = this.sources.has("memory");
     this.batch = this.resolveBatchConfig();
+    this.reranker = this.settings.rerank.enabled
+      ? createMemoryRerankClient(this.settings.rerank)
+      : null;
+    if (this.settings.rerank.enabled && !this.reranker) {
+      this.rerankLastError = "reranker enabled but no remote endpoint is configured";
+    }
   }
 
   async warmSession(sessionKey?: string): Promise<void> {
@@ -507,19 +523,27 @@ export class MemoryIndexManager {
     const vectorResults = hasVector
       ? await this.searchVector(queryVec, candidates).catch(() => [])
       : [];
-
-    if (!hybrid.enabled) {
-      return vectorResults.filter((entry) => entry.score >= minScore).slice(0, maxResults);
-    }
-
-    const merged = this.mergeHybridResults({
-      vector: vectorResults,
-      keyword: keywordResults,
-      vectorWeight: hybrid.vectorWeight,
-      textWeight: hybrid.textWeight,
-    });
-
-    return merged.filter((entry) => entry.score >= minScore).slice(0, maxResults);
+    const baselineCandidates: MemorySearchCandidate[] = hybrid.enabled
+      ? this.mergeHybridResults({
+          vector: vectorResults,
+          keyword: keywordResults,
+          vectorWeight: hybrid.vectorWeight,
+          textWeight: hybrid.textWeight,
+        })
+      : vectorResults;
+    const rerankedCandidates = await this.maybeRerankCandidates(cleaned, baselineCandidates);
+    return rerankedCandidates
+      .map((entry) => ({
+        path: entry.path,
+        startLine: entry.startLine,
+        endLine: entry.endLine,
+        score: entry.score,
+        snippet: entry.snippet,
+        source: entry.source,
+        citation: entry.citation,
+      }))
+      .filter((entry) => entry.score >= minScore)
+      .slice(0, maxResults);
   }
 
   private keywordOnlyResults(
@@ -598,11 +622,11 @@ export class MemoryIndexManager {
   }
 
   private mergeHybridResults(params: {
-    vector: Array<MemorySearchResult & { id: string }>;
+    vector: MemorySearchCandidate[];
     keyword: Array<MemorySearchResult & { id: string; textScore: number }>;
     vectorWeight: number;
     textWeight: number;
-  }): MemorySearchResult[] {
+  }): MemorySearchCandidate[] {
     const merged = mergeHybridResults({
       vector: params.vector.map((r) => ({
         id: r.id,
@@ -625,7 +649,123 @@ export class MemoryIndexManager {
       vectorWeight: params.vectorWeight,
       textWeight: params.textWeight,
     });
-    return merged.map((entry) => entry as MemorySearchResult);
+    return merged.map((entry) => entry as MemorySearchCandidate);
+  }
+
+  private async maybeRerankCandidates(
+    query: string,
+    candidates: MemorySearchCandidate[],
+  ): Promise<MemorySearchCandidate[]> {
+    if (!this.settings.rerank.enabled || candidates.length === 0) {
+      this.rerankFallbackUsed = false;
+      return candidates;
+    }
+    if (!this.reranker) {
+      this.rerankFallbackUsed = true;
+      return candidates;
+    }
+
+    const candidateLimit = Math.min(candidates.length, this.settings.rerank.candidateLimit);
+    const headCandidates = candidates.slice(0, candidateLimit);
+    const tailCandidates = candidates.slice(candidateLimit);
+    const prepared = this.prepareRerankPayload(query, headCandidates);
+    if (prepared.candidates.length === 0) {
+      this.rerankFallbackUsed = false;
+      return candidates;
+    }
+
+    const topN =
+      this.settings.rerank.topN > 0
+        ? Math.min(this.settings.rerank.topN, prepared.candidates.length)
+        : Math.min(prepared.candidates.length, 20);
+
+    try {
+      const reranked = await this.reranker.rerank({
+        query: prepared.query,
+        documents: prepared.documents,
+        topN,
+        model: this.settings.rerank.model,
+      });
+      this.rerankLastEndpoint = reranked.endpoint;
+      this.rerankLastError = undefined;
+      this.rerankFallbackUsed = reranked.fallbackUsed;
+      const ordered = this.applyRerankOrder(prepared.candidates, reranked.ids);
+      return [...ordered, ...prepared.excluded, ...tailCandidates];
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      this.rerankLastError = message;
+      this.rerankFallbackUsed = true;
+      this.rerankLastEndpoint = this.reranker.activeEndpoint;
+      if (this.settings.rerank.failOpen) {
+        return candidates;
+      }
+      throw err;
+    }
+  }
+
+  private prepareRerankPayload(
+    query: string,
+    candidates: MemorySearchCandidate[],
+  ): {
+    query: string;
+    candidates: MemorySearchCandidate[];
+    documents: Array<{ id: string; text: string }>;
+    excluded: MemorySearchCandidate[];
+  } {
+    const encoder = new TextEncoder();
+    const limitedQuery = truncateUtf16Safe(query.trim(), RERANK_MAX_QUERY_CHARS);
+    let payloadBytes = encoder.encode(limitedQuery).byteLength;
+    const included: MemorySearchCandidate[] = [];
+    const excluded: MemorySearchCandidate[] = [];
+    const documents: Array<{ id: string; text: string }> = [];
+
+    for (const candidate of candidates) {
+      const text = truncateUtf16Safe(candidate.snippet ?? "", RERANK_MAX_DOC_CHARS);
+      const bytes = encoder.encode(text).byteLength;
+      if (payloadBytes + bytes > RERANK_MAX_TOTAL_PAYLOAD_BYTES) {
+        excluded.push(candidate);
+        continue;
+      }
+      payloadBytes += bytes;
+      included.push(candidate);
+      documents.push({ id: candidate.id, text });
+    }
+
+    return {
+      query: limitedQuery,
+      candidates: included,
+      documents,
+      excluded,
+    };
+  }
+
+  private applyRerankOrder(
+    candidates: MemorySearchCandidate[],
+    orderedIds: string[],
+  ): MemorySearchCandidate[] {
+    const byId = new Map<string, MemorySearchCandidate>();
+    for (const candidate of candidates) {
+      if (!byId.has(candidate.id)) {
+        byId.set(candidate.id, candidate);
+      }
+    }
+    const consumed = new Set<string>();
+    const ordered: MemorySearchCandidate[] = [];
+    for (const id of orderedIds) {
+      const candidate = byId.get(id);
+      if (!candidate || consumed.has(id)) {
+        continue;
+      }
+      ordered.push(candidate);
+      consumed.add(id);
+    }
+    for (const candidate of candidates) {
+      if (consumed.has(candidate.id)) {
+        continue;
+      }
+      ordered.push(candidate);
+    }
+    return ordered;
   }
 
   async sync(params?: {
@@ -767,12 +907,19 @@ export class MemoryIndexManager {
       lastRecoveryProbeAt:
         this.lastRecoveryProbeAt > 0 ? new Date(this.lastRecoveryProbeAt).toISOString() : undefined,
       lastRecoveryError: this.lastRecoveryError,
+      rerankEnabled: this.settings.rerank.enabled,
+      rerankEndpoint: this.rerankLastEndpoint ?? this.reranker?.activeEndpoint,
+      rerankLastError: this.rerankLastError ?? this.reranker?.lastError,
+      rerankFallbackUsed: this.rerankFallbackUsed,
     };
     if (this.openAi?.activeEndpoint) {
       custom.remoteEndpoint = this.openAi.activeEndpoint;
     }
     if (this.openAi?.lastEndpointErrors && this.openAi.lastEndpointErrors.length > 0) {
       custom.remoteEndpointErrors = this.openAi.lastEndpointErrors;
+    }
+    if (this.reranker?.lastEndpointErrors && this.reranker.lastEndpointErrors.length > 0) {
+      custom.rerankEndpointErrors = this.reranker.lastEndpointErrors;
     }
     return {
       backend: "builtin",
@@ -2186,6 +2333,28 @@ export class MemoryIndexManager {
     }
     if (this.embeddingFailureStreak < this.settings.degraded.emergency.failoverThreshold) {
       return false;
+    }
+    // Do not enter emergency local if primary remote is still reachable (e.g. only one endpoint
+    // failed while cloud or Spark embed is healthy). Probe once before switching.
+    try {
+      const primaryResult = await createEmbeddingProvider({
+        config: this.cfg,
+        agentDir: resolveAgentDir(this.cfg, this.agentId),
+        provider: primaryProvider,
+        remote: this.settings.remote,
+        model: this.settings.model,
+        fallback: "none",
+        local: this.settings.local,
+      });
+      await this.withTimeout(
+        primaryResult.provider.embedQuery("memory-emergency-probe"),
+        EMBEDDING_QUERY_TIMEOUT_REMOTE_MS,
+        "memory emergency probe timed out",
+      );
+      this.embeddingFailureStreak = 0;
+      return false;
+    } catch {
+      // Primary is unreachable; proceed to activate emergency local.
     }
     let switched = false;
     try {

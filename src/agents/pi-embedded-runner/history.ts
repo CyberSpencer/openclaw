@@ -47,6 +47,11 @@ export function getDmHistoryLimitFromSessionKey(
     return undefined;
   }
 
+  if (sessionKey === "webchat-voice") {
+    const limit = config.voice?.historyTurns;
+    return typeof limit === "number" && Number.isFinite(limit) && limit > 0 ? limit : undefined;
+  }
+
   const parts = sessionKey.split(":").filter(Boolean);
   const providerParts = parts.length >= 3 && parts[0] === "agent" ? parts.slice(2) : parts;
 

@@ -64,7 +64,7 @@ describe("chat view", () => {
       container,
     );
 
-    const indicator = container.querySelector(".compaction-indicator--active");
+    const indicator = container.querySelector(".agent-compaction-indicator--active");
     expect(indicator).not.toBeNull();
     expect(indicator?.textContent).toContain("Compacting context...");
   });
@@ -85,7 +85,7 @@ describe("chat view", () => {
       container,
     );
 
-    const indicator = container.querySelector(".compaction-indicator--complete");
+    const indicator = container.querySelector(".agent-compaction-indicator--complete");
     expect(indicator).not.toBeNull();
     expect(indicator?.textContent).toContain("Context compacted");
     nowSpy.mockRestore();
@@ -107,7 +107,7 @@ describe("chat view", () => {
       container,
     );
 
-    expect(container.querySelector(".compaction-indicator")).toBeNull();
+    expect(container.querySelector(".agent-compaction-indicator")).toBeNull();
     nowSpy.mockRestore();
   });
 
@@ -153,5 +153,51 @@ describe("chat view", () => {
     newChatButton?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
     expect(onNewChat).toHaveBeenCalledTimes(1);
     expect(container.textContent).not.toContain("Stop");
+  });
+
+  it("disables text compose while voice conversation is active when mixed mode is off", () => {
+    const container = document.createElement("div");
+    render(
+      renderChat(
+        createProps({
+          voiceConversationActive: true,
+          voiceMixedModeEnabled: false,
+        }),
+      ),
+      container,
+    );
+
+    const textarea = container.querySelector("textarea");
+    expect(textarea).not.toBeNull();
+    expect(textarea?.disabled).toBe(true);
+
+    const sendButton = Array.from(container.querySelectorAll("button")).find((btn) =>
+      btn.textContent?.includes("Send"),
+    );
+    expect(sendButton).not.toBeUndefined();
+    expect(sendButton?.hasAttribute("disabled")).toBe(true);
+  });
+
+  it("keeps text compose enabled while voice conversation is active when mixed mode is on", () => {
+    const container = document.createElement("div");
+    render(
+      renderChat(
+        createProps({
+          voiceConversationActive: true,
+          voiceMixedModeEnabled: true,
+        }),
+      ),
+      container,
+    );
+
+    const textarea = container.querySelector("textarea");
+    expect(textarea).not.toBeNull();
+    expect(textarea?.disabled).toBe(false);
+
+    const sendButton = Array.from(container.querySelectorAll("button")).find((btn) =>
+      btn.textContent?.includes("Send"),
+    );
+    expect(sendButton).not.toBeUndefined();
+    expect(sendButton?.hasAttribute("disabled")).toBe(false);
   });
 });
