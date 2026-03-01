@@ -39,6 +39,15 @@ function newStateDir(homedir: () => string = resolveDefaultHomeDir): string {
   return path.join(homedir(), NEW_STATE_DIRNAME);
 }
 
+const STATE_DIR_BASENAMES = new Set(
+  [NEW_STATE_DIRNAME, ...LEGACY_STATE_DIRNAMES].map((name) => name.toLowerCase()),
+);
+
+function looksLikeStateDirPath(candidate: string): boolean {
+  const base = path.basename(candidate).toLowerCase();
+  return STATE_DIR_BASENAMES.has(base);
+}
+
 export function resolveLegacyStateDir(homedir: () => string = resolveDefaultHomeDir): string {
   return legacyStateDirs(homedir)[0] ?? newStateDir(homedir);
 }
@@ -64,6 +73,11 @@ export function resolveStateDir(
   const override = env.OPENCLAW_STATE_DIR?.trim() || env.CLAWDBOT_STATE_DIR?.trim();
   if (override) {
     return resolveUserPath(override, env, effectiveHomedir);
+  }
+  const resolvedHome = path.resolve(effectiveHomedir());
+  if (looksLikeStateDirPath(resolvedHome)) {
+    // OPENCLAW_HOME can be set directly to a state dir; avoid nesting ".openclaw/.openclaw".
+    return resolvedHome;
   }
   const newDir = newStateDir(effectiveHomedir);
   const legacyDirs = legacyStateDirs(effectiveHomedir);
@@ -205,7 +219,10 @@ export function resolveDefaultConfigCandidates(
     candidates.push(...LEGACY_CONFIG_FILENAMES.map((name) => path.join(resolved, name)));
   }
 
-  const defaultDirs = [newStateDir(effectiveHomedir), ...legacyStateDirs(effectiveHomedir)];
+  const resolvedHome = path.resolve(effectiveHomedir());
+  const defaultDirs = looksLikeStateDirPath(resolvedHome)
+    ? [resolvedHome]
+    : [newStateDir(effectiveHomedir), ...legacyStateDirs(effectiveHomedir)];
   for (const dir of defaultDirs) {
     candidates.push(path.join(dir, CONFIG_FILENAME));
     candidates.push(...LEGACY_CONFIG_FILENAMES.map((name) => path.join(dir, name)));

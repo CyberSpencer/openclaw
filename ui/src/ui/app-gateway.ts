@@ -211,6 +211,32 @@ function applySessionDefaults(host: GatewayHost, defaults?: SessionDefaultsSnaps
   }
 }
 
+function isAuthDisconnect(code: number, reason: string): boolean {
+  const text = reason.trim().toLowerCase();
+  if (text.includes("unauthorized")) {
+    return true;
+  }
+  if (text.includes("token mismatch") || text.includes("invalid token")) {
+    return true;
+  }
+  if (text.includes("authentication failed")) {
+    return true;
+  }
+  return code === 1008 && !text;
+}
+
+function formatDisconnectMessage(code: number, reason: string): string | null {
+  // Code 1012 = Service Restart (expected during config saves, don't show as error).
+  if (code === 1012) {
+    return null;
+  }
+  const resolvedReason = reason.trim() || "no reason";
+  if (isAuthDisconnect(code, resolvedReason)) {
+    return `authentication failed (${code}): ${resolvedReason}. Update token/password in Settings and reconnect.`;
+  }
+  return `disconnected (${code}): ${resolvedReason}`;
+}
+
 export function connectGateway(host: GatewayHost) {
   host.lastError = null;
   host.hello = null;
@@ -244,9 +270,9 @@ export function connectGateway(host: GatewayHost) {
     },
     onClose: ({ code, reason }) => {
       host.connected = false;
-      // Code 1012 = Service Restart (expected during config saves, don't show as error)
-      if (code !== 1012) {
-        host.lastError = `disconnected (${code}): ${reason || "no reason"}`;
+      const disconnectMessage = formatDisconnectMessage(code, reason);
+      if (disconnectMessage) {
+        host.lastError = disconnectMessage;
       }
     },
     onEvent: (evt) => handleGatewayEvent(host, evt),

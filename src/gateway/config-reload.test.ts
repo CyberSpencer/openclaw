@@ -108,6 +108,12 @@ describe("buildGatewayReloadPlan", () => {
     expect(plan.noopPaths).toContain("gateway.remote.url");
   });
 
+  it("treats voice.personaplex.endpoints updates as no-op", () => {
+    const plan = buildGatewayReloadPlan(["voice.personaplex.endpoints"]);
+    expect(plan.restartGateway).toBe(false);
+    expect(plan.noopPaths).toContain("voice.personaplex.endpoints");
+  });
+
   it("defaults unknown paths to restart", () => {
     const plan = buildGatewayReloadPlan(["unknownField"]);
     expect(plan.restartGateway).toBe(true);

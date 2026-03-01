@@ -1,4 +1,7 @@
 import { Command } from "commander";
+import fs from "node:fs/promises";
+import os from "node:os";
+import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const callGateway = vi.fn(async () => ({ ok: true }));
@@ -199,6 +202,99 @@ describe("daemon-cli coverage", () => {
       expect.anything(),
       expect.objectContaining({ deep: true }),
     );
+  });
+
+  it("uses snapshot config values when env substitution makes config invalid", async () => {
+    runtimeLogs.length = 0;
+    runtimeErrors.length = 0;
+    inspectPortUsage.mockClear();
+
+    const tmpRoot = await fs.mkdtemp(path.join(os.tmpdir(), "openclaw-daemon-status-"));
+    const stateDir = path.join(tmpRoot, "state");
+    const configPath = path.join(stateDir, "openclaw.json");
+    const prevStateDir = process.env.OPENCLAW_STATE_DIR;
+    const prevConfigPath = process.env.OPENCLAW_CONFIG_PATH;
+    const prevToken = process.env.DGX_WAN_TOKEN;
+    try {
+      await fs.mkdir(stateDir, { recursive: true });
+      await fs.writeFile(
+        configPath,
+        JSON.stringify(
+          {
+            agents: {
+              defaults: {
+                memorySearch: {
+                  remote: {
+                    endpoints: [
+                      { url: "http://127.0.0.1:8081/v1" },
+                      {
+                        url: "https://example.invalid/embeddings/v1",
+                        headers: {
+                          "X-OpenClaw-Token": "${DGX_WAN_TOKEN}",
+                        },
+                      },
+                    ],
+                  },
+                },
+              },
+            },
+            gateway: {
+              bind: "loopback",
+              port: 43123,
+              controlUi: {
+                root: "/tmp/control-ui",
+              },
+            },
+          },
+          null,
+          2,
+        ),
+        "utf-8",
+      );
+
+      process.env.OPENCLAW_STATE_DIR = stateDir;
+      process.env.OPENCLAW_CONFIG_PATH = configPath;
+      delete process.env.DGX_WAN_TOKEN;
+
+      const { registerDaemonCli } = await import("./daemon-cli.js");
+      const program = new Command();
+      program.exitOverride();
+      registerDaemonCli(program);
+
+      await program.parseAsync(["daemon", "status", "--json"], { from: "user" });
+
+      const jsonLine = runtimeLogs.find((line) => line.trim().startsWith("{"));
+      const parsed = JSON.parse(jsonLine ?? "{}") as {
+        config?: {
+          cli?: {
+            valid?: boolean;
+            controlUi?: { root?: string };
+          };
+        };
+        gateway?: { port?: number };
+      };
+      expect(parsed.config?.cli?.valid).toBe(false);
+      expect(parsed.config?.cli?.controlUi?.root).toBe("/tmp/control-ui");
+      expect(parsed.gateway?.port).toBe(43123);
+      expect(inspectPortUsage).toHaveBeenCalledWith(43123);
+    } finally {
+      if (prevStateDir === undefined) {
+        delete process.env.OPENCLAW_STATE_DIR;
+      } else {
+        process.env.OPENCLAW_STATE_DIR = prevStateDir;
+      }
+      if (prevConfigPath === undefined) {
+        delete process.env.OPENCLAW_CONFIG_PATH;
+      } else {
+        process.env.OPENCLAW_CONFIG_PATH = prevConfigPath;
+      }
+      if (prevToken === undefined) {
+        delete process.env.DGX_WAN_TOKEN;
+      } else {
+        process.env.DGX_WAN_TOKEN = prevToken;
+      }
+      await fs.rm(tmpRoot, { recursive: true, force: true });
+    }
   });
 
   it("installs the daemon when requested", async () => {

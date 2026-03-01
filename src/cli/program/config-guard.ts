@@ -18,6 +18,7 @@ const ALLOWED_INVALID_GATEWAY_SUBCOMMANDS = new Set([
   "stop",
   "restart",
 ]);
+const ALLOWED_INVALID_DAEMON_SUBCOMMANDS = new Set(["status"]);
 let didRunDoctorConfigFlow = false;
 
 function formatConfigIssues(issues: Array<{ path: string; message: string }>): string[] {
@@ -43,7 +44,10 @@ export async function ensureConfigReady(params: {
     ? ALLOWED_INVALID_COMMANDS.has(commandName) ||
       (commandName === "gateway" &&
         subcommandName &&
-        ALLOWED_INVALID_GATEWAY_SUBCOMMANDS.has(subcommandName))
+        ALLOWED_INVALID_GATEWAY_SUBCOMMANDS.has(subcommandName)) ||
+      (commandName === "daemon" &&
+        subcommandName &&
+        ALLOWED_INVALID_DAEMON_SUBCOMMANDS.has(subcommandName))
     : false;
   const issues = snapshot.exists && !snapshot.valid ? formatConfigIssues(snapshot.issues) : [];
   const legacyIssues =
