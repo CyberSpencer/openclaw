@@ -2,6 +2,7 @@ import crypto from "node:crypto";
 import { formatThinkingLevels, normalizeThinkLevel } from "../auto-reply/thinking.js";
 import { DEFAULT_SUBAGENT_MAX_SPAWN_DEPTH } from "../config/agent-limits.js";
 import { loadConfig } from "../config/config.js";
+import { resolveAgentIdFromSessionKey, resolveMainSessionKey } from "../config/sessions.js";
 import { callGateway } from "../gateway/call.js";
 import { getGlobalHookRunner } from "../plugins/hook-runner-global.js";
 import {
@@ -90,6 +91,25 @@ function resolveSpawnMode(params: {
   }
   // Thread-bound spawns should default to persistent sessions.
   return params.threadRequested ? "session" : "run";
+}
+
+function resolveRequesterRegistrySessionKey(params: {
+  cfg: ReturnType<typeof loadConfig>;
+  requesterSessionKey: string;
+}): string {
+  const raw = params.requesterSessionKey.trim();
+  if (!raw) {
+    return resolveMainSessionKey(params.cfg);
+  }
+  if (raw === "global" || raw === "unknown" || raw.startsWith("agent:")) {
+    return raw;
+  }
+  const mainKey = params.cfg.session?.mainKey?.trim() || "main";
+  if (raw === "main" || raw === mainKey) {
+    return resolveMainSessionKey(params.cfg);
+  }
+  const agentId = normalizeAgentId(resolveAgentIdFromSessionKey(raw));
+  return `agent:${agentId}:${raw}`;
 }
 
 function summarizeError(err: unknown): string {
@@ -215,15 +235,19 @@ export async function spawnSubagentDirect(
   let threadBindingReady = false;
   const { mainKey, alias } = resolveMainSessionAlias(cfg);
   const requesterSessionKey = ctx.agentSessionKey;
-  const requesterInternalKey = requesterSessionKey
+  const requesterAliasKey = requesterSessionKey
     ? resolveInternalSessionKey({
         key: requesterSessionKey,
         alias,
         mainKey,
       })
     : alias;
+  const requesterInternalKey = resolveRequesterRegistrySessionKey({
+    cfg,
+    requesterSessionKey: requesterAliasKey,
+  });
   const requesterDisplayKey = resolveDisplaySessionKey({
-    key: requesterInternalKey,
+    key: requesterAliasKey,
     alias,
     mainKey,
   });

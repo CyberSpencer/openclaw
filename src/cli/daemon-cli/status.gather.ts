@@ -1,19 +1,18 @@
-import type {
-  GatewayBindMode,
-  GatewayControlUiConfig,
-  OpenClawConfig,
-} from "../../config/types.js";
-import type { FindExtraGatewayServicesOptions } from "../../daemon/inspect.js";
-import type { ServiceConfigAudit } from "../../daemon/service-audit.js";
-import type { GatewayRpcOpts } from "./types.js";
 import {
   createConfigIO,
   resolveConfigPath,
   resolveGatewayPort,
   resolveStateDir,
 } from "../../config/config.js";
+import type {
+  GatewayBindMode,
+  GatewayControlUiConfig,
+  OpenClawConfig,
+} from "../../config/types.js";
 import { readLastGatewayErrorLine } from "../../daemon/diagnostics.js";
+import type { FindExtraGatewayServicesOptions } from "../../daemon/inspect.js";
 import { findExtraGatewayServices } from "../../daemon/inspect.js";
+import type { ServiceConfigAudit } from "../../daemon/service-audit.js";
 import { auditGatewayServiceConfig } from "../../daemon/service-audit.js";
 import { resolveGatewayService } from "../../daemon/service.js";
 import { resolveGatewayBindHost } from "../../gateway/net.js";
@@ -24,8 +23,10 @@ import {
   type PortUsageStatus,
 } from "../../infra/ports.js";
 import { pickPrimaryTailnetIPv4 } from "../../infra/tailnet.js";
+import { loadGatewayTlsRuntime } from "../../infra/tls/gateway.js";
 import { probeGatewayStatus } from "./probe.js";
 import { normalizeListenerAddress, parsePortFromArgs, pickProbeHostForBind } from "./shared.js";
+import type { GatewayRpcOpts } from "./types.js";
 
 type ConfigSummary = {
   path: string;
@@ -152,12 +153,10 @@ export async function gatherDaemonStatus(
   const cliLoadedCfg = cliIO.loadConfig();
   const daemonLoadedCfg = daemonIO.loadConfig();
   const cliCfg: OpenClawConfig =
-    cliSnapshot && !cliSnapshot.valid && cliSnapshot.config
-      ? (cliSnapshot.config as OpenClawConfig)
-      : cliLoadedCfg;
+    cliSnapshot && !cliSnapshot.valid && cliSnapshot.config ? cliSnapshot.config : cliLoadedCfg;
   const daemonCfg: OpenClawConfig =
     daemonSnapshot && !daemonSnapshot.valid && daemonSnapshot.config
-      ? (daemonSnapshot.config as OpenClawConfig)
+      ? daemonSnapshot.config
       : daemonLoadedCfg;
 
   const cliConfigSummary: ConfigSummary = {
@@ -194,7 +193,16 @@ export async function gatherDaemonStatus(
   const probeHost = pickProbeHostForBind(bindMode, tailnetIPv4, customBindHost);
   const probeUrlOverride =
     typeof opts.rpc.url === "string" && opts.rpc.url.trim().length > 0 ? opts.rpc.url.trim() : null;
-  const probeUrl = probeUrlOverride ?? `ws://${probeHost}:${daemonPort}`;
+  let probeProtocol: "ws" | "wss" = "ws";
+  let tlsFingerprint: string | undefined;
+  if (opts.probe && !probeUrlOverride) {
+    const tlsRuntime = await loadGatewayTlsRuntime(daemonCfg.gateway?.tls);
+    if (tlsRuntime.enabled && tlsRuntime.fingerprintSha256) {
+      probeProtocol = "wss";
+      tlsFingerprint = tlsRuntime.fingerprintSha256;
+    }
+  }
+  const probeUrl = probeUrlOverride ?? `${probeProtocol}://${probeHost}:${daemonPort}`;
   const probeNote =
     !probeUrlOverride && bindMode === "lan"
       ? `bind=lan listens on 0.0.0.0 (all interfaces); probing via ${probeHost}.`
@@ -243,6 +251,7 @@ export async function gatherDaemonStatus(
           opts.rpc.password ||
           mergedDaemonEnv.OPENCLAW_GATEWAY_PASSWORD ||
           daemonCfg.gateway?.auth?.password,
+        tlsFingerprint,
         timeoutMs,
         json: opts.rpc.json,
         configPath: daemonConfigSummary.path,

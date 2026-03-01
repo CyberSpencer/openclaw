@@ -23,6 +23,8 @@ import {
   queueEmbeddedPiMessage,
   waitForEmbeddedPiRunEnd,
 } from "./pi-embedded.js";
+import type { SubagentAnnounceDeliveryResult } from "./subagent-announce-dispatch.js";
+import { runSubagentAnnounceDispatch } from "./subagent-announce-dispatch.js";
 import { type AnnounceQueueItem, enqueueAnnounce } from "./subagent-announce-queue.js";
 import { readLatestAssistantReply } from "./tools/agent-step.js";
 
@@ -74,6 +76,14 @@ function resolveModelCost(params: {
   return entry?.cost;
 }
 
+function resolveAnnounceTimeoutMs(cfg: ReturnType<typeof loadConfig>): number {
+  const configured = cfg?.agents?.defaults?.subagents?.announceTimeoutMs;
+  if (typeof configured === "number" && Number.isFinite(configured)) {
+    return Math.max(1_000, Math.floor(configured));
+  }
+  return 60_000;
+}
+
 async function waitForSessionUsage(params: { sessionKey: string }) {
   const cfg = loadConfig();
   const agentId = resolveAgentIdFromSessionKey(params.sessionKey);
@@ -114,6 +124,8 @@ function resolveAnnounceOrigin(
 
 async function sendAnnounce(item: AnnounceQueueItem) {
   const origin = item.origin;
+  const cfg = loadConfig();
+  const timeoutMs = resolveAnnounceTimeoutMs(cfg);
   const threadId =
     origin?.threadId != null && origin.threadId !== "" ? String(origin.threadId) : undefined;
   await callGateway({
@@ -129,7 +141,7 @@ async function sendAnnounce(item: AnnounceQueueItem) {
       idempotencyKey: crypto.randomUUID(),
     },
     expectFinal: true,
-    timeoutMs: 60_000,
+    timeoutMs,
   });
 }
 
@@ -427,6 +439,8 @@ export async function runSubagentAnnounceFlow(params: {
   label?: string;
   outcome?: SubagentRunOutcome;
   announceType?: SubagentAnnounceType;
+  expectsCompletionMessage?: boolean;
+  spawnMode?: "run" | "session";
 }): Promise<boolean> {
   let didAnnounce = false;
   let shouldDeleteChildSession = params.cleanup === "delete";
@@ -564,47 +578,82 @@ export async function runSubagentAnnounceFlow(params: {
       "You can respond with NO_REPLY if no announcement is needed (e.g., internal task with no user-facing result).",
     ].join("\n");
 
-    const queued = await maybeQueueSubagentAnnounce({
-      requesterSessionKey: params.requesterSessionKey,
-      triggerMessage,
-      summaryLine: taskLabel,
-      requesterOrigin,
-    });
-    if (queued === "steered") {
-      didAnnounce = true;
-      return true;
-    }
-    if (queued === "queued") {
-      didAnnounce = true;
-      return true;
-    }
+    const announceCfg = loadConfig();
+    const announceTimeoutMs = resolveAnnounceTimeoutMs(announceCfg);
+    const canonicalRequesterSessionKey = resolveRequesterStoreKey(
+      announceCfg,
+      params.requesterSessionKey,
+    );
 
-    // Send to main agent - it will respond in its own voice
     let directOrigin = requesterOrigin;
     if (!directOrigin) {
       const { entry } = loadRequesterSessionEntry(params.requesterSessionKey);
       directOrigin = deliveryContextFromSession(entry);
     }
-    await callGateway({
-      method: "agent",
-      params: {
-        sessionKey: params.requesterSessionKey,
-        message: triggerMessage,
-        deliver: true,
-        channel: directOrigin?.channel,
-        accountId: directOrigin?.accountId,
-        to: directOrigin?.to,
-        threadId:
-          directOrigin?.threadId != null && directOrigin.threadId !== ""
-            ? String(directOrigin.threadId)
-            : undefined,
-        idempotencyKey: crypto.randomUUID(),
+
+    const delivery = await runSubagentAnnounceDispatch({
+      expectsCompletionMessage: params.expectsCompletionMessage === true,
+      queue: async () =>
+        await maybeQueueSubagentAnnounce({
+          requesterSessionKey: canonicalRequesterSessionKey,
+          triggerMessage,
+          summaryLine: taskLabel,
+          requesterOrigin,
+        }),
+      direct: async (): Promise<SubagentAnnounceDeliveryResult> => {
+        try {
+          // Completion-mode direct send is only possible when we have an explicit
+          // delivery target. Otherwise send back through the requester session.
+          if (
+            params.expectsCompletionMessage === true &&
+            directOrigin?.channel &&
+            directOrigin?.to
+          ) {
+            await callGateway({
+              method: "send",
+              params: {
+                channel: directOrigin.channel,
+                to: directOrigin.to,
+                accountId: directOrigin.accountId,
+                message: triggerMessage,
+                threadId:
+                  directOrigin.threadId != null && directOrigin.threadId !== ""
+                    ? String(directOrigin.threadId)
+                    : undefined,
+                idempotencyKey: crypto.randomUUID(),
+              },
+              timeoutMs: announceTimeoutMs,
+            });
+            return { delivered: true, path: "direct" };
+          }
+
+          await callGateway({
+            method: "agent",
+            params: {
+              sessionKey: canonicalRequesterSessionKey,
+              message: triggerMessage,
+              deliver: false,
+              idempotencyKey: crypto.randomUUID(),
+            },
+            expectFinal: true,
+            timeoutMs: announceTimeoutMs,
+          });
+
+          return { delivered: true, path: "direct" };
+        } catch (err) {
+          return {
+            delivered: false,
+            path: "direct",
+            error: err instanceof Error ? err.message : String(err),
+          };
+        }
       },
-      expectFinal: true,
-      timeoutMs: 60_000,
     });
 
-    didAnnounce = true;
+    if (delivery.delivered) {
+      didAnnounce = true;
+      return true;
+    }
   } catch (err) {
     defaultRuntime.error?.(`Subagent announce failed: ${String(err)}`);
     // Best-effort follow-ups; ignore failures to avoid breaking the caller response.
