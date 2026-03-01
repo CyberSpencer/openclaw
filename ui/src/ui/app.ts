@@ -114,6 +114,14 @@ import {
   type OrchestrationCardRun,
   type OrchestrationLaneId,
 } from "./orchestrator-store.ts";
+import {
+  blobToBase64,
+  decodeBase64ToArrayBuffer,
+  loadSparkMicTelemetryFromStorage,
+  mergeSparkMicTranscript,
+  persistSparkMicTelemetryToStorage,
+  requestSparkMicStt,
+} from "./spark-mic-utils.ts";
 import { loadSettings, type UiSettings } from "./storage.ts";
 import { normalizeTextForTts } from "./text-normalization.ts";
 import {
@@ -846,7 +854,7 @@ export class OpenClawApp extends LitElement {
 
   connectedCallback() {
     super.connectedCallback();
-    this.loadSparkMicTelemetryFromStorage();
+    this.sparkMicTelemetryLog = loadSparkMicTelemetryFromStorage();
     window.addEventListener("keydown", this.globalKeydownHandler);
     this.rebuildOrchRunIndex();
     handleConnected(this as unknown as Parameters<typeof handleConnected>[0]);
@@ -3501,24 +3509,11 @@ export class OpenClawApp extends LitElement {
     }
   }
 
-  private supportsAudioWorklet(): boolean {
-    return supportsAudioWorkletRuntime();
-  }
-
-  private base64ToArrayBuffer(b64: string): ArrayBuffer {
-    const bin = atob(b64);
-    const bytes = new Uint8Array(bin.length);
-    for (let i = 0; i < bin.length; i++) {
-      bytes[i] = bin.charCodeAt(i);
-    }
-    return bytes.buffer;
-  }
-
   private async ensureTtsPlaybackWorklet(): Promise<boolean> {
     if (this.ttsPlaybackContext && this.ttsPlaybackWorklet) {
       return true;
     }
-    if (!this.supportsAudioWorklet()) {
+    if (!supportsAudioWorkletRuntime()) {
       return false;
     }
 
@@ -3542,21 +3537,6 @@ export class OpenClawApp extends LitElement {
     } catch {
       return false;
     }
-  }
-
-  private blobToBase64(blob: Blob): Promise<string> {
-    return new Promise((resolve, reject) => {
-      const reader = new FileReader();
-      reader.onloadend = () => {
-        const dataUrl = reader.result as string;
-        const base64 = dataUrl.split(",")[1] || "";
-        resolve(base64);
-      };
-      reader.addEventListener("error", () => {
-        reject(reader.error ?? new Error("FileReader error"));
-      });
-      reader.readAsDataURL(blob);
-    });
   }
 
   private clearSparkMicLongRecordingTimer(): void {
@@ -3585,35 +3565,6 @@ export class OpenClawApp extends LitElement {
     }
   }
 
-  private loadSparkMicTelemetryFromStorage(): void {
-    try {
-      const raw = localStorage.getItem("openclaw.sparkMicTelemetry");
-      if (!raw) {
-        return;
-      }
-      const parsed = JSON.parse(raw);
-      if (!Array.isArray(parsed)) {
-        return;
-      }
-      this.sparkMicTelemetryLog = parsed
-        .filter((item) => item && typeof item === "object")
-        .slice(0, 200) as Array<Record<string, unknown>>;
-    } catch {
-      // ignore local cache parse errors
-    }
-  }
-
-  private persistSparkMicTelemetryToStorage(): void {
-    try {
-      localStorage.setItem(
-        "openclaw.sparkMicTelemetry",
-        JSON.stringify(this.sparkMicTelemetryLog.slice(0, 120)),
-      );
-    } catch {
-      // ignore storage quota/access issues
-    }
-  }
-
   private logSparkMicTelemetry(event: string, detail: Record<string, unknown> = {}): void {
     const entry: Record<string, unknown> = {
       event,
@@ -3622,7 +3573,7 @@ export class OpenClawApp extends LitElement {
       ...detail,
     };
     this.sparkMicTelemetryLog = [entry, ...this.sparkMicTelemetryLog].slice(0, 200);
-    this.persistSparkMicTelemetryToStorage();
+    persistSparkMicTelemetryToStorage(this.sparkMicTelemetryLog);
     console.debug("[spark-mic/telemetry]", entry);
   }
 
@@ -3634,32 +3585,6 @@ export class OpenClawApp extends LitElement {
       enqueuedAt: Date.now(),
       source,
     } as const;
-  }
-
-  private mergeSparkMicTranscript(existing: string, incoming: string): string {
-    const base = existing.trim();
-    const next = incoming.trim();
-    if (!base) {
-      return next;
-    }
-    if (!next) {
-      return base;
-    }
-
-    const baseWords = base.split(/\s+/);
-    const nextWords = next.split(/\s+/);
-    const maxOverlap = Math.min(8, baseWords.length, nextWords.length);
-
-    for (let overlap = maxOverlap; overlap >= 1; overlap -= 1) {
-      const baseSuffix = baseWords.slice(-overlap).join(" ").toLowerCase();
-      const nextPrefix = nextWords.slice(0, overlap).join(" ").toLowerCase();
-      if (baseSuffix === nextPrefix) {
-        const tail = nextWords.slice(overlap).join(" ").trim();
-        return tail ? `${base} ${tail}` : base;
-      }
-    }
-
-    return `${base} ${next}`;
   }
 
   private async processSparkMicChunkQueue(): Promise<void> {
@@ -3761,7 +3686,7 @@ export class OpenClawApp extends LitElement {
       if (!blob) {
         return;
       }
-      const audioBase64 = await this.blobToBase64(blob);
+      const audioBase64 = await blobToBase64(blob);
       this.enqueueSparkMicChunk({
         source: "worklet",
         audioBase64,
@@ -3775,38 +3700,6 @@ export class OpenClawApp extends LitElement {
       this.logSparkMicTelemetry("chunk.error", { source: "worklet", error: message });
       this.lastError = `Recording failed: ${message}`;
       this.requestUpdate();
-    }
-  }
-
-  private async requestSparkMicStt(params: {
-    audioBase64: string;
-    format: string;
-    sampleRate?: number;
-  }): Promise<Record<string, unknown>> {
-    if (!this.client || !this.connected) {
-      throw new Error("gateway disconnected");
-    }
-
-    const requestPromise = this.client.request("spark.voice.stt", {
-      audio_base64: params.audioBase64,
-      format: params.format,
-      sample_rate: params.sampleRate,
-    }) as Promise<Record<string, unknown>>;
-    requestPromise.catch(() => undefined);
-
-    let timeoutHandle: ReturnType<typeof setTimeout> | null = null;
-    const timeoutPromise = new Promise<never>((_, reject) => {
-      timeoutHandle = setTimeout(() => {
-        reject(new Error("STT_TIMEOUT"));
-      }, SPARK_MIC_STT_TIMEOUT_MS);
-    });
-
-    try {
-      return await Promise.race([requestPromise, timeoutPromise]);
-    } finally {
-      if (timeoutHandle) {
-        clearTimeout(timeoutHandle);
-      }
     }
   }
 
@@ -3829,10 +3722,13 @@ export class OpenClawApp extends LitElement {
     const queuedMs = Math.max(0, startedAt - params.enqueuedAt);
 
     try {
-      const result = await this.requestSparkMicStt({
+      const result = await requestSparkMicStt({
+        client: this.client,
+        connected: this.connected,
         audioBase64: params.audioBase64,
         format: params.format,
         sampleRate: params.sampleRate,
+        timeoutMs: SPARK_MIC_STT_TIMEOUT_MS,
       });
       const latencyMs = Math.max(0, Date.now() - startedAt);
       const text = result?.text;
@@ -3844,7 +3740,7 @@ export class OpenClawApp extends LitElement {
 
       if (typeof text === "string" && text.trim()) {
         const existing = this.chatMessage?.trim() ?? "";
-        this.chatMessage = this.mergeSparkMicTranscript(existing, text.trim());
+        this.chatMessage = mergeSparkMicTranscript(existing, text.trim());
         this.logSparkMicTelemetry("chunk.success", {
           chunkId: params.chunkId,
           chunkIndex: params.chunkIndex,
@@ -3939,7 +3835,7 @@ export class OpenClawApp extends LitElement {
       });
 
       const shouldTryWorklet =
-        this.supportsAudioWorklet() && !this.sparkMicWorkletDisabledForSession;
+        supportsAudioWorkletRuntime() && !this.sparkMicWorkletDisabledForSession;
       if (shouldTryWorklet) {
         const started = await this.tryStartSparkMicWorklet(stream);
         if (started) {
@@ -4075,7 +3971,7 @@ export class OpenClawApp extends LitElement {
       this.sparkMicChunks.push(event.data);
       void (async () => {
         try {
-          const audioBase64 = await this.blobToBase64(event.data);
+          const audioBase64 = await blobToBase64(event.data);
           this.enqueueSparkMicChunk({
             source: "mediarecorder",
             audioBase64,
@@ -4185,7 +4081,7 @@ export class OpenClawApp extends LitElement {
         const durationMs = Math.round((sampleCount / this.sparkMicSampleRate) * 1000);
         const { blob } = pcmFramesToWavBlob(frames, this.sparkMicSampleRate);
         if (blob) {
-          const audioBase64 = await this.blobToBase64(blob);
+          const audioBase64 = await blobToBase64(blob);
           this.enqueueSparkMicChunk({
             source: "final",
             audioBase64,
@@ -4308,7 +4204,7 @@ export class OpenClawApp extends LitElement {
         if (typeof b64 !== "string" || !b64) {
           throw new Error(`Chunk ${idx + 1}: no audio`);
         }
-        const buffer = this.base64ToArrayBuffer(b64);
+        const buffer = decodeBase64ToArrayBuffer(b64);
         const arrayBuffer = await ctx.decodeAudioData(buffer);
         const chan = arrayBuffer.getChannelData(0);
         return new Float32Array(chan);

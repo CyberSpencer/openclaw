@@ -54,6 +54,13 @@ import {
 } from "./internal.js";
 import { searchKeyword, searchVector } from "./manager-search.js";
 import { ensureMemoryIndexSchema } from "./memory-schema.js";
+import {
+  checkQdrantEndpoint,
+  resolveStoreSettings,
+  sortQdrantEndpoints,
+  type QdrantConfig,
+  type QdrantEndpointConfig,
+} from "./qdrant-store-resolver.js";
 import { createMemoryRerankClient, type MemoryRerankClient } from "./reranker.js";
 import { loadSqliteVecExtension } from "./sqlite-vec.js";
 import { requireNodeSqlite } from "./sqlite.js";
@@ -65,23 +72,6 @@ type MemoryIndexMeta = {
   chunkTokens: number;
   chunkOverlap: number;
   vectorDims?: number;
-};
-
-type QdrantConfig = {
-  url: string;
-  endpoints?: Array<{
-    url: string;
-    apiKey?: string;
-    headers?: Record<string, string>;
-    timeoutMs?: number;
-    priority?: number;
-    healthUrl?: string;
-    healthTimeoutMs?: number;
-    healthCacheTtlMs?: number;
-  }>;
-  collection: string;
-  apiKey?: string;
-  timeoutMs: number;
 };
 
 type SessionFileEntry = {
@@ -128,126 +118,12 @@ const log = createSubsystemLogger("memory");
 
 const INDEX_CACHE = new Map<string, MemoryIndexManager>();
 
-const QDRANT_HEALTH_TTL_MS = 10_000;
-const QDRANT_HEALTH_TIMEOUT_MS = 1500;
 const RERANK_MAX_QUERY_CHARS = 4096;
 const RERANK_MAX_DOC_CHARS = 2048;
 const RERANK_MAX_TOTAL_PAYLOAD_BYTES = 256 * 1024;
-const qdrantHealthCache = new Map<string, { ok: boolean; checkedAt: number }>();
-
-type QdrantEndpointConfig = {
-  url: string;
-  apiKey?: string;
-  headers?: Record<string, string>;
-  timeoutMs?: number;
-  priority?: number;
-  healthUrl?: string;
-  healthTimeoutMs?: number;
-  healthCacheTtlMs?: number;
-};
 
 const vectorToBlob = (embedding: number[]): Buffer =>
   Buffer.from(new Float32Array(embedding).buffer);
-
-function normalizeQdrantUrl(url: string): string {
-  return url.replace(/\/+$/, "");
-}
-
-async function checkQdrantEndpoint(
-  endpoint: QdrantEndpointConfig,
-  fallbackApiKey?: string,
-): Promise<boolean> {
-  const url = endpoint.healthUrl?.trim() || `${normalizeQdrantUrl(endpoint.url)}/collections`;
-  const timeoutMs = endpoint.healthTimeoutMs ?? QDRANT_HEALTH_TIMEOUT_MS;
-  const ttlMs = endpoint.healthCacheTtlMs ?? QDRANT_HEALTH_TTL_MS;
-  const cacheKey = endpoint.url;
-  const now = Date.now();
-  const cached = qdrantHealthCache.get(cacheKey);
-  if (cached && now - cached.checkedAt < ttlMs) {
-    return cached.ok;
-  }
-  let ok = false;
-  const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), timeoutMs);
-  try {
-    const apiKey = endpoint.apiKey ?? fallbackApiKey;
-    const headers: Record<string, string> = {
-      ...endpoint.headers,
-    };
-    if (apiKey) {
-      headers["api-key"] = apiKey;
-    }
-    const res = await fetch(url, { method: "GET", headers, signal: controller.signal });
-    ok = res.status === 200;
-  } catch (err) {
-    ok = false;
-    log.debug(`qdrant health check failed for ${endpoint.url}: ${String(err)}`);
-  } finally {
-    clearTimeout(timer);
-  }
-  qdrantHealthCache.set(cacheKey, { ok, checkedAt: now });
-  return ok;
-}
-
-function sortQdrantEndpoints(endpoints: QdrantEndpointConfig[]): QdrantEndpointConfig[] {
-  return [...endpoints].toSorted((a, b) => {
-    const aPriority = a.priority ?? 0;
-    const bPriority = b.priority ?? 0;
-    if (aPriority !== bPriority) {
-      return aPriority - bPriority;
-    }
-    return a.url.localeCompare(b.url);
-  });
-}
-
-async function resolveQdrantEndpoint(config: QdrantConfig): Promise<QdrantConfig | null> {
-  const endpoints = (config.endpoints ?? []).filter((entry) => entry.url?.trim());
-  if (endpoints.length === 0) {
-    return config;
-  }
-  const ordered = sortQdrantEndpoints(endpoints);
-  for (const endpoint of ordered) {
-    if (await checkQdrantEndpoint(endpoint, config.apiKey)) {
-      return {
-        ...config,
-        url: endpoint.url,
-        apiKey: endpoint.apiKey ?? config.apiKey,
-        timeoutMs: endpoint.timeoutMs ?? config.timeoutMs,
-      };
-    }
-  }
-  return null;
-}
-
-async function resolveStoreSettings(
-  settings: ResolvedMemorySearchConfig,
-): Promise<ResolvedMemorySearchConfig> {
-  if (settings.store.driver !== "auto" && settings.store.driver !== "qdrant") {
-    return settings;
-  }
-  const resolvedQdrant = await resolveQdrantEndpoint(settings.store.qdrant as QdrantConfig);
-  if (resolvedQdrant) {
-    return {
-      ...settings,
-      store: {
-        ...settings.store,
-        driver: "qdrant",
-        qdrant: resolvedQdrant,
-      },
-    };
-  }
-  if (settings.store.driver === "auto") {
-    log.warn("qdrant unavailable, falling back to sqlite memory store");
-    return {
-      ...settings,
-      store: {
-        ...settings.store,
-        driver: "sqlite",
-      },
-    };
-  }
-  return settings;
-}
 
 export class MemoryIndexManager {
   private readonly cacheKey: string;
@@ -335,7 +211,10 @@ export class MemoryIndexManager {
     if (!settings) {
       return null;
     }
-    const resolvedSettings = await resolveStoreSettings(settings);
+    const resolvedSettings = await resolveStoreSettings(settings, {
+      warn: (message) => log.warn(message),
+      debug: (message) => log.debug(message),
+    });
     const workspaceDir = resolveAgentWorkspaceDir(cfg, agentId);
     const key = `${agentId}:${workspaceDir}:${JSON.stringify(resolvedSettings)}`;
     const existing = INDEX_CACHE.get(key);
@@ -1184,7 +1063,10 @@ export class MemoryIndexManager {
     for (const endpoint of orderedEndpoints) {
       // Prefer Spark whenever it is healthy (priority order + health cache TTL).
       if (hasExplicitEndpoints) {
-        const ok = await checkQdrantEndpoint(endpoint, cfg.apiKey);
+        const ok = await checkQdrantEndpoint(endpoint, cfg.apiKey, {
+          warn: (message) => log.warn(message),
+          debug: (message) => log.debug(message),
+        });
         if (!ok) {
           errors.push(`${endpoint.url}: unhealthy`);
           continue;
