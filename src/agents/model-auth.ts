@@ -16,7 +16,7 @@ import {
   resolveAuthProfileOrder,
   resolveAuthStorePathForDisplay,
 } from "./auth-profiles.js";
-import { isLocalProviderUrl, normalizeProviderId } from "./model-selection.js";
+import { normalizeProviderId } from "./model-selection.js";
 
 export { ensureAuthProfileStore, resolveAuthProfileOrder } from "./auth-profiles.js";
 
@@ -77,7 +77,19 @@ function isLikelyLocalProvider(cfg: OpenClawConfig | undefined, provider: string
   if (!baseUrl) {
     return false;
   }
-  return isLocalProviderUrl(baseUrl);
+  try {
+    const parsed = new URL(baseUrl);
+    const host = parsed.hostname.trim().toLowerCase();
+    if (!host) {
+      return false;
+    }
+    if (host === "localhost" || host === "0.0.0.0" || host === "127.0.0.1" || host === "::1") {
+      return true;
+    }
+    return host.endsWith(".local") || host.startsWith("192.168.") || host.startsWith("10.");
+  } catch {
+    return false;
+  }
 }
 
 function resolveEnvSourceLabel(params: {

@@ -1,20 +1,13 @@
-import type { DatabaseSync } from "node:sqlite";
-import chokidar, { type FSWatcher } from "chokidar";
 import { randomUUID } from "node:crypto";
 import fsSync from "node:fs";
 import fs from "node:fs/promises";
 import path from "node:path";
-import type { ResolvedMemorySearchConfig } from "../agents/memory-search.js";
-import type { OpenClawConfig } from "../config/config.js";
-import type {
-  MemoryEmbeddingProbeResult,
-  MemoryProviderStatus,
-  MemorySearchResult,
-  MemorySource,
-  MemorySyncProgressUpdate,
-} from "./types.js";
+import type { DatabaseSync } from "node:sqlite";
+import chokidar, { type FSWatcher } from "chokidar";
 import { resolveAgentDir, resolveAgentWorkspaceDir } from "../agents/agent-scope.js";
+import type { ResolvedMemorySearchConfig } from "../agents/memory-search.js";
 import { resolveMemorySearchConfig } from "../agents/memory-search.js";
+import type { OpenClawConfig } from "../config/config.js";
 import { resolveSessionTranscriptsDirForAgent } from "../config/sessions/paths.js";
 import { createSubsystemLogger } from "../logging/subsystem.js";
 import { onSessionTranscriptUpdate } from "../sessions/transcript-events.js";
@@ -34,6 +27,7 @@ import {
   type EmbeddingProvider,
   type EmbeddingProviderResult,
   type GeminiEmbeddingClient,
+  type MistralEmbeddingClient,
   type OpenAiEmbeddingClient,
   type VoyageEmbeddingClient,
 } from "./embeddings.js";
@@ -64,6 +58,13 @@ import {
 import { createMemoryRerankClient, type MemoryRerankClient } from "./reranker.js";
 import { loadSqliteVecExtension } from "./sqlite-vec.js";
 import { requireNodeSqlite } from "./sqlite.js";
+import type {
+  MemoryEmbeddingProbeResult,
+  MemoryProviderStatus,
+  MemorySearchResult,
+  MemorySource,
+  MemorySyncProgressUpdate,
+} from "./types.js";
 
 type MemoryIndexMeta = {
   model: string;
@@ -139,12 +140,13 @@ export class MemoryIndexManager {
     timeoutMs?: number;
   } | null = null;
   private provider: EmbeddingProvider;
-  private readonly requestedProvider: "openai" | "local" | "gemini" | "voyage" | "auto";
-  private fallbackFrom?: "openai" | "local" | "gemini" | "voyage";
+  private readonly requestedProvider: "openai" | "local" | "gemini" | "voyage" | "mistral" | "auto";
+  private fallbackFrom?: "openai" | "local" | "gemini" | "voyage" | "mistral";
   private fallbackReason?: string;
   private openAi?: OpenAiEmbeddingClient;
   private gemini?: GeminiEmbeddingClient;
   private voyage?: VoyageEmbeddingClient;
+  private mistral?: MistralEmbeddingClient;
   private batch: {
     enabled: boolean;
     wait: boolean;
@@ -230,6 +232,13 @@ export class MemoryIndexManager {
       fallback: resolvedSettings.fallback,
       local: resolvedSettings.local,
     });
+    if (!providerResult.provider) {
+      log.warn("memory search unavailable: no embedding provider could be created", {
+        agentId,
+        reason: providerResult.providerUnavailableReason,
+      });
+      return null;
+    }
     const manager = new MemoryIndexManager({
       cacheKey: key,
       cfg,
@@ -259,13 +268,14 @@ export class MemoryIndexManager {
       params.settings.store.driver === "auto" ? "sqlite" : params.settings.store.driver;
     this.qdrant =
       params.settings.store.driver === "qdrant" ? params.settings.store.qdrant : undefined;
-    this.provider = params.providerResult.provider;
+    this.provider = params.providerResult.provider!;
     this.requestedProvider = params.providerResult.requestedProvider;
     this.fallbackFrom = params.providerResult.fallbackFrom;
     this.fallbackReason = params.providerResult.fallbackReason;
     this.openAi = params.providerResult.openAi;
     this.gemini = params.providerResult.gemini;
     this.voyage = params.providerResult.voyage;
+    this.mistral = params.providerResult.mistral;
     this.sources = new Set(params.settings.sources);
     this.db = this.openDatabase();
     this.providerKey = this.computeProviderKey();
@@ -791,11 +801,17 @@ export class MemoryIndexManager {
       rerankLastError: this.rerankLastError ?? this.reranker?.lastError,
       rerankFallbackUsed: this.rerankFallbackUsed,
     };
-    if (this.openAi?.activeEndpoint) {
-      custom.remoteEndpoint = this.openAi.activeEndpoint;
+    const openAiStatus = this.openAi as
+      | (OpenAiEmbeddingClient & {
+          activeEndpoint?: string;
+          lastEndpointErrors?: string[];
+        })
+      | undefined;
+    if (openAiStatus?.activeEndpoint) {
+      custom.remoteEndpoint = openAiStatus.activeEndpoint;
     }
-    if (this.openAi?.lastEndpointErrors && this.openAi.lastEndpointErrors.length > 0) {
-      custom.remoteEndpointErrors = this.openAi.lastEndpointErrors;
+    if (openAiStatus?.lastEndpointErrors && openAiStatus.lastEndpointErrors.length > 0) {
+      custom.remoteEndpointErrors = openAiStatus.lastEndpointErrors;
     }
     if (this.reranker?.lastEndpointErrors && this.reranker.lastEndpointErrors.length > 0) {
       custom.rerankEndpointErrors = this.reranker.lastEndpointErrors;
@@ -1804,9 +1820,10 @@ export class MemoryIndexManager {
     progress?: MemorySyncProgressState;
   }) {
     const files = await listMemoryFiles(this.workspaceDir, this.settings.extraPaths);
-    const fileEntries = await Promise.all(
+    const fileEntriesRaw = await Promise.all(
       files.map(async (file) => buildFileEntry(file, this.workspaceDir)),
     );
+    const fileEntries = fileEntriesRaw.filter((entry): entry is MemoryFileEntry => entry !== null);
     log.debug("memory sync: indexing memory files", {
       files: fileEntries.length,
       needsFullReindex: params.needsFullReindex,
@@ -2120,7 +2137,7 @@ export class MemoryIndexManager {
     if (this.fallbackFrom) {
       return false;
     }
-    const fallbackFrom = this.provider.id as "openai" | "gemini" | "local" | "voyage";
+    const fallbackFrom = this.provider.id as "openai" | "gemini" | "local" | "voyage" | "mistral";
 
     const fallbackModel =
       fallback === "gemini"
@@ -2140,6 +2157,9 @@ export class MemoryIndexManager {
       fallback: "none",
       local: this.settings.local,
     });
+    if (!fallbackResult.provider) {
+      return false;
+    }
 
     this.fallbackFrom = fallbackFrom;
     this.fallbackReason = reason;
@@ -2147,28 +2167,36 @@ export class MemoryIndexManager {
     this.openAi = fallbackResult.openAi;
     this.gemini = fallbackResult.gemini;
     this.voyage = fallbackResult.voyage;
+    this.mistral = fallbackResult.mistral;
     this.providerKey = this.computeProviderKey();
     this.batch = this.resolveBatchConfig();
     log.warn(`memory embeddings: switched to fallback provider (${fallback})`, { reason });
     return true;
   }
 
-  private resolvePrimaryProviderForRecovery(): "openai" | "gemini" | "voyage" | null {
+  private resolvePrimaryProviderForRecovery(): "openai" | "gemini" | "voyage" | "mistral" | null {
     const configured = this.settings.provider;
-    if (configured === "openai" || configured === "gemini" || configured === "voyage") {
+    if (
+      configured === "openai" ||
+      configured === "gemini" ||
+      configured === "voyage" ||
+      configured === "mistral"
+    ) {
       return configured;
     }
     if (
       this.provider.id === "openai" ||
       this.provider.id === "gemini" ||
-      this.provider.id === "voyage"
+      this.provider.id === "voyage" ||
+      this.provider.id === "mistral"
     ) {
       return this.provider.id;
     }
     if (
       this.fallbackFrom === "openai" ||
       this.fallbackFrom === "gemini" ||
-      this.fallbackFrom === "voyage"
+      this.fallbackFrom === "voyage" ||
+      this.fallbackFrom === "mistral"
     ) {
       return this.fallbackFrom;
     }
@@ -2177,7 +2205,7 @@ export class MemoryIndexManager {
 
   private async activateEmergencyLocalProvider(
     reason: string,
-    primaryProvider: "openai" | "gemini" | "voyage",
+    primaryProvider: "openai" | "gemini" | "voyage" | "mistral",
   ): Promise<boolean> {
     if (this.provider.id === "local") {
       return false;
@@ -2191,12 +2219,16 @@ export class MemoryIndexManager {
       fallback: "none",
       local: this.settings.local,
     });
+    if (!localResult.provider) {
+      return false;
+    }
     this.fallbackFrom = primaryProvider;
     this.fallbackReason = reason;
     this.provider = localResult.provider;
     this.openAi = localResult.openAi;
     this.gemini = localResult.gemini;
     this.voyage = localResult.voyage;
+    this.mistral = localResult.mistral;
     this.providerKey = this.computeProviderKey();
     this.batch = this.resolveBatchConfig();
     return true;
@@ -2228,6 +2260,9 @@ export class MemoryIndexManager {
         fallback: "none",
         local: this.settings.local,
       });
+      if (!primaryResult.provider) {
+        throw new Error(primaryResult.providerUnavailableReason ?? "primary provider unavailable");
+      }
       await this.withTimeout(
         primaryResult.provider.embedQuery("memory-emergency-probe"),
         EMBEDDING_QUERY_TIMEOUT_REMOTE_MS,
@@ -2300,6 +2335,9 @@ export class MemoryIndexManager {
         fallback: "none",
         local: this.settings.local,
       });
+      if (!primaryResult.provider) {
+        return;
+      }
       await this.withTimeout(
         primaryResult.provider.embedQuery("memory-recovery-probe"),
         EMBEDDING_QUERY_TIMEOUT_REMOTE_MS,
@@ -2314,6 +2352,7 @@ export class MemoryIndexManager {
       this.openAi = primaryResult.openAi;
       this.gemini = primaryResult.gemini;
       this.voyage = primaryResult.voyage;
+      this.mistral = primaryResult.mistral;
       this.providerKey = this.computeProviderKey();
       this.batch = this.resolveBatchConfig();
       this.fallbackFrom = undefined;

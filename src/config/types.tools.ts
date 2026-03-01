@@ -1,4 +1,5 @@
 import type { ChatType } from "../channels/chat-type.js";
+import type { SafeBinProfileFixture } from "../infra/exec-safe-bin-policy.js";
 import type { AgentElevatedAllowFromConfig, SessionSendPolicyAction } from "./types.base.js";
 
 export type MediaUnderstandingScopeMatch = {
@@ -162,6 +163,8 @@ export type ToolLoopDetectionConfig = {
   detectors?: ToolLoopDetectionDetectorConfig;
 };
 
+export type SessionsToolsVisibility = "self" | "tree" | "agent" | "all";
+
 export type ToolPolicyConfig = {
   allow?: string[];
   /**
@@ -182,6 +185,30 @@ export type GroupToolPolicyConfig = {
   deny?: string[];
 };
 
+export const TOOLS_BY_SENDER_KEY_TYPES = ["id", "e164", "username", "name"] as const;
+export type ToolsBySenderKeyType = (typeof TOOLS_BY_SENDER_KEY_TYPES)[number];
+
+export function parseToolsBySenderTypedKey(
+  rawKey: string,
+): { type: ToolsBySenderKeyType; value: string } | undefined {
+  const trimmed = rawKey.trim();
+  if (!trimmed) {
+    return undefined;
+  }
+  const lowered = trimmed.toLowerCase();
+  for (const type of TOOLS_BY_SENDER_KEY_TYPES) {
+    const prefix = `${type}:`;
+    if (!lowered.startsWith(prefix)) {
+      continue;
+    }
+    return {
+      type,
+      value: trimmed.slice(prefix.length),
+    };
+  }
+  return undefined;
+}
+
 export type GroupToolPolicyBySenderConfig = Record<string, GroupToolPolicyConfig>;
 
 export type ExecToolConfig = {
@@ -197,6 +224,10 @@ export type ExecToolConfig = {
   pathPrepend?: string[];
   /** Safe stdin-only binaries that can run without allowlist entries. */
   safeBins?: string[];
+  /** Extra explicit directories trusted for safeBins path checks (never derived from PATH). */
+  safeBinTrustedDirs?: string[];
+  /** Optional custom safe-bin profiles for entries in tools.exec.safeBins. */
+  safeBinProfiles?: Record<string, SafeBinProfileFixture>;
   /** Default time (ms) before an exec command auto-backgrounds. */
   backgroundMs?: number;
   /** Default timeout (seconds) before auto-killing exec commands. */
@@ -207,16 +238,34 @@ export type ExecToolConfig = {
   cleanupMs?: number;
   /** Emit a system event and heartbeat when a backgrounded exec exits. */
   notifyOnExit?: boolean;
+  /**
+   * Also emit success exit notifications when a backgrounded exec has no output.
+   * Default false to reduce context noise.
+   */
+  notifyOnExitEmptySuccess?: boolean;
   /** apply_patch subtool configuration (experimental). */
   applyPatch?: {
     /** Enable apply_patch for OpenAI models (default: false). */
     enabled?: boolean;
+    /**
+     * Restrict apply_patch paths to the workspace directory.
+     * Default: true (safer; does not affect read/write/edit).
+     */
+    workspaceOnly?: boolean;
     /**
      * Optional allowlist of model ids that can use apply_patch.
      * Accepts either raw ids (e.g. "gpt-5.2") or full ids (e.g. "openai/gpt-5.2").
      */
     allowModels?: string[];
   };
+};
+
+export type FsToolsConfig = {
+  /**
+   * Restrict filesystem tools (read/write/edit/apply_patch) to the agent workspace directory.
+   * Default: false (unrestricted, matches legacy behavior).
+   */
+  workspaceOnly?: boolean;
 };
 
 export type AgentToolsConfig = {
@@ -237,6 +286,10 @@ export type AgentToolsConfig = {
   };
   /** Exec tool defaults for this agent. */
   exec?: ExecToolConfig;
+  /** Filesystem tool path guards. */
+  fs?: FsToolsConfig;
+  /** Runtime loop detection for repetitive/ stuck tool-call patterns. */
+  loopDetection?: ToolLoopDetectionConfig;
   sandbox?: {
     tools?: {
       allow?: string[];
@@ -258,7 +311,7 @@ export type MemorySearchConfig = {
     sessionMemory?: boolean;
   };
   /** Embedding provider mode. */
-  provider?: "openai" | "gemini" | "voyage" | "local" | "auto";
+  provider?: "openai" | "gemini" | "voyage" | "local" | "mistral" | "auto";
   remote?: {
     baseUrl?: string;
     /** Optional endpoint list for remote embedding failover. */
@@ -338,7 +391,7 @@ export type MemorySearchConfig = {
     };
   };
   /** Fallback behavior when embeddings fail. */
-  fallback?: "openai" | "gemini" | "local" | "voyage" | "none";
+  fallback?: "openai" | "gemini" | "local" | "voyage" | "mistral" | "none";
   /** Embedding model id (remote) or alias (local). */
   model?: string;
   /** Local embedding settings (node-llama-cpp). */
@@ -580,12 +633,18 @@ export type ToolsConfig = {
   };
   /** Exec tool defaults. */
   exec?: ExecToolConfig;
+  /** Filesystem tool path guards. */
+  fs?: FsToolsConfig;
+  /** Runtime loop detection for repetitive/ stuck tool-call patterns. */
+  loopDetection?: ToolLoopDetectionConfig;
   /** Sub-agent tool policy defaults (deny wins). */
   subagents?: {
     /** Default model selection for spawned sub-agents (string or {primary,fallbacks}). */
     model?: string | { primary?: string; fallbacks?: string[] };
     tools?: {
       allow?: string[];
+      /** Additional allowlist entries merged into allow and/or default sub-agent denylist. */
+      alsoAllow?: string[];
       deny?: string[];
     };
   };

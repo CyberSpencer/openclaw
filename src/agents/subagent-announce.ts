@@ -322,19 +322,23 @@ function warnAnnounceLineageMismatch(params: {
     return;
   }
 
-  defaultRuntime.warn(
-    `[subagent-announce] lineage warning ${JSON.stringify({
-      type: "announce_target_lineage_mismatch",
-      requesterSessionKey: params.requesterSessionKey,
-      childSessionKey: params.childSessionKey,
-      requesterRootConversationId: requesterRootConversationId || undefined,
-      requesterThreadId: requesterThreadId || undefined,
-      childRootConversationId: childRootConversationId || undefined,
-      childThreadId: childThreadId || undefined,
-      rootMismatch,
-      threadMismatch,
-    })}`,
-  );
+  const message = `[subagent-announce] lineage warning ${JSON.stringify({
+    type: "announce_target_lineage_mismatch",
+    requesterSessionKey: params.requesterSessionKey,
+    childSessionKey: params.childSessionKey,
+    requesterRootConversationId: requesterRootConversationId || undefined,
+    requesterThreadId: requesterThreadId || undefined,
+    childRootConversationId: childRootConversationId || undefined,
+    childThreadId: childThreadId || undefined,
+    rootMismatch,
+    threadMismatch,
+  })}`;
+  const runtimeWithWarn = defaultRuntime as { warn?: (line: string) => void };
+  if (typeof runtimeWithWarn.warn === "function") {
+    runtimeWithWarn.warn(message);
+    return;
+  }
+  defaultRuntime.log(message);
 }
 
 async function readLatestAssistantReplyWithRetry(params: {
@@ -448,22 +452,34 @@ export async function runSubagentAnnounceFlow(params: {
     const requesterOrigin = normalizeDeliveryContext(params.requesterOrigin);
     const { entry: requesterEntry } = loadRequesterSessionEntry(params.requesterSessionKey);
     const childEntry = loadSessionEntryByKey(params.childSessionKey);
+    const requesterLegacy = requesterEntry as
+      | { rootConversationId?: string; threadId?: string | number }
+      | undefined;
+    const childLegacy = childEntry as
+      | { rootConversationId?: string; threadId?: string | number }
+      | undefined;
+    const requesterThreadId =
+      requesterEntry?.deliveryContext?.threadId ??
+      requesterEntry?.lastThreadId ??
+      requesterLegacy?.threadId;
+    const childThreadId =
+      childEntry?.deliveryContext?.threadId ?? childEntry?.lastThreadId ?? childLegacy?.threadId;
     warnAnnounceLineageMismatch({
       requesterSessionKey: params.requesterSessionKey,
       childSessionKey: params.childSessionKey,
-      requesterRootConversationId: requesterEntry?.rootConversationId,
+      requesterRootConversationId: requesterLegacy?.rootConversationId,
       requesterThreadId:
-        typeof requesterEntry?.threadId === "string"
-          ? requesterEntry.threadId
-          : typeof requesterEntry?.threadId === "number"
-            ? String(requesterEntry.threadId)
+        typeof requesterThreadId === "string"
+          ? requesterThreadId
+          : typeof requesterThreadId === "number"
+            ? String(requesterThreadId)
             : undefined,
-      childRootConversationId: childEntry?.rootConversationId,
+      childRootConversationId: childLegacy?.rootConversationId,
       childThreadId:
-        typeof childEntry?.threadId === "string"
-          ? childEntry.threadId
-          : typeof childEntry?.threadId === "number"
-            ? String(childEntry.threadId)
+        typeof childThreadId === "string"
+          ? childThreadId
+          : typeof childThreadId === "number"
+            ? String(childThreadId)
             : undefined,
     });
     const childSessionId =
@@ -632,7 +648,14 @@ export async function runSubagentAnnounceFlow(params: {
             params: {
               sessionKey: canonicalRequesterSessionKey,
               message: triggerMessage,
-              deliver: false,
+              channel: directOrigin?.channel,
+              accountId: directOrigin?.accountId,
+              to: directOrigin?.to,
+              threadId:
+                directOrigin?.threadId != null && directOrigin.threadId !== ""
+                  ? String(directOrigin.threadId)
+                  : undefined,
+              deliver: true,
               idempotencyKey: crypto.randomUUID(),
             },
             expectFinal: true,
