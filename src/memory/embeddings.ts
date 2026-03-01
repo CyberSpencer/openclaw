@@ -1,13 +1,13 @@
-import type { Llama, LlamaEmbeddingContext, LlamaModel } from "node-llama-cpp";
-import { spawn } from "node:child_process";
 import fsSync from "node:fs";
-import { fileURLToPath } from "node:url";
+import type { Llama, LlamaEmbeddingContext, LlamaModel } from "node-llama-cpp";
 import type { OpenClawConfig } from "../config/config.js";
-import { formatError } from "../gateway/server-utils.js";
 import { formatErrorMessage } from "../infra/errors.js";
-import { createSubsystemLogger } from "../logging/subsystem.js";
 import { resolveUserPath } from "../utils.js";
 import { createGeminiEmbeddingProvider, type GeminiEmbeddingClient } from "./embeddings-gemini.js";
+import {
+  createMistralEmbeddingProvider,
+  type MistralEmbeddingClient,
+} from "./embeddings-mistral.js";
 import { createOpenAiEmbeddingProvider, type OpenAiEmbeddingClient } from "./embeddings-openai.js";
 import { createVoyageEmbeddingProvider, type VoyageEmbeddingClient } from "./embeddings-voyage.js";
 import { importNodeLlamaCpp } from "./node-llama.js";
@@ -22,84 +22,55 @@ function sanitizeAndNormalizeEmbedding(vec: number[]): number[] {
 }
 
 export type { GeminiEmbeddingClient } from "./embeddings-gemini.js";
+export type { MistralEmbeddingClient } from "./embeddings-mistral.js";
 export type { OpenAiEmbeddingClient } from "./embeddings-openai.js";
 export type { VoyageEmbeddingClient } from "./embeddings-voyage.js";
 
 export type EmbeddingProvider = {
   id: string;
   model: string;
+  maxInputTokens?: number;
   embedQuery: (text: string) => Promise<number[]>;
   embedBatch: (texts: string[]) => Promise<number[][]>;
 };
 
+export type EmbeddingProviderId = "openai" | "local" | "gemini" | "voyage" | "mistral";
+export type EmbeddingProviderRequest = EmbeddingProviderId | "auto";
+export type EmbeddingProviderFallback = EmbeddingProviderId | "none";
+
+const REMOTE_EMBEDDING_PROVIDER_IDS = ["openai", "gemini", "voyage", "mistral"] as const;
+
 export type EmbeddingProviderResult = {
-  provider: EmbeddingProvider;
-  requestedProvider: "openai" | "local" | "gemini" | "voyage" | "auto";
-  fallbackFrom?: "openai" | "local" | "gemini" | "voyage";
+  provider: EmbeddingProvider | null;
+  requestedProvider: EmbeddingProviderRequest;
+  fallbackFrom?: EmbeddingProviderId;
   fallbackReason?: string;
+  providerUnavailableReason?: string;
   openAi?: OpenAiEmbeddingClient;
   gemini?: GeminiEmbeddingClient;
   voyage?: VoyageEmbeddingClient;
+  mistral?: MistralEmbeddingClient;
 };
 
 export type EmbeddingProviderOptions = {
   config: OpenClawConfig;
   agentDir?: string;
-  provider: "openai" | "local" | "gemini" | "voyage" | "auto";
+  provider: EmbeddingProviderRequest;
   remote?: {
     baseUrl?: string;
-    endpoints?: Array<{
-      baseUrl?: string;
-      url?: string;
-      apiKey?: string;
-      headers?: Record<string, string>;
-      priority?: number;
-      timeoutMs?: number;
-      healthUrl?: string;
-      healthTimeoutMs?: number;
-      healthCacheTtlMs?: number;
-    }>;
     apiKey?: string;
     headers?: Record<string, string>;
   };
   model: string;
-  fallback: "openai" | "gemini" | "local" | "voyage" | "none";
+  fallback: EmbeddingProviderFallback;
   local?: {
     modelPath?: string;
     modelCacheDir?: string;
   };
 };
 
-const DEFAULT_LOCAL_MODEL = "hf:ggml-org/embeddinggemma-300M-GGUF/embeddinggemma-300M-Q8_0.gguf";
-const EMBEDDING_WORKER_ENV = "OPENCLAW_EMBEDDINGS_WORKER";
-const EMBEDDING_WORKER_IDLE_ENV = "OPENCLAW_EMBEDDINGS_WORKER_IDLE_MS";
-const WORKER_QUERY_TIMEOUT_MS = 5 * 60_000;
-const WORKER_BATCH_TIMEOUT_MS = 10 * 60_000;
-const DEFAULT_WORKER_IDLE_MS = 10 * 60_000;
-
-const log = createSubsystemLogger("memory/embeddings");
-
-let llamaSingleton: Promise<Llama> | null = null;
-const modelCache = new Map<string, Promise<LlamaModel>>();
-const contextCache = new Map<string, Promise<LlamaEmbeddingContext>>();
-const contextLocks = new Map<string, Promise<void>>();
-
-type WorkerRequest =
-  | { id: string; type: "embedQuery"; text: string }
-  | { id: string; type: "embedBatch"; texts: string[] };
-
-type WorkerResponse =
-  | { id: string; ok: true; embeddings: number[][] }
-  | { id: string; ok: false; error: string };
-
-type EmbeddingWorkerState = {
-  client: EmbeddingWorkerClient | null;
-  modelKey?: string;
-};
-
-const workerState: EmbeddingWorkerState = {
-  client: null,
-};
+export const DEFAULT_LOCAL_MODEL =
+  "hf:ggml-org/embeddinggemma-300m-qat-q8_0-GGUF/embeddinggemma-300m-qat-Q8_0.gguf";
 
 function canAutoSelectLocal(options: EmbeddingProviderOptions): boolean {
   const modelPath = options.local?.modelPath?.trim();
@@ -122,306 +93,29 @@ function isMissingApiKeyError(err: unknown): boolean {
   return message.includes("No API key found for provider");
 }
 
-function shouldUseEmbeddingWorker(): boolean {
-  const envValue = process.env[EMBEDDING_WORKER_ENV]?.trim().toLowerCase();
-  if (envValue === "0" || envValue === "false" || envValue === "off") {
-    return false;
-  }
-  if (process.env.VITEST || process.env.NODE_ENV === "test") {
-    return false;
-  }
-  return true;
-}
-
-function resolveWorkerIdleMs(): number {
-  const raw = process.env[EMBEDDING_WORKER_IDLE_ENV]?.trim();
-  if (!raw) {
-    return DEFAULT_WORKER_IDLE_MS;
-  }
-  const parsed = Number(raw);
-  if (!Number.isFinite(parsed) || parsed <= 0) {
-    return DEFAULT_WORKER_IDLE_MS;
-  }
-  return parsed;
-}
-
-function resolveWorkerPath(): string | null {
-  const direct = fileURLToPath(new URL("./embeddings-worker.js", import.meta.url));
-  if (fsSync.existsSync(direct)) {
-    return direct;
-  }
-  const fallback = fileURLToPath(
-    new URL("../../dist/memory/embeddings-worker.js", import.meta.url),
-  );
-  if (fsSync.existsSync(fallback)) {
-    return fallback;
-  }
-  return null;
-}
-
-async function withContextLock<T>(key: string, fn: () => Promise<T>): Promise<T> {
-  const prev = contextLocks.get(key) ?? Promise.resolve();
-
-  let releaseCurrent: (() => void) | undefined;
-  const current = new Promise<void>((resolve) => {
-    releaseCurrent = () => resolve();
-  });
-
-  const chained = prev.then(() => current);
-  contextLocks.set(key, chained);
-
-  await prev;
-  try {
-    return await fn();
-  } finally {
-    releaseCurrent?.();
-    if (contextLocks.get(key) === chained) {
-      contextLocks.delete(key);
-    }
-  }
-}
-
-class EmbeddingWorkerClient {
-  private child: ReturnType<typeof spawn> | null;
-  private readonly modelPath: string;
-  private readonly modelCacheDir?: string;
-  private readonly pending = new Map<
-    string,
-    { resolve: (value: number[][]) => void; reject: (err: Error) => void; timer: NodeJS.Timeout }
-  >();
-  private queue: Promise<void> = Promise.resolve();
-  private counter = 0;
-  private idleTimer: NodeJS.Timeout | null = null;
-  private readonly idleMs: number;
-
-  constructor(modelPath: string, modelCacheDir?: string) {
-    this.modelPath = modelPath;
-    this.modelCacheDir = modelCacheDir;
-    this.idleMs = resolveWorkerIdleMs();
-    const workerPath = resolveWorkerPath();
-    if (!workerPath) {
-      throw new Error("Embedding worker script not found");
-    }
-    const env: NodeJS.ProcessEnv = {
-      ...process.env,
-      OPENCLAW_EMBEDDING_MODEL_PATH: modelPath,
-    };
-    if (modelCacheDir) {
-      env.OPENCLAW_EMBEDDING_MODEL_CACHE_DIR = modelCacheDir;
-    }
-    this.child = spawn(process.execPath, [workerPath], {
-      env,
-      stdio: ["ignore", "pipe", "pipe", "ipc"],
-    });
-
-    this.child.on("message", (msg) => {
-      const response = msg as WorkerResponse;
-      const pending = this.pending.get(response?.id);
-      if (!pending) {
-        return;
-      }
-      clearTimeout(pending.timer);
-      this.pending.delete(response.id);
-      if (response.ok) {
-        pending.resolve(response.embeddings);
-      } else {
-        pending.reject(new Error(response.error));
-      }
-    });
-
-    this.child.on("exit", (code, signal) => {
-      const error = new Error(
-        `Embedding worker exited (code ${code ?? "unknown"}, signal ${signal ?? "unknown"})`,
-      );
-      for (const pending of this.pending.values()) {
-        clearTimeout(pending.timer);
-        pending.reject(error);
-      }
-      this.pending.clear();
-      this.child = null;
-    });
-
-    this.child.on("error", (err) => {
-      log.warn(`Embedding worker error: ${String(err)}`);
-    });
-
-    if (this.child.stderr) {
-      this.child.stderr.on("data", (chunk) => {
-        const text = chunk.toString().trim();
-        if (text) {
-          log.warn(`Embedding worker stderr: ${text}`);
-        }
-      });
-    }
-  }
-
-  close(): void {
-    if (this.idleTimer) {
-      clearTimeout(this.idleTimer);
-      this.idleTimer = null;
-    }
-    if (!this.child) {
-      return;
-    }
-    try {
-      this.child.kill();
-    } catch {
-      // ignore
-    }
-    this.child = null;
-  }
-
-  private enqueue<T>(task: () => Promise<T>): Promise<T> {
-    const result = this.queue.then(task, task);
-    this.queue = result.then(
-      () => undefined,
-      () => undefined,
-    );
-    return result;
-  }
-
-  private request(type: WorkerRequest["type"], payload: Omit<WorkerRequest, "id" | "type">) {
-    if (!this.child) {
-      return Promise.reject(new Error("Embedding worker not running"));
-    }
-    if (this.idleTimer) {
-      clearTimeout(this.idleTimer);
-      this.idleTimer = null;
-    }
-    const id = `${Date.now()}-${++this.counter}`;
-    const timeoutMs = type === "embedBatch" ? WORKER_BATCH_TIMEOUT_MS : WORKER_QUERY_TIMEOUT_MS;
-    return this.enqueue(
-      () =>
-        new Promise<number[][]>((resolve, reject) => {
-          const timer = setTimeout(() => {
-            this.pending.delete(id);
-            this.scheduleIdle();
-            reject(new Error(`Embedding worker timeout after ${Math.round(timeoutMs / 1000)}s`));
-          }, timeoutMs);
-          const wrappedResolve = (value: number[][]) => {
-            resolve(value);
-            this.scheduleIdle();
-          };
-          const wrappedReject = (err: Error) => {
-            reject(err);
-            this.scheduleIdle();
-          };
-          this.pending.set(id, { resolve: wrappedResolve, reject: wrappedReject, timer });
-          const message: WorkerRequest = { id, type, ...(payload as object) } as WorkerRequest;
-          this.child?.send(message);
-        }),
-    );
-  }
-
-  private scheduleIdle(): void {
-    if (this.pending.size > 0) {
-      return;
-    }
-    if (this.idleTimer) {
-      return;
-    }
-    this.idleTimer = setTimeout(() => {
-      if (this.pending.size > 0) {
-        this.idleTimer = null;
-        return;
-      }
-      this.close();
-      if (workerState.client === this) {
-        workerState.client = null;
-        workerState.modelKey = undefined;
-      }
-    }, this.idleMs);
-  }
-
-  embedQuery(text: string): Promise<number[]> {
-    return this.request("embedQuery", { text }).then((vectors) => vectors[0] ?? []);
-  }
-
-  embedBatch(texts: string[]): Promise<number[][]> {
-    return this.request("embedBatch", { texts });
-  }
-
-  getModelKey(): string {
-    return `${this.modelPath}::${this.modelCacheDir ?? ""}`;
-  }
-}
-
-function getWorkerClient(modelPath: string, modelCacheDir?: string): EmbeddingWorkerClient {
-  const modelKey = `${modelPath}::${modelCacheDir ?? ""}`;
-  if (workerState.client && workerState.modelKey === modelKey) {
-    return workerState.client;
-  }
-  if (workerState.client) {
-    workerState.client.close();
-  }
-  const client = new EmbeddingWorkerClient(modelPath, modelCacheDir);
-  workerState.client = client;
-  workerState.modelKey = modelKey;
-  return client;
-}
-
 async function createLocalEmbeddingProvider(
   options: EmbeddingProviderOptions,
 ): Promise<EmbeddingProvider> {
   const modelPath = options.local?.modelPath?.trim() || DEFAULT_LOCAL_MODEL;
   const modelCacheDir = options.local?.modelCacheDir?.trim();
 
-  if (shouldUseEmbeddingWorker()) {
-    try {
-      const client = getWorkerClient(modelPath, modelCacheDir);
-      return {
-        id: "local",
-        model: modelPath,
-        embedQuery: (text) => client.embedQuery(text),
-        embedBatch: (texts) => client.embedBatch(texts),
-      };
-    } catch (err) {
-      log.warn(`Embedding worker unavailable, falling back to in-process: ${formatError(err)}`);
-    }
-  }
-
   // Lazy-load node-llama-cpp to keep startup light unless local is enabled.
   const { getLlama, resolveModelFile, LlamaLogLevel } = await importNodeLlamaCpp();
 
+  let llama: Llama | null = null;
   let embeddingModel: LlamaModel | null = null;
   let embeddingContext: LlamaEmbeddingContext | null = null;
-  let resolvedKey: string | null = null;
 
   const ensureContext = async () => {
+    if (!llama) {
+      llama = await getLlama({ logLevel: LlamaLogLevel.error });
+    }
     if (!embeddingModel) {
       const resolved = await resolveModelFile(modelPath, modelCacheDir || undefined);
-      resolvedKey = resolved;
-      let modelPromise = modelCache.get(resolved);
-      if (!modelPromise) {
-        modelPromise = (async () => {
-          if (!llamaSingleton) {
-            llamaSingleton = getLlama({ logLevel: LlamaLogLevel.error });
-          }
-          const llama = await llamaSingleton;
-          return llama.loadModel({ modelPath: resolved });
-        })();
-        modelCache.set(resolved, modelPromise);
-      }
-      try {
-        embeddingModel = await modelPromise;
-      } catch (err) {
-        modelCache.delete(resolved);
-        throw err;
-      }
+      embeddingModel = await llama.loadModel({ modelPath: resolved });
     }
     if (!embeddingContext) {
-      const contextKey = resolvedKey ?? modelPath;
-      let contextPromise = contextCache.get(contextKey);
-      if (!contextPromise) {
-        contextPromise = embeddingModel.createEmbeddingContext();
-        contextCache.set(contextKey, contextPromise);
-      }
-      try {
-        embeddingContext = await contextPromise;
-      } catch (err) {
-        contextCache.delete(contextKey);
-        throw err;
-      }
+      embeddingContext = await embeddingModel.createEmbeddingContext();
     }
     return embeddingContext;
   };
@@ -431,23 +125,18 @@ async function createLocalEmbeddingProvider(
     model: modelPath,
     embedQuery: async (text) => {
       const ctx = await ensureContext();
-      const lockKey = resolvedKey ?? modelPath;
-      return withContextLock(lockKey, async () => {
-        const embedding = await ctx.getEmbeddingFor(text);
-        return sanitizeAndNormalizeEmbedding(Array.from(embedding.vector));
-      });
+      const embedding = await ctx.getEmbeddingFor(text);
+      return sanitizeAndNormalizeEmbedding(Array.from(embedding.vector));
     },
     embedBatch: async (texts) => {
       const ctx = await ensureContext();
-      const lockKey = resolvedKey ?? modelPath;
-      return withContextLock(lockKey, async () => {
-        const embeddings: number[][] = [];
-        for (const text of texts) {
+      const embeddings = await Promise.all(
+        texts.map(async (text) => {
           const embedding = await ctx.getEmbeddingFor(text);
-          embeddings.push(sanitizeAndNormalizeEmbedding(Array.from(embedding.vector)));
-        }
-        return embeddings;
-      });
+          return sanitizeAndNormalizeEmbedding(Array.from(embedding.vector));
+        }),
+      );
+      return embeddings;
     },
   };
 }
@@ -458,7 +147,7 @@ export async function createEmbeddingProvider(
   const requestedProvider = options.provider;
   const fallback = options.fallback;
 
-  const createProvider = async (id: "openai" | "local" | "gemini" | "voyage") => {
+  const createProvider = async (id: EmbeddingProviderId) => {
     if (id === "local") {
       const provider = await createLocalEmbeddingProvider(options);
       return { provider };
@@ -471,11 +160,15 @@ export async function createEmbeddingProvider(
       const { provider, client } = await createVoyageEmbeddingProvider(options);
       return { provider, voyage: client };
     }
+    if (id === "mistral") {
+      const { provider, client } = await createMistralEmbeddingProvider(options);
+      return { provider, mistral: client };
+    }
     const { provider, client } = await createOpenAiEmbeddingProvider(options);
     return { provider, openAi: client };
   };
 
-  const formatPrimaryError = (err: unknown, provider: "openai" | "local" | "gemini" | "voyage") =>
+  const formatPrimaryError = (err: unknown, provider: EmbeddingProviderId) =>
     provider === "local" ? formatLocalSetupError(err) : formatErrorMessage(err);
 
   if (requestedProvider === "auto") {
@@ -491,7 +184,7 @@ export async function createEmbeddingProvider(
       }
     }
 
-    for (const provider of ["openai", "gemini", "voyage"] as const) {
+    for (const provider of REMOTE_EMBEDDING_PROVIDER_IDS) {
       try {
         const result = await createProvider(provider);
         return { ...result, requestedProvider };
@@ -501,15 +194,21 @@ export async function createEmbeddingProvider(
           missingKeyErrors.push(message);
           continue;
         }
-        throw new Error(message, { cause: err });
+        // Non-auth errors (e.g., network) are still fatal
+        const wrapped = new Error(message) as Error & { cause?: unknown };
+        wrapped.cause = err;
+        throw wrapped;
       }
     }
 
+    // All providers failed due to missing API keys - return null provider for FTS-only mode
     const details = [...missingKeyErrors, localError].filter(Boolean) as string[];
-    if (details.length > 0) {
-      throw new Error(details.join("\n\n"));
-    }
-    throw new Error("No embeddings provider available.");
+    const reason = details.length > 0 ? details.join("\n\n") : "No embeddings provider available.";
+    return {
+      provider: null,
+      requestedProvider,
+      providerUnavailableReason: reason,
+    };
   }
 
   try {
@@ -527,14 +226,36 @@ export async function createEmbeddingProvider(
           fallbackReason: reason,
         };
       } catch (fallbackErr) {
-        // oxlint-disable-next-line preserve-caught-error
-        throw new Error(
-          `${reason}\n\nFallback to ${fallback} failed: ${formatErrorMessage(fallbackErr)}`,
-          { cause: fallbackErr },
-        );
+        // Both primary and fallback failed - check if it's auth-related
+        const fallbackReason = formatErrorMessage(fallbackErr);
+        const combinedReason = `${reason}\n\nFallback to ${fallback} failed: ${fallbackReason}`;
+        if (isMissingApiKeyError(primaryErr) && isMissingApiKeyError(fallbackErr)) {
+          // Both failed due to missing API keys - return null for FTS-only mode
+          return {
+            provider: null,
+            requestedProvider,
+            fallbackFrom: requestedProvider,
+            fallbackReason: reason,
+            providerUnavailableReason: combinedReason,
+          };
+        }
+        // Non-auth errors are still fatal
+        const wrapped = new Error(combinedReason) as Error & { cause?: unknown };
+        wrapped.cause = fallbackErr;
+        throw wrapped;
       }
     }
-    throw new Error(reason, { cause: primaryErr });
+    // No fallback configured - check if we should degrade to FTS-only
+    if (isMissingApiKeyError(primaryErr)) {
+      return {
+        provider: null,
+        requestedProvider,
+        providerUnavailableReason: reason,
+      };
+    }
+    const wrapped = new Error(reason) as Error & { cause?: unknown };
+    wrapped.cause = primaryErr;
+    throw wrapped;
   }
 }
 
@@ -566,8 +287,9 @@ function formatLocalSetupError(err: unknown): string {
       ? "2) Reinstall OpenClaw (this should install node-llama-cpp): npm i -g openclaw@latest"
       : null,
     "3) If you use pnpm: pnpm approve-builds (select node-llama-cpp), then pnpm rebuild node-llama-cpp",
-    'Or set agents.defaults.memorySearch.provider = "openai" (remote).',
-    'Or set agents.defaults.memorySearch.provider = "voyage" (remote).',
+    ...REMOTE_EMBEDDING_PROVIDER_IDS.map(
+      (provider) => `Or set agents.defaults.memorySearch.provider = "${provider}" (remote).`,
+    ),
   ]
     .filter(Boolean)
     .join("\n");

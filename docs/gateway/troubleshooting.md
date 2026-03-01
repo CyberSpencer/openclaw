@@ -329,7 +329,7 @@ If channels are up but nothing answers, check routing and policy before reconnec
 ```bash
 openclaw status
 openclaw channels status --probe
-openclaw pairing list <channel>
+openclaw pairing list --channel <channel> [--account <id>]
 openclaw config get channels
 openclaw logs --follow
 ```
@@ -373,8 +373,26 @@ Look for:
 Common signatures:
 
 - `device identity required` → non-secure context or missing device auth.
+- `device nonce required` / `device nonce mismatch` → client is not completing the
+  challenge-based device auth flow (`connect.challenge` + `device.nonce`).
+- `device signature invalid` / `device signature expired` → client signed the wrong
+  payload (or stale timestamp) for the current handshake.
 - `unauthorized` / reconnect loop → token/password mismatch.
 - `gateway connect failed:` → wrong host/port/url target.
+
+Device auth v2 migration check:
+
+```bash
+openclaw --version
+openclaw doctor
+openclaw gateway status
+```
+
+If logs show nonce/signature errors, update the connecting client and verify it:
+
+1. waits for `connect.challenge`
+2. signs the challenge-bound payload
+3. sends `connect.params.device.nonce` with the same challenge nonce
 
 Related:
 
@@ -402,7 +420,7 @@ Look for:
 
 Common signatures:
 
-- `Gateway start blocked: set gateway.mode=local` → local gateway mode is not enabled.
+- `Gateway start blocked: set gateway.mode=local` → local gateway mode is not enabled. Fix: set `gateway.mode="local"` in your config (or run `openclaw configure`). If you are running OpenClaw via Podman using the dedicated `openclaw` user, the config lives at `~openclaw/.openclaw/openclaw.json`.
 - `refusing to bind gateway ... without auth` → non-loopback bind without token/password.
 - `another gateway instance is already listening` / `EADDRINUSE` → port conflict.
 
@@ -418,7 +436,7 @@ If channel state is connected but message flow is dead, focus on policy, permiss
 
 ```bash
 openclaw channels status --probe
-openclaw pairing list <channel>
+openclaw pairing list --channel <channel> [--account <id>]
 openclaw status --deep
 openclaw logs --follow
 openclaw config get channels
@@ -467,6 +485,7 @@ Common signatures:
 - `cron: timer tick failed` → scheduler tick failed; check file/log/runtime errors.
 - `heartbeat skipped` with `reason=quiet-hours` → outside active hours window.
 - `heartbeat: unknown accountId` → invalid account id for heartbeat delivery target.
+- `heartbeat skipped` with `reason=dm-blocked` → heartbeat target resolved to a DM-style destination while `agents.defaults.heartbeat.directPolicy` (or per-agent override) is set to `block`.
 
 Related:
 
@@ -582,7 +601,7 @@ Common signatures:
 
 ```bash
 openclaw devices list
-openclaw pairing list <channel>
+openclaw pairing list --channel <channel> [--account <id>]
 openclaw logs --follow
 openclaw doctor
 ```

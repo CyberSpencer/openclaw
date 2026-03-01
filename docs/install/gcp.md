@@ -114,10 +114,11 @@ gcloud services enable compute.googleapis.com
 
 **Machine types:**
 
-| Type     | Specs                    | Cost               | Notes              |
-| -------- | ------------------------ | ------------------ | ------------------ |
-| e2-small | 2 vCPU, 2GB RAM          | ~$12/mo            | Recommended        |
-| e2-micro | 2 vCPU (shared), 1GB RAM | Free tier eligible | May OOM under load |
+| Type      | Specs                    | Cost               | Notes                                        |
+| --------- | ------------------------ | ------------------ | -------------------------------------------- |
+| e2-medium | 2 vCPU, 4GB RAM          | ~$25/mo            | Most reliable for local Docker builds        |
+| e2-small  | 2 vCPU, 2GB RAM          | ~$12/mo            | Minimum recommended for Docker build         |
+| e2-micro  | 2 vCPU (shared), 1GB RAM | Free tier eligible | Often fails with Docker build OOM (exit 137) |
 
 **CLI:**
 
@@ -218,7 +219,7 @@ Create `.env` in the repository root.
 OPENCLAW_IMAGE=openclaw:latest
 OPENCLAW_GATEWAY_TOKEN=change-me-now
 OPENCLAW_GATEWAY_BIND=lan
-OPENCLAW_GATEWAY_PORT=32555
+OPENCLAW_GATEWAY_PORT=18789
 
 OPENCLAW_CONFIG_DIR=/home/$USER/.openclaw
 OPENCLAW_WORKSPACE_DIR=/home/$USER/.openclaw/workspace
@@ -265,11 +266,7 @@ services:
     ports:
       # Recommended: keep the Gateway loopback-only on the VM; access via SSH tunnel.
       # To expose it publicly, remove the `127.0.0.1:` prefix and firewall accordingly.
-      - "127.0.0.1:${OPENCLAW_GATEWAY_PORT}:32555"
-
-      # Optional: only if you run iOS/Android nodes against this VM and need Canvas host.
-      # If you expose this publicly, read /gateway/security and firewall accordingly.
-      # - "18793:18793"
+      - "127.0.0.1:${OPENCLAW_GATEWAY_PORT}:18789"
     command:
       [
         "node",
@@ -354,6 +351,16 @@ docker compose build
 docker compose up -d openclaw-gateway
 ```
 
+If build fails with `Killed` / `exit code 137` during `pnpm install --frozen-lockfile`, the VM is out of memory. Use `e2-small` minimum, or `e2-medium` for more reliable first builds.
+
+When binding to LAN (`OPENCLAW_GATEWAY_BIND=lan`), configure a trusted browser origin before continuing:
+
+```bash
+docker compose run --rm openclaw-cli config set gateway.controlUi.allowedOrigins '["http://127.0.0.1:18789"]' --strict-json
+```
+
+If you changed the gateway port, replace `18789` with your configured port.
+
 Verify binaries:
 
 ```bash
@@ -381,7 +388,7 @@ docker compose logs -f openclaw-gateway
 Success:
 
 ```
-[gateway] listening on ws://0.0.0.0:32555
+[gateway] listening on ws://0.0.0.0:18789
 ```
 
 ---
@@ -391,14 +398,27 @@ Success:
 Create an SSH tunnel to forward the Gateway port:
 
 ```bash
-gcloud compute ssh openclaw-gateway --zone=us-central1-a -- -L 32555:127.0.0.1:32555
+gcloud compute ssh openclaw-gateway --zone=us-central1-a -- -L 18789:127.0.0.1:18789
 ```
 
 Open in your browser:
 
-`http://127.0.0.1:32555/`
+`http://127.0.0.1:18789/`
 
-Paste your gateway token.
+Fetch a fresh tokenized dashboard link:
+
+```bash
+docker compose run --rm openclaw-cli dashboard --no-open
+```
+
+Paste the token from that URL.
+
+If Control UI shows `unauthorized` or `disconnected (1008): pairing required`, approve the browser device:
+
+```bash
+docker compose run --rm openclaw-cli devices list
+docker compose run --rm openclaw-cli devices approve <requestId>
+```
 
 ---
 
@@ -453,7 +473,7 @@ Ensure your account has the required IAM permissions (Compute OS Login or Comput
 
 **Out of memory (OOM)**
 
-If using e2-micro and hitting OOM, upgrade to e2-small or e2-medium:
+If Docker build fails with `Killed` and `exit code 137`, the VM was OOM-killed. Upgrade to e2-small (minimum) or e2-medium (recommended for reliable local builds):
 
 ```bash
 # Stop the VM first

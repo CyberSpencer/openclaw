@@ -10,24 +10,25 @@ OpenClaw.app uses SSH tunneling to connect to a remote gateway. This guide shows
 
 ## Overview
 
-```
-┌─────────────────────────────────────────────────────────────┐
-│                        Client Machine                          │
-│                                                              │
-│  OpenClaw.app ──► ws://127.0.0.1:32555 (local port)           │
-│                     │                                        │
-│                     ▼                                        │
-│  SSH Tunnel ────────────────────────────────────────────────│
-│                     │                                        │
-└─────────────────────┼──────────────────────────────────────┘
-                      │
-                      ▼
-┌─────────────────────────────────────────────────────────────┐
-│                         Remote Machine                        │
-│                                                              │
-│  Gateway WebSocket ──► ws://127.0.0.1:32555 ──►              │
-│                                                              │
-└─────────────────────────────────────────────────────────────┘
+```mermaid
+flowchart TB
+    subgraph Client["Client Machine"]
+        direction TB
+        A["OpenClaw.app"]
+        B["ws://127.0.0.1:18789\n(local port)"]
+        T["SSH Tunnel"]
+
+        A --> B
+        B --> T
+    end
+    subgraph Remote["Remote Machine"]
+        direction TB
+        C["Gateway WebSocket"]
+        D["ws://127.0.0.1:18789"]
+
+        C --> D
+    end
+    T --> C
 ```
 
 ## Quick Setup
@@ -40,7 +41,7 @@ Edit `~/.ssh/config` and add:
 Host remote-gateway
     HostName <REMOTE_IP>          # e.g., 172.27.187.184
     User <REMOTE_USER>            # e.g., jefferson
-    LocalForward 32555 127.0.0.1:32555
+    LocalForward 18789 127.0.0.1:18789
     IdentityFile ~/.ssh/id_rsa
 ```
 
@@ -83,7 +84,7 @@ To have the SSH tunnel start automatically when you log in, create a Launch Agen
 
 ### Create the PLIST file
 
-Save this as `~/Library/LaunchAgents/bot.molt.ssh-tunnel.plist`:
+Save this as `~/Library/LaunchAgents/ai.openclaw.ssh-tunnel.plist`:
 
 ```xml
 <?xml version="1.0" encoding="UTF-8"?>
@@ -91,7 +92,7 @@ Save this as `~/Library/LaunchAgents/bot.molt.ssh-tunnel.plist`:
 <plist version="1.0">
 <dict>
     <key>Label</key>
-    <string>bot.molt.ssh-tunnel</string>
+    <string>ai.openclaw.ssh-tunnel</string>
     <key>ProgramArguments</key>
     <array>
         <string>/usr/bin/ssh</string>
@@ -109,7 +110,7 @@ Save this as `~/Library/LaunchAgents/bot.molt.ssh-tunnel.plist`:
 ### Load the Launch Agent
 
 ```bash
-launchctl bootstrap gui/$UID ~/Library/LaunchAgents/bot.molt.ssh-tunnel.plist
+launchctl bootstrap gui/$UID ~/Library/LaunchAgents/ai.openclaw.ssh-tunnel.plist
 ```
 
 The tunnel will now:
@@ -128,19 +129,19 @@ Legacy note: remove any leftover `com.openclaw.ssh-tunnel` LaunchAgent if presen
 
 ```bash
 ps aux | grep "ssh -N remote-gateway" | grep -v grep
-lsof -i :32555
+lsof -i :18789
 ```
 
 **Restart the tunnel:**
 
 ```bash
-launchctl kickstart -k gui/$UID/bot.molt.ssh-tunnel
+launchctl kickstart -k gui/$UID/ai.openclaw.ssh-tunnel
 ```
 
 **Stop the tunnel:**
 
 ```bash
-launchctl bootout gui/$UID/bot.molt.ssh-tunnel
+launchctl bootout gui/$UID/ai.openclaw.ssh-tunnel
 ```
 
 ---
@@ -149,9 +150,9 @@ launchctl bootout gui/$UID/bot.molt.ssh-tunnel
 
 | Component                            | What It Does                                                 |
 | ------------------------------------ | ------------------------------------------------------------ |
-| `LocalForward 32555 127.0.0.1:32555` | Forwards local port 32555 to remote port 32555               |
+| `LocalForward 18789 127.0.0.1:18789` | Forwards local port 18789 to remote port 18789               |
 | `ssh -N`                             | SSH without executing remote commands (just port forwarding) |
 | `KeepAlive`                          | Automatically restarts tunnel if it crashes                  |
 | `RunAtLoad`                          | Starts tunnel when the agent loads                           |
 
-OpenClaw.app connects to `ws://127.0.0.1:32555` on your client machine. The SSH tunnel forwards that connection to port 32555 on the remote machine where the Gateway is running.
+OpenClaw.app connects to `ws://127.0.0.1:18789` on your client machine. The SSH tunnel forwards that connection to port 18789 on the remote machine where the Gateway is running.

@@ -1,6 +1,6 @@
-import type { GatewayBrowserClient } from "../gateway.ts";
-import type { ChatAttachment, TaskPlan } from "../ui-types.ts";
 import { extractText } from "../chat/message-extract.ts";
+import type { GatewayBrowserClient } from "../gateway.ts";
+import type { ChatAttachment } from "../ui-types.ts";
 import { generateUUID } from "../uuid.ts";
 
 export type ChatState = {
@@ -16,7 +16,6 @@ export type ChatState = {
   chatRunId: string | null;
   chatStream: string | null;
   chatStreamStartedAt: number | null;
-  chatTaskPlan: TaskPlan | null;
   lastError: string | null;
 };
 
@@ -28,25 +27,6 @@ export type ChatEventPayload = {
   errorMessage?: string;
 };
 
-export type ChatSteerStatus =
-  | "steered"
-  | "compacting"
-  | "not_streaming"
-  | "no_active_run"
-  | "session_not_found";
-
-export type ChatSteerResult = {
-  ok: true;
-  status: ChatSteerStatus;
-  cached?: boolean;
-};
-
-type ChatHistoryResult = {
-  messages?: unknown[];
-  thinkingLevel?: string | null;
-  taskPlan?: TaskPlan | null;
-};
-
 export async function loadChatHistory(state: ChatState) {
   if (!state.client || !state.connected) {
     return;
@@ -54,13 +34,15 @@ export async function loadChatHistory(state: ChatState) {
   state.chatLoading = true;
   state.lastError = null;
   try {
-    const res = await state.client.request<ChatHistoryResult | null>("chat.history", {
-      sessionKey: state.sessionKey,
-      limit: 200,
-    });
-    state.chatMessages = Array.isArray(res?.messages) ? res.messages : [];
-    state.chatThinkingLevel = res?.thinkingLevel ?? null;
-    state.chatTaskPlan = res?.taskPlan ?? null;
+    const res = await state.client.request<{ messages?: Array<unknown>; thinkingLevel?: string }>(
+      "chat.history",
+      {
+        sessionKey: state.sessionKey,
+        limit: 200,
+      },
+    );
+    state.chatMessages = Array.isArray(res.messages) ? res.messages : [];
+    state.chatThinkingLevel = res.thinkingLevel ?? null;
   } catch (err) {
     state.lastError = String(err);
   } finally {
@@ -74,6 +56,55 @@ function dataUrlToBase64(dataUrl: string): { content: string; mimeType: string }
     return null;
   }
   return { mimeType: match[1], content: match[2] };
+}
+
+type AssistantMessageNormalizationOptions = {
+  roleRequirement: "required" | "optional";
+  roleCaseSensitive?: boolean;
+  requireContentArray?: boolean;
+  allowTextField?: boolean;
+};
+
+function normalizeAssistantMessage(
+  message: unknown,
+  options: AssistantMessageNormalizationOptions,
+): Record<string, unknown> | null {
+  if (!message || typeof message !== "object") {
+    return null;
+  }
+  const candidate = message as Record<string, unknown>;
+  const roleValue = candidate.role;
+  if (typeof roleValue === "string") {
+    const role = options.roleCaseSensitive ? roleValue : roleValue.toLowerCase();
+    if (role !== "assistant") {
+      return null;
+    }
+  } else if (options.roleRequirement === "required") {
+    return null;
+  }
+
+  if (options.requireContentArray) {
+    return Array.isArray(candidate.content) ? candidate : null;
+  }
+  if (!("content" in candidate) && !(options.allowTextField && "text" in candidate)) {
+    return null;
+  }
+  return candidate;
+}
+
+function normalizeAbortedAssistantMessage(message: unknown): Record<string, unknown> | null {
+  return normalizeAssistantMessage(message, {
+    roleRequirement: "required",
+    roleCaseSensitive: true,
+    requireContentArray: true,
+  });
+}
+
+function normalizeFinalAssistantMessage(message: unknown): Record<string, unknown> | null {
+  return normalizeAssistantMessage(message, {
+    roleRequirement: "optional",
+    allowTextField: true,
+  });
 }
 
 export async function sendChatMessage(
@@ -91,7 +122,6 @@ export async function sendChatMessage(
   }
 
   const now = Date.now();
-  state.chatTaskPlan = null;
 
   // Build user message content blocks
   const contentBlocks: Array<{ type: string; text?: string; source?: unknown }> = [];
@@ -170,58 +200,6 @@ export async function sendChatMessage(
   }
 }
 
-export async function steerChatMessage(
-  state: ChatState,
-  message: string,
-): Promise<ChatSteerResult | null> {
-  if (!state.client || !state.connected) {
-    return null;
-  }
-  const msg = message.trim();
-  if (!msg) {
-    return null;
-  }
-
-  const now = Date.now();
-  const steerId = generateUUID();
-
-  // Optimistic append so the terminal/log reflects the steer immediately.
-  state.chatMessages = [
-    ...state.chatMessages,
-    {
-      role: "user",
-      id: steerId,
-      content: [{ type: "text", text: msg }],
-      timestamp: now,
-    },
-  ];
-
-  state.chatSending = true;
-  state.lastError = null;
-  try {
-    const res = await state.client.request<ChatSteerResult | null>("chat.steer", {
-      sessionKey: state.sessionKey,
-      message: msg,
-      idempotencyKey: steerId,
-    });
-    return res ?? null;
-  } catch (err) {
-    const error = String(err);
-    state.lastError = error;
-    state.chatMessages = [
-      ...state.chatMessages,
-      {
-        role: "assistant",
-        content: [{ type: "text", text: "Error: " + error }],
-        timestamp: Date.now(),
-      },
-    ];
-    return null;
-  } finally {
-    state.chatSending = false;
-  }
-}
-
 export async function abortChatRun(state: ChatState): Promise<boolean> {
   if (!state.client || !state.connected) {
     return false;
@@ -251,22 +229,17 @@ export function handleChatEvent(state: ChatState, payload?: ChatEventPayload) {
   // See https://github.com/openclaw/openclaw/issues/1909
   if (payload.runId && state.chatRunId && payload.runId !== state.chatRunId) {
     if (payload.state === "final") {
+      const finalMessage = normalizeFinalAssistantMessage(payload.message);
+      if (finalMessage) {
+        state.chatMessages = [...state.chatMessages, finalMessage];
+        return null;
+      }
       return "final";
     }
     return null;
   }
 
   if (payload.state === "delta") {
-    // Runs can be started by non-chat UI entrypoints (e.g., voice mode).
-    // When we see deltas for the active session and no run is tracked yet, bind to it
-    // so tool streaming + Stop controls can attach.
-    if (!state.chatRunId) {
-      state.chatRunId = payload.runId;
-      state.chatStreamStartedAt = Date.now();
-      if (state.chatStream === null) {
-        state.chatStream = "";
-      }
-    }
     const next = extractText(payload.message);
     if (typeof next === "string") {
       const current = state.chatStream ?? "";
@@ -275,15 +248,33 @@ export function handleChatEvent(state: ChatState, payload?: ChatEventPayload) {
       }
     }
   } else if (payload.state === "final") {
+    const finalMessage = normalizeFinalAssistantMessage(payload.message);
+    if (finalMessage) {
+      state.chatMessages = [...state.chatMessages, finalMessage];
+    }
     state.chatStream = null;
     state.chatRunId = null;
     state.chatStreamStartedAt = null;
-    state.lastError = null;
   } else if (payload.state === "aborted") {
+    const normalizedMessage = normalizeAbortedAssistantMessage(payload.message);
+    if (normalizedMessage) {
+      state.chatMessages = [...state.chatMessages, normalizedMessage];
+    } else {
+      const streamedText = state.chatStream ?? "";
+      if (streamedText.trim()) {
+        state.chatMessages = [
+          ...state.chatMessages,
+          {
+            role: "assistant",
+            content: [{ type: "text", text: streamedText }],
+            timestamp: Date.now(),
+          },
+        ];
+      }
+    }
     state.chatStream = null;
     state.chatRunId = null;
     state.chatStreamStartedAt = null;
-    state.lastError = "Run was stopped.";
   } else if (payload.state === "error") {
     state.chatStream = null;
     state.chatRunId = null;

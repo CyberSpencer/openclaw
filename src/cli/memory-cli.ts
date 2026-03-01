@@ -1,10 +1,10 @@
-import type { Command } from "commander";
 import fsSync from "node:fs";
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
+import type { Command } from "commander";
 import { resolveDefaultAgentId } from "../agents/agent-scope.js";
-import { loadConfig, type MemorySearchConfig, type OpenClawConfig } from "../config/config.js";
+import { loadConfig } from "../config/config.js";
 import { resolveStateDir } from "../config/paths.js";
 import { resolveSessionTranscriptsDirForAgent } from "../config/sessions/paths.js";
 import { setVerbose } from "../globals.js";
@@ -15,6 +15,7 @@ import { formatDocsLink } from "../terminal/links.js";
 import { colorize, isRich, theme } from "../terminal/theme.js";
 import { shortenHomeInString, shortenHomePath } from "../utils.js";
 import { formatErrorMessage, withManager } from "./cli-utils.js";
+import { formatHelpExamples } from "./help-format.js";
 import { withProgress, withProgressTotals } from "./progress.js";
 
 type MemoryCommandOptions = {
@@ -27,6 +28,7 @@ type MemoryCommandOptions = {
 };
 
 type MemoryManager = NonNullable<MemorySearchManagerResult["manager"]>;
+type MemoryManagerPurpose = Parameters<typeof getMemorySearchManager>[0]["purpose"];
 
 type MemorySourceName = "memory" | "sessions";
 
@@ -41,35 +43,6 @@ type MemorySourceScan = {
   totalFiles: number | null;
   issues: string[];
 };
-
-function cloneConfig<T>(value: T): T {
-  return JSON.parse(JSON.stringify(value)) as T;
-}
-
-function disableMemorySearchAutoSync(cfg: OpenClawConfig, agentId: string): OpenClawConfig {
-  const clone = cloneConfig(cfg);
-  const defaults = clone.agents?.defaults?.memorySearch;
-  const agentsById = clone.agents as
-    | (Record<string, { memorySearch?: MemorySearchConfig } | undefined> & typeof clone.agents)
-    | undefined;
-  const overrides = agentsById?.[agentId]?.memorySearch;
-  const listEntry = clone.agents?.list?.find((entry) => entry.id === agentId);
-  const apply = (target?: MemorySearchConfig) => {
-    if (!target) {
-      return;
-    }
-    const sync = (target.sync ??= {});
-    sync.onSearch = false;
-    sync.onSessionStart = false;
-    sync.watch = false;
-    sync.intervalMinutes = 0;
-  };
-  apply(defaults);
-  apply(listEntry?.memorySearch);
-  apply(overrides);
-  apply(listEntry?.memorySearch);
-  return clone;
-}
 
 function formatSourceLabel(source: string, workspaceDir: string, agentId: string): string {
   if (source === "memory") {
@@ -108,6 +81,31 @@ function resolveAgentIds(cfg: ReturnType<typeof loadConfig>, agent?: string): st
 
 function formatExtraPaths(workspaceDir: string, extraPaths: string[]): string[] {
   return normalizeExtraMemoryPaths(workspaceDir, extraPaths).map((entry) => shortenHomePath(entry));
+}
+
+async function withMemoryManagerForAgent(params: {
+  cfg: ReturnType<typeof loadConfig>;
+  agentId: string;
+  purpose?: MemoryManagerPurpose;
+  run: (manager: MemoryManager) => Promise<void>;
+}): Promise<void> {
+  const managerParams: Parameters<typeof getMemorySearchManager>[0] = {
+    cfg: params.cfg,
+    agentId: params.agentId,
+  };
+  if (params.purpose) {
+    managerParams.purpose = params.purpose;
+  }
+  await withManager<MemoryManager>({
+    getManager: () => getMemorySearchManager(managerParams),
+    onMissing: (error) => defaultRuntime.log(error ?? "Memory search disabled."),
+    onCloseError: (err) =>
+      defaultRuntime.error(`Memory manager close failed: ${formatErrorMessage(err)}`),
+    close: async (manager) => {
+      await manager.close?.();
+    },
+    run: params.run,
+  });
 }
 
 async function checkReadableFile(pathname: string): Promise<{ exists: boolean; issue?: string }> {
@@ -244,6 +242,34 @@ async function scanMemoryFiles(
   return { source: "memory", totalFiles, issues };
 }
 
+async function summarizeQmdIndexArtifact(manager: MemoryManager): Promise<string | null> {
+  const status = manager.status?.();
+  if (!status || status.backend !== "qmd") {
+    return null;
+  }
+  const dbPath = status.dbPath?.trim();
+  if (!dbPath) {
+    return null;
+  }
+  let stat: fsSync.Stats;
+  try {
+    stat = await fs.stat(dbPath);
+  } catch (err) {
+    const code = (err as NodeJS.ErrnoException).code;
+    if (code === "ENOENT") {
+      throw new Error(`QMD index file not found: ${shortenHomePath(dbPath)}`, { cause: err });
+    }
+    throw new Error(
+      `QMD index file check failed: ${shortenHomePath(dbPath)} (${code ?? "error"})`,
+      { cause: err },
+    );
+  }
+  if (!stat.isFile() || stat.size <= 0) {
+    throw new Error(`QMD index file is empty: ${shortenHomePath(dbPath)}`);
+  }
+  return `QMD index: ${shortenHomePath(dbPath)} (${stat.size} bytes)`;
+}
+
 async function scanMemorySources(params: {
   workspaceDir: string;
   agentId: string;
@@ -282,15 +308,11 @@ export async function runMemoryStatus(opts: MemoryCommandOptions) {
   }> = [];
 
   for (const agentId of agentIds) {
-    const statusCfg = disableMemorySearchAutoSync(cfg, agentId);
-    await withManager<MemoryManager>({
-      getManager: () => getMemorySearchManager({ cfg: statusCfg, agentId }),
-      onMissing: (error) => defaultRuntime.log(error ?? "Memory search disabled."),
-      onCloseError: (err) =>
-        defaultRuntime.error(`Memory manager close failed: ${formatErrorMessage(err)}`),
-      close: async (manager) => {
-        await manager.close?.();
-      },
+    const managerPurpose = opts.index ? "default" : "status";
+    await withMemoryManagerForAgent({
+      cfg,
+      agentId,
+      purpose: managerPurpose,
       run: async (manager) => {
         const deep = Boolean(opts.deep || opts.index);
         let embeddingProbe:
@@ -516,11 +538,16 @@ export async function runMemoryStatus(opts: MemoryCommandOptions) {
 export function registerMemoryCli(program: Command) {
   const memory = program
     .command("memory")
-    .description("Memory search tools")
+    .description("Search, inspect, and reindex memory files")
     .addHelpText(
       "after",
       () =>
-        `\n${theme.muted("Docs:")} ${formatDocsLink("/cli/memory", "docs.openclaw.ai/cli/memory")}\n`,
+        `\n${theme.heading("Examples:")}\n${formatHelpExamples([
+          ["openclaw memory status", "Show index and provider status."],
+          ["openclaw memory index --force", "Force a full reindex."],
+          ['openclaw memory search --query "deployment notes"', "Search indexed memory entries."],
+          ["openclaw memory status --json", "Output machine-readable JSON."],
+        ])}\n\n${theme.muted("Docs:")} ${formatDocsLink("/cli/memory", "docs.openclaw.ai/cli/memory")}\n`,
     );
 
   memory
@@ -546,14 +573,9 @@ export function registerMemoryCli(program: Command) {
       const cfg = loadConfig();
       const agentIds = resolveAgentIds(cfg, opts.agent);
       for (const agentId of agentIds) {
-        await withManager<MemoryManager>({
-          getManager: () => getMemorySearchManager({ cfg, agentId }),
-          onMissing: (error) => defaultRuntime.log(error ?? "Memory search disabled."),
-          onCloseError: (err) =>
-            defaultRuntime.error(`Memory manager close failed: ${formatErrorMessage(err)}`),
-          close: async (manager) => {
-            await manager.close?.();
-          },
+        await withMemoryManagerForAgent({
+          cfg,
+          agentId,
           run: async (manager) => {
             try {
               const syncFn = manager.sync ? manager.sync.bind(manager) : undefined;
@@ -662,6 +684,10 @@ export function registerMemoryCli(program: Command) {
                   }
                 },
               );
+              const qmdIndexSummary = await summarizeQmdIndexArtifact(manager);
+              if (qmdIndexSummary) {
+                defaultRuntime.log(qmdIndexSummary);
+              }
               defaultRuntime.log(`Memory index updated (${agentId}).`);
             } catch (err) {
               const message = formatErrorMessage(err);
@@ -676,30 +702,34 @@ export function registerMemoryCli(program: Command) {
   memory
     .command("search")
     .description("Search memory files")
-    .argument("<query>", "Search query")
+    .argument("[query]", "Search query")
+    .option("--query <text>", "Search query (alternative to positional argument)")
     .option("--agent <id>", "Agent id (default: default agent)")
     .option("--max-results <n>", "Max results", (value: string) => Number(value))
     .option("--min-score <n>", "Minimum score", (value: string) => Number(value))
     .option("--json", "Print JSON")
     .action(
       async (
-        query: string,
+        queryArg: string | undefined,
         opts: MemoryCommandOptions & {
+          query?: string;
           maxResults?: number;
           minScore?: number;
         },
       ) => {
+        const query = opts.query ?? queryArg;
+        if (!query) {
+          defaultRuntime.error(
+            "Missing search query. Provide a positional query or use --query <text>.",
+          );
+          process.exitCode = 1;
+          return;
+        }
         const cfg = loadConfig();
         const agentId = resolveAgent(cfg, opts.agent);
-        const searchCfg = disableMemorySearchAutoSync(cfg, agentId);
-        await withManager<MemoryManager>({
-          getManager: () => getMemorySearchManager({ cfg: searchCfg, agentId }),
-          onMissing: (error) => defaultRuntime.log(error ?? "Memory search disabled."),
-          onCloseError: (err) =>
-            defaultRuntime.error(`Memory manager close failed: ${formatErrorMessage(err)}`),
-          close: async (manager) => {
-            await manager.close?.();
-          },
+        await withMemoryManagerForAgent({
+          cfg,
+          agentId,
           run: async (manager) => {
             let results: Awaited<ReturnType<typeof manager.search>>;
             try {
