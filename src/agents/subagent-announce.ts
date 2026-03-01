@@ -310,7 +310,7 @@ function warnAnnounceLineageMismatch(params: {
     return;
   }
 
-  defaultRuntime.log(
+  defaultRuntime.warn(
     `[subagent-announce] lineage warning ${JSON.stringify({
       type: "announce_target_lineage_mismatch",
       requesterSessionKey: params.requesterSessionKey,

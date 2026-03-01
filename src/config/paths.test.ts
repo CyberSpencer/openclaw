@@ -69,6 +69,26 @@ describe("state + config path candidates", () => {
     expect(candidates[0]).toBe(path.join(resolvedHome, ".openclaw", "openclaw.json"));
   });
 
+  it("does not nest state dir when OPENCLAW_HOME already points at .openclaw", () => {
+    const env = {
+      OPENCLAW_HOME: "/srv/openclaw-home/.openclaw",
+    } as NodeJS.ProcessEnv;
+
+    const resolvedStateDir = path.resolve("/srv/openclaw-home/.openclaw");
+    expect(resolveStateDir(env)).toBe(resolvedStateDir);
+
+    const candidates = resolveDefaultConfigCandidates(env);
+    expect(candidates[0]).toBe(path.join(resolvedStateDir, "openclaw.json"));
+  });
+
+  it("does not nest state dir when OPENCLAW_HOME points at legacy state dirs", () => {
+    const env = {
+      OPENCLAW_HOME: "/srv/openclaw-home/.clawdbot",
+    } as NodeJS.ProcessEnv;
+
+    expect(resolveStateDir(env)).toBe(path.resolve("/srv/openclaw-home/.clawdbot"));
+  });
+
   it("orders default config candidates in a stable order", () => {
     const home = "/home/test";
     const resolvedHome = path.resolve(home);

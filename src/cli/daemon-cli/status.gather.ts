@@ -1,4 +1,8 @@
-import type { GatewayBindMode, GatewayControlUiConfig } from "../../config/types.js";
+import type {
+  GatewayBindMode,
+  GatewayControlUiConfig,
+  OpenClawConfig,
+} from "../../config/types.js";
 import type { FindExtraGatewayServicesOptions } from "../../daemon/inspect.js";
 import type { ServiceConfigAudit } from "../../daemon/service-audit.js";
 import type { GatewayRpcOpts } from "./types.js";
@@ -145,8 +149,16 @@ export async function gatherDaemonStatus(
     cliIO.readConfigFileSnapshot().catch(() => null),
     daemonIO.readConfigFileSnapshot().catch(() => null),
   ]);
-  const cliCfg = cliIO.loadConfig();
-  const daemonCfg = daemonIO.loadConfig();
+  const cliLoadedCfg = cliIO.loadConfig();
+  const daemonLoadedCfg = daemonIO.loadConfig();
+  const cliCfg: OpenClawConfig =
+    cliSnapshot && !cliSnapshot.valid && cliSnapshot.config
+      ? (cliSnapshot.config as OpenClawConfig)
+      : cliLoadedCfg;
+  const daemonCfg: OpenClawConfig =
+    daemonSnapshot && !daemonSnapshot.valid && daemonSnapshot.config
+      ? (daemonSnapshot.config as OpenClawConfig)
+      : daemonLoadedCfg;
 
   const cliConfigSummary: ConfigSummary = {
     path: cliSnapshot?.path ?? cliConfigPath,

@@ -93,6 +93,36 @@ export type GatewayBrowserClientOptions = {
 
 // 4008 = application-defined code (browser rejects 1008 "Policy Violation")
 const CONNECT_FAILED_CLOSE_CODE = 4008;
+const MAX_CLOSE_REASON_LENGTH = 123;
+
+function toErrorMessage(err: unknown): string {
+  if (err instanceof Error) {
+    return err.message.trim();
+  }
+  return String(err ?? "").trim();
+}
+
+function truncateCloseReason(reason: string, fallback: string): string {
+  const trimmed = reason.trim();
+  const resolved = trimmed || fallback;
+  return resolved.slice(0, MAX_CLOSE_REASON_LENGTH);
+}
+
+function extractAuthFailureReason(message: string): string | null {
+  const text = message.trim();
+  if (!text) {
+    return null;
+  }
+  if (
+    /(^|[\s:(])unauthorized([\s).:]|$)/i.test(text) ||
+    /token[_\s-]?mismatch/i.test(text) ||
+    /invalid[\s-]?token/i.test(text) ||
+    /authentication failed/i.test(text)
+  ) {
+    return text;
+  }
+  return null;
+}
 
 export class GatewayBrowserClient {
   private ws: WebSocket | null = null;
@@ -103,11 +133,13 @@ export class GatewayBrowserClient {
   private connectSent = false;
   private connectTimer: number | null = null;
   private backoffMs = 800;
+  private terminalAuthFailureReason: string | null = null;
 
   constructor(private opts: GatewayBrowserClientOptions) {}
 
   start() {
     this.closed = false;
+    this.terminalAuthFailureReason = null;
     this.connect();
   }
 
@@ -131,10 +163,16 @@ export class GatewayBrowserClient {
     this.ws.addEventListener("message", (ev) => this.handleMessage(String(ev.data ?? "")));
     this.ws.addEventListener("close", (ev) => {
       const reason = String(ev.reason ?? "");
+      const authReason = extractAuthFailureReason(reason);
+      if (authReason || ev.code === 1008) {
+        this.terminalAuthFailureReason = authReason ?? "unauthorized";
+      }
       this.ws = null;
       this.flushPending(new Error(`gateway closed (${ev.code}): ${reason}`));
       this.opts.onClose?.({ code: ev.code, reason });
-      this.scheduleReconnect();
+      if (!this.terminalAuthFailureReason) {
+        this.scheduleReconnect();
+      }
     });
     this.ws.addEventListener("error", () => {
       // ignored; close handler will fire
@@ -142,7 +180,7 @@ export class GatewayBrowserClient {
   }
 
   private scheduleReconnect() {
-    if (this.closed) {
+    if (this.closed || this.terminalAuthFailureReason) {
       return;
     }
     const delay = this.backoffMs;
@@ -259,11 +297,17 @@ export class GatewayBrowserClient {
         this.backoffMs = 800;
         this.opts.onHello?.(hello);
       })
-      .catch(() => {
+      .catch((err) => {
+        const errorMessage = toErrorMessage(err);
+        const authReason = extractAuthFailureReason(errorMessage);
+        if (authReason) {
+          this.terminalAuthFailureReason = authReason;
+        }
         if (canFallbackToShared && deviceIdentity) {
           clearDeviceAuthToken({ deviceId: deviceIdentity.deviceId, role });
         }
-        this.ws?.close(CONNECT_FAILED_CLOSE_CODE, "connect failed");
+        const closeReason = truncateCloseReason(authReason ?? errorMessage, "connect failed");
+        this.ws?.close(CONNECT_FAILED_CLOSE_CODE, closeReason);
       });
   }
 
