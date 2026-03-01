@@ -565,11 +565,8 @@ function renderUsageInsights(
   `;
 }
 
-import {
-  renderEmptyDetailState,
-  renderSessionDetailPanel,
-  renderSessionsCard,
-} from "./usage-session-panels.ts";
+import { renderEmptyDetailState, renderSessionDetailPanel } from "./usage-session-detail.ts";
+import { renderSessionsCard } from "./usage-session-panels.ts";
 export function renderUsage(props: UsageProps) {
   // Show loading skeleton if loading and no data yet
   if (props.loading && !props.totals) {
