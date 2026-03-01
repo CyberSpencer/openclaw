@@ -1,5 +1,6 @@
 const KEY = "openclaw.control.settings.v1";
 
+import { inferBasePathFromPathname, normalizeBasePath } from "./navigation.ts";
 import type { ThemeMode } from "./theme.ts";
 
 export type UiSettings = {
@@ -26,7 +27,20 @@ export type UiSettings = {
 export function loadSettings(): UiSettings {
   const defaultUrl = (() => {
     const proto = location.protocol === "https:" ? "wss" : "ws";
-    return `${proto}://${location.host}`;
+    const configuredBasePath =
+      typeof window !== "undefined" &&
+      typeof (window as { __OPENCLAW_CONTROL_UI_BASE_PATH__?: unknown })
+        .__OPENCLAW_CONTROL_UI_BASE_PATH__ === "string"
+        ? (
+            window as {
+              __OPENCLAW_CONTROL_UI_BASE_PATH__?: string;
+            }
+          ).__OPENCLAW_CONTROL_UI_BASE_PATH__?.trim()
+        : "";
+    const basePath = configuredBasePath
+      ? normalizeBasePath(configuredBasePath)
+      : inferBasePathFromPathname(location.pathname);
+    return `${proto}://${location.host}${basePath}`;
   })();
 
   const defaults: UiSettings = {

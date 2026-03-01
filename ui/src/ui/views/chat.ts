@@ -3,12 +3,13 @@ import { ref } from "lit/directives/ref.js";
 import { repeat } from "lit/directives/repeat.js";
 import { unsafeHTML } from "lit/directives/unsafe-html.js";
 import type { ModelSelectionInfo } from "../app-tool-stream.ts";
-import type { SessionsListResult } from "../types.ts";
-import type { ChatAttachment, ChatQueueItem, TaskPlan, TaskPlanStatus } from "../ui-types.ts";
 import { extractTextCached } from "../chat/message-extract.ts";
 import { normalizeMessage, normalizeRoleForGrouping } from "../chat/message-normalizer.ts";
 import { icons } from "../icons.ts";
 import { toSanitizedMarkdownHtml } from "../markdown.ts";
+import { openExternalUrlSafe } from "../open-external-url.ts";
+import type { SessionsListResult } from "../types.ts";
+import type { ChatAttachment, ChatQueueItem, TaskPlan, TaskPlanStatus } from "../ui-types.ts";
 import { renderMarkdownSidebar } from "./markdown-sidebar.ts";
 import "../components/resizable-divider.ts";
 
@@ -813,7 +814,7 @@ ${item.text}<span class="terminal-cursor" aria-hidden="true"></span></pre>
                         src=${img.url}
                         alt=${img.alt ?? "Attached image"}
                         class="terminal-images__img"
-                        @click=${() => window.open(img.url, "_blank")}
+                        @click=${() => openExternalUrlSafe(img.url, { allowDataImage: true })}
                       />
                     `,
                   )}

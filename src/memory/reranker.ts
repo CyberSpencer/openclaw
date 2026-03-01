@@ -216,7 +216,7 @@ export function createMemoryRerankClient(
       if (request.documents.length === 0) {
         return {
           ids: [],
-          endpoint: this.activeEndpoint ?? endpoints[0]!.baseUrl,
+          endpoint: this.activeEndpoint ?? endpoints[0].baseUrl,
           fallbackUsed: false,
         };
       }

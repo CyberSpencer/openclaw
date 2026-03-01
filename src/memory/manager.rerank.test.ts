@@ -110,7 +110,14 @@ describe("memory manager reranker integration", () => {
         return new Response("", { status: 200 });
       }
       if (url.endsWith("/v1/rerank")) {
-        const body = JSON.parse(String(init?.body ?? "{}")) as {
+        const bodyRaw = init?.body;
+        const bodyText =
+          typeof bodyRaw === "string"
+            ? bodyRaw
+            : bodyRaw instanceof Uint8Array
+              ? new TextDecoder().decode(bodyRaw)
+              : "{}";
+        const body = JSON.parse(bodyText) as {
           documents?: Array<{ id: string }>;
         };
         const docs = body.documents ?? [];
@@ -172,7 +179,14 @@ describe("memory manager reranker integration", () => {
         return new Response("", { status: 200 });
       }
       if (url.endsWith("/v1/rerank")) {
-        const body = JSON.parse(String(init?.body ?? "{}")) as {
+        const bodyRaw = init?.body;
+        const bodyText =
+          typeof bodyRaw === "string"
+            ? bodyRaw
+            : bodyRaw instanceof Uint8Array
+              ? new TextDecoder().decode(bodyRaw)
+              : "{}";
+        const body = JSON.parse(bodyText) as {
           documents?: Array<{ id: string }>;
         };
         const docs = body.documents ?? [];

@@ -1,13 +1,9 @@
-import type { EventLogEntry } from "./app-events.ts";
-import type { ExecApprovalRequest } from "./controllers/exec-approval.ts";
-import type {
-  GatewayEventFrame,
-  GatewayHelloOk,
-  VoiceSparkStreamEventName,
-  VoiceTranscriptUserEventPayload,
-} from "./gateway.ts";
-import type { HealthSnapshot, PresenceEntry } from "./types.ts";
+import {
+  GATEWAY_EVENT_UPDATE_AVAILABLE,
+  type GatewayUpdateAvailableEventPayload,
+} from "../../../src/gateway/events.js";
 import { flushChatQueueForEvent, type ChatHost } from "./app-chat.ts";
+import type { EventLogEntry } from "./app-events.ts";
 import {
   applySettings,
   loadCron,
@@ -24,6 +20,7 @@ import {
 import { loadChatThreads, type ChatThreadsState } from "./controllers/chat-threads.ts";
 import { handleChatEvent, loadChatHistory, type ChatState } from "./controllers/chat.ts";
 import { loadDevices, type DevicesState } from "./controllers/devices.ts";
+import type { ExecApprovalRequest } from "./controllers/exec-approval.ts";
 import {
   addExecApproval,
   parseExecApprovalRequested,
@@ -32,7 +29,16 @@ import {
 } from "./controllers/exec-approval.ts";
 import { loadNodes, type NodesState } from "./controllers/nodes.ts";
 import { loadSubagentMonitor, type SubagentMonitorState } from "./controllers/subagent-monitor.ts";
+import type {
+  GatewayEventFrame,
+  GatewayHelloOk,
+  VoiceSparkStreamEventName,
+  VoiceTranscriptUserEventPayload,
+  GatewayErrorInfo,
+} from "./gateway.ts";
+import * as gatewayModule from "./gateway.ts";
 import { GatewayBrowserClient } from "./gateway.ts";
+import type { HealthSnapshot, PresenceEntry, UpdateAvailable } from "./types.ts";
 
 export type GatewayHost = SettingsHost &
   AssistantIdentityState &
@@ -44,10 +50,13 @@ export type GatewayHost = SettingsHost &
   ChatState &
   ChatHost & {
     password: string;
+    clientInstanceId?: string;
     hello: GatewayHelloOk | null;
     onboarding?: boolean;
     eventLogBuffer: EventLogEntry[];
     eventLog: EventLogEntry[];
+    lastErrorCode?: string | null;
+    updateAvailable?: UpdateAvailable | null;
     getSessionRunHost: (sessionKey: string) => unknown;
     resetAllSessionRunState: () => void;
     execApprovalQueue: ExecApprovalRequest[];
@@ -239,21 +248,27 @@ function formatDisconnectMessage(code: number, reason: string): string | null {
 
 export function connectGateway(host: GatewayHost) {
   host.lastError = null;
+  host.lastErrorCode = null;
   host.hello = null;
   host.connected = false;
   host.execApprovalQueue = [];
   host.execApprovalError = null;
 
-  host.client?.stop();
-  host.client = new GatewayBrowserClient({
+  const previousClient = host.client;
+  const client = new GatewayBrowserClient({
     url: host.settings.gatewayUrl,
     token: host.settings.token.trim() ? host.settings.token : undefined,
     password: host.password.trim() ? host.password : undefined,
     clientName: "openclaw-control-ui",
     mode: "webchat",
+    instanceId: host.clientInstanceId,
     onHello: (hello) => {
+      if (host.client !== client) {
+        return;
+      }
       host.connected = true;
       host.lastError = null;
+      host.lastErrorCode = null;
       host.hello = hello;
       applySnapshot(host, hello);
       // Reset orphaned run state from before disconnect.
@@ -268,19 +283,64 @@ export function connectGateway(host: GatewayHost) {
       void refreshActiveTab(host);
       void host.refreshTopbarControls?.();
     },
-    onClose: ({ code, reason }) => {
+    onClose: ({ code, reason, error }) => {
+      if (host.client !== client) {
+        return;
+      }
       host.connected = false;
-      const disconnectMessage = formatDisconnectMessage(code, reason);
-      if (disconnectMessage) {
+      if (code === 1012) {
+        host.lastError = null;
+        host.lastErrorCode = null;
+        return;
+      }
+      host.lastErrorCode =
+        resolveDisconnectDetailCode(error) ?? (typeof error?.code === "string" ? error.code : null);
+      const resolvedReason = resolveDisconnectReason(error, reason);
+      const disconnectMessage = formatDisconnectMessage(code, resolvedReason);
+      if (disconnectMessage === null) {
+        host.lastError = null;
+      } else {
         host.lastError = disconnectMessage;
       }
     },
-    onEvent: (evt) => handleGatewayEvent(host, evt),
+    onEvent: (evt) => {
+      if (host.client !== client) {
+        return;
+      }
+      handleGatewayEvent(host, evt);
+    },
     onGap: ({ expected, received }) => {
+      if (host.client !== client) {
+        return;
+      }
       host.lastError = `event gap detected (expected seq ${expected}, got ${received}); refresh recommended`;
+      host.lastErrorCode = null;
     },
   });
-  host.client.start();
+  host.client = client;
+  previousClient?.stop();
+  client.start();
+}
+
+function resolveDisconnectReason(error: GatewayErrorInfo | undefined, reason: string): string {
+  const structured = typeof error?.message === "string" ? error.message.trim() : "";
+  if (structured) {
+    return structured;
+  }
+  return reason;
+}
+
+function resolveDisconnectDetailCode(error: GatewayErrorInfo | undefined): string | null {
+  let resolver: unknown;
+  try {
+    resolver = Reflect.get(gatewayModule as object, "resolveGatewayErrorDetailCode");
+  } catch {
+    return null;
+  }
+  if (typeof resolver !== "function") {
+    return null;
+  }
+  return resolver(error as { details?: unknown } | null | undefined);
 }
 
 export function handleGatewayEvent(host: GatewayHost, evt: GatewayEventFrame) {
@@ -478,6 +538,12 @@ function handleGatewayEventUnsafe(host: GatewayHost, evt: GatewayEventFrame) {
         force: true,
       });
     }
+    return;
+  }
+
+  if (evt.event === GATEWAY_EVENT_UPDATE_AVAILABLE) {
+    const payload = evt.payload as GatewayUpdateAvailableEventPayload | undefined;
+    host.updateAvailable = payload?.updateAvailable ?? null;
   }
 }
 
@@ -487,6 +553,7 @@ export function applySnapshot(host: GatewayHost, hello: GatewayHelloOk) {
         presence?: PresenceEntry[];
         health?: HealthSnapshot;
         sessionDefaults?: SessionDefaultsSnapshot;
+        updateAvailable?: UpdateAvailable;
       }
     | undefined;
   if (snapshot?.presence && Array.isArray(snapshot.presence)) {
@@ -497,5 +564,8 @@ export function applySnapshot(host: GatewayHost, hello: GatewayHelloOk) {
   }
   if (snapshot?.sessionDefaults) {
     applySessionDefaults(host, snapshot.sessionDefaults);
+  }
+  if (snapshot?.updateAvailable !== undefined) {
+    host.updateAvailable = snapshot.updateAvailable ?? null;
   }
 }

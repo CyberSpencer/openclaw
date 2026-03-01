@@ -7,7 +7,7 @@ type GatewayResFrame = {
   id: string;
   ok: boolean;
   payload?: unknown;
-  error?: { message?: string } | unknown;
+  error?: { message?: string } | string | null;
 };
 type GatewayEventFrame = { type: "event"; event: string; payload?: unknown };
 type GatewayFrame = GatewayReqFrame | GatewayResFrame | GatewayEventFrame | { type: string };
@@ -51,7 +51,13 @@ async function run() {
   ws.on("message", (raw) => {
     let frame: GatewayFrame;
     try {
-      frame = JSON.parse(raw.toString("utf8")) as GatewayFrame;
+      const payload =
+        typeof raw === "string"
+          ? raw
+          : raw instanceof Uint8Array
+            ? new TextDecoder().decode(raw)
+            : "";
+      frame = JSON.parse(payload) as GatewayFrame;
     } catch {
       return;
     }

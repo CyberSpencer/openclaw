@@ -5,6 +5,7 @@ import {
   type GatewayClientMode,
   type GatewayClientName,
 } from "../../../src/gateway/protocol/client-info.js";
+import { readConnectErrorDetailCode } from "../../../src/gateway/protocol/connect-error-details.js";
 import { clearDeviceAuthToken, loadDeviceAuthToken, storeDeviceAuthToken } from "./device-auth.ts";
 import { loadOrCreateDeviceIdentity, signDevicePayload } from "./device-identity.ts";
 import { generateUUID } from "./uuid.ts";
@@ -57,6 +58,30 @@ export type GatewayResponseFrame = {
   error?: { code: string; message: string; details?: unknown };
 };
 
+export type GatewayErrorInfo = {
+  code: string;
+  message: string;
+  details?: unknown;
+};
+
+export class GatewayRequestError extends Error {
+  readonly gatewayCode: string;
+  readonly details?: unknown;
+
+  constructor(error: GatewayErrorInfo) {
+    super(error.message);
+    this.name = "GatewayRequestError";
+    this.gatewayCode = error.code;
+    this.details = error.details;
+  }
+}
+
+export function resolveGatewayErrorDetailCode(
+  error: { details?: unknown } | null | undefined,
+): string | null {
+  return readConnectErrorDetailCode(error?.details);
+}
+
 export type GatewayHelloOk = {
   type: "hello-ok";
   protocol: number;
@@ -87,7 +112,7 @@ export type GatewayBrowserClientOptions = {
   instanceId?: string;
   onHello?: (hello: GatewayHelloOk) => void;
   onEvent?: (evt: GatewayEventFrame) => void;
-  onClose?: (info: { code: number; reason: string }) => void;
+  onClose?: (info: { code: number; reason: string; error?: GatewayErrorInfo }) => void;
   onGap?: (info: { expected: number; received: number }) => void;
 };
 
@@ -99,7 +124,17 @@ function toErrorMessage(err: unknown): string {
   if (err instanceof Error) {
     return err.message.trim();
   }
-  return String(err ?? "").trim();
+  if (typeof err === "string") {
+    return err.trim();
+  }
+  if (err == null) {
+    return "";
+  }
+  try {
+    return JSON.stringify(err).trim();
+  } catch {
+    return "";
+  }
 }
 
 function truncateCloseReason(reason: string, fallback: string): string {
@@ -124,6 +159,17 @@ function extractAuthFailureReason(message: string): string | null {
   return null;
 }
 
+function toGatewayErrorInfo(err: unknown): GatewayErrorInfo | undefined {
+  if (err instanceof GatewayRequestError) {
+    return {
+      code: err.gatewayCode,
+      message: err.message,
+      details: err.details,
+    };
+  }
+  return undefined;
+}
+
 export class GatewayBrowserClient {
   private ws: WebSocket | null = null;
   private pending = new Map<string, Pending>();
@@ -134,6 +180,7 @@ export class GatewayBrowserClient {
   private connectTimer: number | null = null;
   private backoffMs = 800;
   private terminalAuthFailureReason: string | null = null;
+  private pendingConnectError: GatewayErrorInfo | undefined;
 
   constructor(private opts: GatewayBrowserClientOptions) {}
 
@@ -147,6 +194,7 @@ export class GatewayBrowserClient {
     this.closed = true;
     this.ws?.close();
     this.ws = null;
+    this.pendingConnectError = undefined;
     this.flushPending(new Error("gateway client stopped"));
   }
 
@@ -167,9 +215,11 @@ export class GatewayBrowserClient {
       if (authReason || ev.code === 1008) {
         this.terminalAuthFailureReason = authReason ?? "unauthorized";
       }
+      const connectError = this.pendingConnectError;
+      this.pendingConnectError = undefined;
       this.ws = null;
       this.flushPending(new Error(`gateway closed (${ev.code}): ${reason}`));
-      this.opts.onClose?.({ code: ev.code, reason });
+      this.opts.onClose?.({ code: ev.code, reason, error: connectError });
       if (!this.terminalAuthFailureReason) {
         this.scheduleReconnect();
       }
@@ -298,6 +348,7 @@ export class GatewayBrowserClient {
         this.opts.onHello?.(hello);
       })
       .catch((err) => {
+        this.pendingConnectError = toGatewayErrorInfo(err);
         const errorMessage = toErrorMessage(err);
         const authReason = extractAuthFailureReason(errorMessage);
         if (authReason) {
@@ -356,7 +407,21 @@ export class GatewayBrowserClient {
       if (res.ok) {
         pending.resolve(res.payload);
       } else {
-        pending.reject(new Error(res.error?.message ?? "request failed"));
+        if (
+          res.error &&
+          typeof res.error.code === "string" &&
+          typeof res.error.message === "string"
+        ) {
+          pending.reject(
+            new GatewayRequestError({
+              code: res.error.code,
+              message: res.error.message,
+              details: res.error.details,
+            }),
+          );
+        } else {
+          pending.reject(new Error(res.error?.message ?? "request failed"));
+        }
       }
       return;
     }

@@ -9,7 +9,7 @@ type GatewayResFrame = {
   id: string;
   ok: boolean;
   payload?: unknown;
-  error?: { code?: string; message?: string; details?: unknown } | unknown;
+  error?: { code?: string; message?: string; details?: unknown } | string | null;
 };
 type GatewayEventFrame = { type: "event"; event: string; seq?: number; payload?: unknown };
 type GatewayFrame = GatewayReqFrame | GatewayResFrame | GatewayEventFrame | { type: string };

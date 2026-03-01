@@ -121,7 +121,7 @@ describe("GatewayBrowserClient auth reconnect policy", () => {
 
     const connectReq = JSON.parse(ws?.sent[0] ?? "{}") as { id?: string };
     expect(typeof connectReq.id).toBe("string");
-    const closeSpy = vi.spyOn(ws as MockWebSocket, "close");
+    const closeSpy = vi.spyOn(ws, "close");
     ws?.receive({
       type: "res",
       id: connectReq.id,
@@ -158,7 +158,7 @@ describe("GatewayBrowserClient auth reconnect policy", () => {
 
     const connectReq = JSON.parse(ws?.sent[0] ?? "{}") as { id?: string };
     expect(typeof connectReq.id).toBe("string");
-    const closeSpy = vi.spyOn(ws as MockWebSocket, "close");
+    const closeSpy = vi.spyOn(ws, "close");
     ws?.receive({
       type: "res",
       id: connectReq.id,

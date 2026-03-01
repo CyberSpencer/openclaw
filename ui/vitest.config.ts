@@ -1,12 +1,26 @@
-import { playwright } from "@vitest/browser-playwright";
 import { createRequire } from "node:module";
 import * as path from "node:path";
+import { playwright } from "@vitest/browser-playwright";
 import { defineConfig } from "vitest/config";
 
 function isBrowserEnabled(): boolean {
   const raw = process.env.VITEST_BROWSER?.trim().toLowerCase();
   return raw === "1" || raw === "true";
 }
+
+function resolveCliIncludePatterns(): string[] | null {
+  const separatorIndex = process.argv.indexOf("--");
+  if (separatorIndex < 0) {
+    return null;
+  }
+  const patterns = process.argv
+    .slice(separatorIndex + 1)
+    .map((value) => value.trim())
+    .filter((value) => value.length > 0 && !value.startsWith("-"));
+  return patterns.length > 0 ? patterns : null;
+}
+
+const cliIncludePatterns = resolveCliIncludePatterns();
 
 // Vite injects a special "development|production" condition into its default
 // `resolve.conditions`. That placeholder becomes "development" unless Vite
@@ -75,7 +89,7 @@ export default defineConfig({
         exclude: ["lit", "lit-html", "@lit/reactive-element", "lit-element"],
       },
   test: {
-    include: ["src/**/*.test.ts"],
+    include: cliIncludePatterns ?? ["src/**/*.test.ts"],
     exclude: isBrowserEnabled() ? [] : ["src/**/*.browser.test.ts"],
     environment: isBrowserEnabled() ? "node" : "jsdom",
     setupFiles: isBrowserEnabled() ? [] : ["src/test/setup.ts"],

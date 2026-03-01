@@ -21,6 +21,7 @@ const allowedTags = [
   "h3",
   "h4",
   "hr",
+  "img",
   "i",
   "li",
   "ol",
@@ -36,7 +37,7 @@ const allowedTags = [
   "ul",
 ];
 
-const allowedAttrs = ["class", "href", "rel", "target", "title", "start"];
+const allowedAttrs = ["alt", "class", "href", "rel", "src", "start", "target", "title"];
 const allowedTagSet = new Set(allowedTags);
 const allowedAttrSet = new Set(allowedAttrs);
 
@@ -123,15 +124,32 @@ function installHooks() {
   hooksInstalled = true;
 
   getDOMPurify().addHook("afterSanitizeAttributes", (node) => {
-    if (!(node instanceof HTMLAnchorElement)) {
+    const el = node;
+    const tagName = typeof el?.tagName === "string" ? el.tagName.toLowerCase() : "";
+    const isAnchor =
+      tagName === "a" ||
+      (typeof HTMLAnchorElement !== "undefined" && node instanceof HTMLAnchorElement);
+    const isImage =
+      tagName === "img" ||
+      (typeof HTMLImageElement !== "undefined" && node instanceof HTMLImageElement);
+
+    if (isImage) {
+      const src = el.getAttribute("src");
+      if (!src || !isSafeImageSrc(src)) {
+        el.removeAttribute("src");
+      }
       return;
     }
-    const href = node.getAttribute("href");
+
+    if (!isAnchor) {
+      return;
+    }
+    const href = el.getAttribute("href");
     if (!href) {
       return;
     }
-    node.setAttribute("rel", "noreferrer noopener");
-    node.setAttribute("target", "_blank");
+    el.setAttribute("rel", "noreferrer noopener");
+    el.setAttribute("target", "_blank");
   });
 }
 
@@ -189,6 +207,26 @@ function isSafeHref(raw: string): boolean {
   return scheme === "http" || scheme === "https" || scheme === "mailto";
 }
 
+function isSafeImageSrc(raw: string): boolean {
+  const value = (raw ?? "").trim();
+  if (!value) {
+    return false;
+  }
+  const normalized = stripControlChars(value).trim().toLowerCase();
+  if (normalized.startsWith("javascript:") || normalized.startsWith("vbscript:")) {
+    return false;
+  }
+  if (normalized.startsWith("data:")) {
+    return /^data:image\/[a-z0-9.+-]+;base64,[a-z0-9+/=\s]+$/i.test(normalized);
+  }
+  const match = normalized.match(/^([a-z0-9+.-]+):/);
+  if (!match) {
+    return true;
+  }
+  const scheme = match[1];
+  return scheme === "http" || scheme === "https";
+}
+
 function sanitizeHtmlFallback(html: string): string {
   // Minimal safe sanitizer for non-browser test environments where DOMPurify isn't effective.
   // Prefer using `document.createElement` over `DOMParser`, since some DOM shims implement
@@ -240,6 +278,9 @@ function sanitizeHtmlFallback(html: string): string {
           continue;
         }
         if (name === "href" && !isSafeHref(attr.value)) {
+          el.removeAttribute(attr.name);
+        }
+        if (name === "src" && tag === "img" && !isSafeImageSrc(attr.value)) {
           el.removeAttribute(attr.name);
         }
         if (name === "start") {

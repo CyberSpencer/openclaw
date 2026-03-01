@@ -4,6 +4,8 @@ import { getAcpSessionManager } from "../../acp/control-plane/manager.js";
 import { resolveDefaultAgentId } from "../../agents/agent-scope.js";
 import { clearBootstrapSnapshot } from "../../agents/bootstrap-cache.js";
 import { abortEmbeddedPiRun, waitForEmbeddedPiRunEnd } from "../../agents/pi-embedded.js";
+import { listSubagentRunsForRequester } from "../../agents/subagent-registry.js";
+import { createSessionsSpawnTool } from "../../agents/tools/sessions-spawn-tool.js";
 import { stopSubagentsForRequester } from "../../auto-reply/reply/abort.js";
 import { clearSessionQueues } from "../../auto-reply/reply/queue.js";
 import { loadConfig } from "../../config/config.js";
@@ -23,6 +25,7 @@ import {
   normalizeAgentId,
   parseAgentSessionKey,
 } from "../../routing/session-key.js";
+import type { GatewayMessageChannel } from "../../utils/message-channel.js";
 import { GATEWAY_CLIENT_IDS } from "../protocol/client-info.js";
 import {
   ErrorCodes,
@@ -30,10 +33,12 @@ import {
   validateSessionsCompactParams,
   validateSessionsDeleteParams,
   validateSessionsListParams,
+  validateSessionsSubagentsParams,
   validateSessionsPatchParams,
   validateSessionsPreviewParams,
   validateSessionsResetParams,
   validateSessionsResolveParams,
+  validateSessionsSpawnParams,
 } from "../protocol/index.js";
 import {
   archiveFileOnDisk,
@@ -50,6 +55,7 @@ import {
   type SessionsPreviewEntry,
   type SessionsPreviewResult,
 } from "../session-utils.js";
+import type { SessionsSubagentsResult, SubagentTaskRow } from "../session-utils.types.js";
 import { applySessionsPatchToStore } from "../sessions-patch.js";
 import { resolveSessionKeyFromResolveParams } from "../sessions-resolve.js";
 import type { GatewayClient, GatewayRequestHandlers, RespondFn } from "./types.js";
@@ -299,6 +305,161 @@ export const sessionsHandlers: GatewayRequestHandlers = {
       opts: p,
     });
     respond(true, result, undefined);
+  },
+  "sessions.subagents": ({ params, respond }) => {
+    if (
+      !assertValidParams(params, validateSessionsSubagentsParams, "sessions.subagents", respond)
+    ) {
+      return;
+    }
+    const p = params;
+    const cfg = loadConfig();
+    const rawRequester = String(p.requesterSessionKey ?? "").trim();
+    if (!rawRequester) {
+      respond(
+        false,
+        undefined,
+        errorShape(ErrorCodes.INVALID_REQUEST, "requesterSessionKey required"),
+      );
+      return;
+    }
+
+    const requesterSessionKey = rawRequester === "main" ? resolveMainSessionKey(cfg) : rawRequester;
+    const includeCompleted = p.includeCompleted !== false;
+    const rootConversationIdFilter =
+      typeof p.rootConversationId === "string" ? p.rootConversationId.trim() : "";
+    const threadIdFilter = typeof p.threadId === "string" ? p.threadId.trim() : "";
+    const subagentGroupIdFilter =
+      typeof p.subagentGroupId === "string" ? p.subagentGroupId.trim() : "";
+    const limit =
+      typeof p.limit === "number" && Number.isFinite(p.limit)
+        ? Math.max(1, Math.min(200, Math.floor(p.limit)))
+        : 50;
+
+    const rows = listSubagentRunsForRequester(requesterSessionKey)
+      .toSorted((a, b) => {
+        const aTime = a.startedAt ?? a.createdAt ?? 0;
+        const bTime = b.startedAt ?? b.createdAt ?? 0;
+        return bTime - aTime;
+      })
+      .filter((entry) => includeCompleted || !entry.endedAt)
+      .filter((entry) => {
+        if (rootConversationIdFilter && entry.rootConversationId !== rootConversationIdFilter) {
+          return false;
+        }
+        if (threadIdFilter && entry.threadId !== threadIdFilter) {
+          return false;
+        }
+        if (subagentGroupIdFilter && entry.subagentGroupId !== subagentGroupIdFilter) {
+          return false;
+        }
+        return true;
+      })
+      .slice(0, limit)
+      .map((entry): SubagentTaskRow => {
+        const terminalOutcome = entry.outcome?.status;
+        const status = !entry.endedAt
+          ? "running"
+          : terminalOutcome === "ok" || terminalOutcome == null
+            ? "done"
+            : "error";
+        const runtimeMs =
+          typeof entry.startedAt === "number"
+            ? Math.max(0, (entry.endedAt ?? Date.now()) - entry.startedAt)
+            : undefined;
+        return {
+          taskId: entry.runId,
+          title: entry.label || entry.task || "subagent task",
+          status,
+          assignedSessionKey: entry.childSessionKey,
+          assignedRunId: entry.runId,
+          runId: entry.runId,
+          childSessionKey: entry.childSessionKey,
+          label: entry.label,
+          task: entry.task,
+          cleanup: entry.cleanup,
+          model: entry.model,
+          modelApplied: entry.modelApplied,
+          routing: entry.routing,
+          complexity: entry.complexity,
+          rootConversationId: entry.rootConversationId,
+          threadId: entry.threadId,
+          parentRunId: entry.parentRunId,
+          subagentGroupId: entry.subagentGroupId,
+          taskPlanTaskId: entry.taskId,
+          outcome: entry.outcome,
+          createdAt: entry.createdAt,
+          startedAt: entry.startedAt,
+          endedAt: entry.endedAt,
+          runtimeMs,
+        };
+      });
+
+    const active = rows.filter((row) => row.status === "running").length;
+    const result: SessionsSubagentsResult = {
+      ts: Date.now(),
+      requesterSessionKey,
+      count: rows.length,
+      active,
+      tasks: rows,
+    };
+    respond(true, result, undefined);
+  },
+  "sessions.spawn": async ({ params, respond }) => {
+    if (!assertValidParams(params, validateSessionsSpawnParams, "sessions.spawn", respond)) {
+      return;
+    }
+
+    const p = params;
+    const cfg = loadConfig();
+    const rawRequester = String(p.requesterSessionKey ?? "").trim();
+    if (!rawRequester) {
+      respond(
+        false,
+        undefined,
+        errorShape(ErrorCodes.INVALID_REQUEST, "requesterSessionKey required"),
+      );
+      return;
+    }
+    const requesterSessionKey = rawRequester === "main" ? resolveMainSessionKey(cfg) : rawRequester;
+
+    const spawnTool = createSessionsSpawnTool({
+      agentSessionKey: requesterSessionKey,
+      agentChannel:
+        typeof p.channel === "string" ? (p.channel as GatewayMessageChannel) : undefined,
+      agentAccountId: typeof p.accountId === "string" ? p.accountId : undefined,
+      agentTo: typeof p.to === "string" ? p.to : undefined,
+      agentThreadId:
+        typeof p.threadId === "string" || typeof p.threadId === "number" ? p.threadId : undefined,
+      agentGroupId: typeof p.groupId === "string" ? p.groupId : undefined,
+      agentGroupChannel: typeof p.groupChannel === "string" ? p.groupChannel : undefined,
+      agentGroupSpace: typeof p.groupSpace === "string" ? p.groupSpace : undefined,
+    });
+
+    try {
+      const spawnResult = await spawnTool.execute("gateway.sessions.spawn", {
+        task: p.task,
+        label: p.label,
+        agentId: p.agentId,
+        model: p.model,
+        thinking: p.thinking,
+        runTimeoutSeconds: p.runTimeoutSeconds,
+        timeoutSeconds: p.timeoutSeconds,
+        cleanup: p.cleanup,
+        idempotencyKey: p.idempotencyKey,
+        parentRunId: p.parentRunId,
+        subagentGroupId: p.subagentGroupId,
+        taskId: p.taskId,
+      });
+      const payload =
+        spawnResult && typeof spawnResult === "object" && "details" in spawnResult
+          ? (spawnResult.details as Record<string, unknown> | undefined)
+          : undefined;
+      respond(true, payload ?? { status: "error", error: "sessions.spawn failed" }, undefined);
+    } catch (err) {
+      const message = err instanceof Error ? err.message : typeof err === "string" ? err : "error";
+      respond(false, undefined, errorShape(ErrorCodes.UNAVAILABLE, message));
+    }
   },
   "sessions.preview": ({ params, respond }) => {
     if (!assertValidParams(params, validateSessionsPreviewParams, "sessions.preview", respond)) {

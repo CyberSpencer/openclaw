@@ -1,4 +1,5 @@
 import { truncateText } from "./format.ts";
+import type { TaskPlan } from "./ui-types.ts";
 
 const TOOL_STREAM_LIMIT = 50;
 const TOOL_STREAM_THROTTLE_MS = 80;
@@ -11,6 +12,15 @@ export type AgentEventPayload = {
   ts: number;
   sessionKey?: string;
   data: Record<string, unknown>;
+};
+
+export type ModelSelectionInfo = {
+  runId: string;
+  sessionKey?: string;
+  provider: string;
+  model: string;
+  thinkLevel?: string;
+  updatedAt: number;
 };
 
 export type ToolStreamEntry = {
@@ -28,6 +38,8 @@ export type ToolStreamEntry = {
 type ToolStreamHost = {
   sessionKey: string;
   chatRunId: string | null;
+  chatModelSelection?: ModelSelectionInfo | null;
+  chatTaskPlan?: TaskPlan | null;
   toolStreamById: Map<string, ToolStreamEntry>;
   toolStreamOrder: string[];
   chatToolMessages: Record<string, unknown>[];
@@ -390,6 +402,44 @@ export function handleAgentEvent(host: ToolStreamHost, payload?: AgentEventPaylo
   // Handle compaction events
   if (payload.stream === "compaction") {
     handleCompactionEvent(host as CompactionHost, payload);
+    return;
+  }
+
+  if (payload.stream === "orchestration") {
+    const accepted = resolveAcceptedSession(host, payload, { allowSessionScopedWhenIdle: true });
+    if (!accepted.accepted) {
+      return;
+    }
+    const data = payload.data ?? {};
+    const eventType = typeof data.type === "string" ? data.type.trim().toLowerCase() : "";
+    if (eventType !== "task_plan") {
+      return;
+    }
+    const plan = (data.plan as TaskPlan | null | undefined) ?? null;
+    host.chatTaskPlan = plan;
+    return;
+  }
+
+  if (payload.stream === "model") {
+    const accepted = resolveAcceptedSession(host, payload, { allowSessionScopedWhenIdle: true });
+    if (!accepted.accepted) {
+      return;
+    }
+    const data = payload.data ?? {};
+    const provider = toTrimmedString(data.provider);
+    const model = toTrimmedString(data.model);
+    if (!provider || !model) {
+      return;
+    }
+    const thinkLevel = toTrimmedString(data.thinkLevel) ?? undefined;
+    host.chatModelSelection = {
+      runId: payload.runId,
+      sessionKey: accepted.sessionKey,
+      provider,
+      model,
+      thinkLevel,
+      updatedAt: typeof payload.ts === "number" ? payload.ts : Date.now(),
+    };
     return;
   }
 

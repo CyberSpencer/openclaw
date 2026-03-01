@@ -50,6 +50,12 @@ export function handleDisconnected(host: LifecycleHost) {
   stopNodesPolling(host);
   stopLogsPolling(host);
   stopDebugPolling(host);
+  const client = host.client as { stop?: () => void } | null | undefined;
+  if (typeof client?.stop === "function") {
+    client.stop();
+  }
+  host.client = null;
+  host.connected = false;
   detachThemeListener(host);
   host.topbarObserver?.disconnect();
   host.topbarObserver = null;

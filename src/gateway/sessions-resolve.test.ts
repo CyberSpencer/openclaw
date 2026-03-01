@@ -1,12 +1,14 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const loadSessionStoreMock = vi.fn();
+const updateSessionStoreMock = vi.fn();
 const resolveGatewaySessionStoreTargetMock = vi.fn();
 const loadCombinedSessionStoreForGatewayMock = vi.fn();
 const listSessionsFromStoreMock = vi.fn();
 
 vi.mock("../config/sessions.js", () => ({
   loadSessionStore: (...args: unknown[]) => loadSessionStoreMock(...args),
+  updateSessionStore: (...args: unknown[]) => updateSessionStoreMock(...args),
 }));
 
 vi.mock("./session-utils.js", () => ({
@@ -35,12 +37,13 @@ import { resolveSessionKeyFromResolveParams } from "./sessions-resolve.js";
 describe("resolveSessionKeyFromResolveParams strict identity", () => {
   beforeEach(() => {
     loadSessionStoreMock.mockReset();
+    updateSessionStoreMock.mockReset();
     resolveGatewaySessionStoreTargetMock.mockReset();
     loadCombinedSessionStoreForGatewayMock.mockReset();
     listSessionsFromStoreMock.mockReset();
   });
 
-  it("resolves a duplicate label using strict root/thread filters", () => {
+  it("resolves a duplicate label using strict root/thread filters", async () => {
     const store = {
       "agent:a:main": {
         sessionId: "s-a",
@@ -64,7 +67,7 @@ describe("resolveSessionKeyFromResolveParams strict identity", () => {
       ],
     });
 
-    const result = resolveSessionKeyFromResolveParams({
+    const result = await resolveSessionKeyFromResolveParams({
       cfg: {} as never,
       p: {
         label: "work",
@@ -77,7 +80,7 @@ describe("resolveSessionKeyFromResolveParams strict identity", () => {
     expect(result).toEqual({ ok: true, key: "agent:b:main" });
   });
 
-  it("returns identity mismatch for strict key lookup", () => {
+  it("returns identity mismatch for strict key lookup", async () => {
     resolveGatewaySessionStoreTargetMock.mockReturnValue({
       canonicalKey: "main",
       storePath: "/tmp/sessions.json",
@@ -91,7 +94,7 @@ describe("resolveSessionKeyFromResolveParams strict identity", () => {
       },
     });
 
-    const result = resolveSessionKeyFromResolveParams({
+    const result = await resolveSessionKeyFromResolveParams({
       cfg: {} as never,
       p: {
         key: "main",

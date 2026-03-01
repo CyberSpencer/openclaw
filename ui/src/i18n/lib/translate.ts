@@ -1,4 +1,8 @@
+import { de } from "../locales/de.ts";
 import { en } from "../locales/en.ts";
+import { pt_BR } from "../locales/pt-BR.ts";
+import { zh_CN } from "../locales/zh-CN.ts";
+import { zh_TW } from "../locales/zh-TW.ts";
 import type { Locale, TranslationMap } from "./types.ts";
 
 type Subscriber = (locale: Locale) => void;
@@ -9,9 +13,37 @@ export function isSupportedLocale(value: string | null | undefined): value is Lo
   return value !== null && value !== undefined && SUPPORTED_LOCALES.includes(value as Locale);
 }
 
+const LOCALE_STORAGE_KEY = "openclaw.i18n.locale";
+const BUILTIN_TRANSLATIONS: Record<Locale, TranslationMap> = {
+  en,
+  "zh-CN": zh_CN,
+  "zh-TW": zh_TW,
+  "pt-BR": pt_BR,
+  de,
+};
+
+type StorageLike = Pick<Storage, "getItem" | "setItem">;
+
+function resolveLocalStorage(): StorageLike | null {
+  const candidate = (globalThis as { localStorage?: unknown }).localStorage;
+  if (!candidate || typeof candidate !== "object") {
+    return null;
+  }
+  const storage = candidate as Partial<StorageLike>;
+  if (typeof storage.getItem !== "function" || typeof storage.setItem !== "function") {
+    return null;
+  }
+  return storage as StorageLike;
+}
+
+function resolveNavigatorLanguage(): string {
+  const nav = (globalThis as { navigator?: { language?: unknown } }).navigator;
+  return typeof nav?.language === "string" ? nav.language : "en";
+}
+
 class I18nManager {
   private locale: Locale = "en";
-  private translations: Record<Locale, TranslationMap> = { en } as Record<Locale, TranslationMap>;
+  private translations: Record<Locale, TranslationMap> = { ...BUILTIN_TRANSLATIONS };
   private subscribers: Set<Subscriber> = new Set();
 
   constructor() {
@@ -19,11 +51,12 @@ class I18nManager {
   }
 
   private resolveInitialLocale(): Locale {
-    const saved = localStorage.getItem("openclaw.i18n.locale");
+    const storage = resolveLocalStorage();
+    const saved = storage?.getItem(LOCALE_STORAGE_KEY);
     if (isSupportedLocale(saved)) {
       return saved;
     }
-    const navLang = navigator.language;
+    const navLang = resolveNavigatorLanguage();
     if (navLang.startsWith("zh")) {
       return navLang === "zh-TW" || navLang === "zh-HK" ? "zh-TW" : "zh-CN";
     }
@@ -42,8 +75,7 @@ class I18nManager {
       this.locale = "en";
       return;
     }
-    // Use the normal locale setter so startup locale loading follows the same
-    // translation-loading + notify path as manual locale changes.
+    // Keep locale+dictionary consistent: only switch locale after its bundle is loaded.
     void this.setLocale(initialLocale);
   }
 
@@ -52,36 +84,26 @@ class I18nManager {
   }
 
   public async setLocale(locale: Locale) {
+    const hadTranslation = Boolean(this.translations[locale]);
+    if (!hadTranslation && BUILTIN_TRANSLATIONS[locale]) {
+      this.translations[locale] = BUILTIN_TRANSLATIONS[locale];
+    }
+
     const needsTranslationLoad = !this.translations[locale];
-    if (this.locale === locale && !needsTranslationLoad) {
+    const localeChanged = this.locale !== locale;
+    if (!localeChanged && !needsTranslationLoad) {
       return;
     }
 
-    // Lazy load translations if needed
     if (needsTranslationLoad) {
-      try {
-        let module: Record<string, TranslationMap>;
-        if (locale === "zh-CN") {
-          module = await import("../locales/zh-CN.ts");
-        } else if (locale === "zh-TW") {
-          module = await import("../locales/zh-TW.ts");
-        } else if (locale === "pt-BR") {
-          module = await import("../locales/pt-BR.ts");
-        } else if (locale === "de") {
-          module = await import("../locales/de.ts");
-        } else {
-          return;
-        }
-        this.translations[locale] = module[locale.replace("-", "_")];
-      } catch (e) {
-        console.error(`Failed to load locale: ${locale}`, e);
-        return;
-      }
+      return;
     }
 
     this.locale = locale;
-    localStorage.setItem("openclaw.i18n.locale", locale);
-    this.notify();
+    resolveLocalStorage()?.setItem(LOCALE_STORAGE_KEY, locale);
+    if (localeChanged || needsTranslationLoad) {
+      this.notify();
+    }
   }
 
   public registerTranslation(locale: Locale, map: TranslationMap) {

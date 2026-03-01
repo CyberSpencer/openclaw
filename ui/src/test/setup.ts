@@ -30,6 +30,60 @@ if (typeof globalObj.self === "undefined") {
 }
 const windowObj = window as unknown as Record<string, unknown>;
 
+if (typeof windowObj.location !== "object" || windowObj.location == null) {
+  const fallbackLocation = new URL("http://localhost/");
+  windowObj.location = fallbackLocation;
+}
+if (typeof globalObj.location === "undefined" || globalObj.location == null) {
+  globalObj.location = windowObj.location;
+}
+
+if (
+  typeof windowObj.history !== "object" ||
+  windowObj.history == null ||
+  typeof (windowObj.history as { replaceState?: unknown }).replaceState !== "function"
+) {
+  const historyState = { value: null as unknown };
+  const applyUrl = (url?: string | URL | null) => {
+    if (!url) {
+      return;
+    }
+    try {
+      const baseHref =
+        typeof (window as unknown as { location?: { href?: unknown } }).location?.href === "string"
+          ? ((window as unknown as { location: { href: string } }).location.href ?? "")
+          : "http://localhost/";
+      const next = new URL(String(url), baseHref || "http://localhost/");
+      const locationRecord = windowObj.location as { href?: unknown } | undefined;
+      if (locationRecord && typeof locationRecord.href === "string") {
+        locationRecord.href = next.href;
+      }
+    } catch {
+      // Best-effort: test harness only needs replaceState/pushState to exist.
+    }
+  };
+  const historyStub = {
+    get state() {
+      return historyState.value;
+    },
+    replaceState: (state: unknown, _unused: string, url?: string | URL | null) => {
+      historyState.value = state;
+      applyUrl(url);
+    },
+    pushState: (state: unknown, _unused: string, url?: string | URL | null) => {
+      historyState.value = state;
+      applyUrl(url);
+    },
+    back: () => undefined,
+    forward: () => undefined,
+    go: () => undefined,
+    length: 1,
+    scrollRestoration: "auto" as const,
+  };
+  windowObj.history = historyStub;
+  globalObj.history = historyStub;
+}
+
 // Ensure the core DOM classes exist before importing anything that touches web components.
 if (typeof globalObj.HTMLElement === "undefined") {
   globalObj.HTMLElement = windowObj.HTMLElement;
@@ -144,24 +198,65 @@ if (typeof globalThis.requestAnimationFrame !== "function") {
   globalThis.requestAnimationFrame = (cb: FrameRequestCallback) =>
     setTimeout(() => cb(Date.now()), 0) as unknown as number;
 }
+if (typeof globalThis.cancelAnimationFrame !== "function") {
+  globalThis.cancelAnimationFrame = (handle: number) => {
+    clearTimeout(handle);
+  };
+}
+if (typeof (window as unknown as { confirm?: unknown }).confirm !== "function") {
+  const confirmStub = () => true;
+  (window as unknown as { confirm: () => boolean }).confirm = confirmStub;
+  globalObj.confirm = confirmStub;
+}
 
-// Provide a tiny localStorage stub used by routing tests.
-if (typeof globalThis.localStorage === "undefined") {
-  const store = new Map<string, string>();
-  globalThis.localStorage = {
-    getItem: (key: string) => store.get(key) ?? null,
-    setItem: (key: string, value: string) => {
-      store.set(key, value);
-    },
-    removeItem: (key: string) => {
-      store.delete(key);
-    },
-    clear: () => {
-      store.clear();
-    },
-    key: (index: number) => Array.from(store.keys())[index] ?? null,
-    get length() {
-      return store.size;
-    },
-  } as Storage;
+// Ensure localStorage always exists with the full Storage API in test environments.
+{
+  const candidate = (() => {
+    const globalStorage = (globalObj as { localStorage?: unknown }).localStorage;
+    if (globalStorage && typeof globalStorage === "object") {
+      return globalStorage as Partial<Storage>;
+    }
+    const windowStorage = (window as unknown as { localStorage?: unknown }).localStorage;
+    if (windowStorage && typeof windowStorage === "object") {
+      return windowStorage as Partial<Storage>;
+    }
+    return null;
+  })();
+
+  if (
+    candidate &&
+    typeof candidate.getItem === "function" &&
+    typeof candidate.setItem === "function" &&
+    typeof candidate.removeItem === "function" &&
+    typeof candidate.clear === "function"
+  ) {
+    globalObj.localStorage = candidate as Storage;
+  } else {
+    const store = new Map<string, string>();
+    const fallbackStorage: Storage = {
+      getItem: (key: string) => store.get(key) ?? null,
+      setItem: (key: string, value: string) => {
+        store.set(key, value);
+      },
+      removeItem: (key: string) => {
+        store.delete(key);
+      },
+      clear: () => {
+        store.clear();
+      },
+      key: (index: number) => Array.from(store.keys())[index] ?? null,
+      get length() {
+        return store.size;
+      },
+    } as Storage;
+    globalObj.localStorage = fallbackStorage;
+  }
+
+  if (
+    typeof (window as unknown as { localStorage?: unknown }).localStorage !== "object" ||
+    (window as unknown as { localStorage?: unknown }).localStorage == null
+  ) {
+    (window as unknown as { localStorage: Storage }).localStorage =
+      globalObj.localStorage as Storage;
+  }
 }

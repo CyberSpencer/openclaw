@@ -74,8 +74,8 @@ describe("temporal decay", () => {
     expect(decayed[1]?.score).toBeCloseTo(0.75);
   });
 
-  it("applies decay in hybrid merging before ranking", async () => {
-    const merged = await mergeHybridResults({
+  it("applies decay in hybrid merging before ranking", () => {
+    const merged = mergeHybridResults({
       vectorWeight: 1,
       textWeight: 0,
       temporalDecay: { enabled: true, halfLifeDays: 30 },
@@ -108,8 +108,8 @@ describe("temporal decay", () => {
     expect(merged[0]?.score ?? 0).toBeGreaterThan(merged[1]?.score ?? 0);
   });
 
-  it("handles future dates, zero age, and very old memories", async () => {
-    const merged = await mergeHybridResults({
+  it("handles future dates, zero age, and very old memories", () => {
+    const merged = mergeHybridResults({
       vectorWeight: 1,
       textWeight: 0,
       temporalDecay: { enabled: true, halfLifeDays: 30 },

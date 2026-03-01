@@ -1878,7 +1878,7 @@ async function requestSparkTtsStreamChunks(params: {
   });
 
   try {
-    const streamStartResult = (await requestWithTimeout({
+    const streamStartResult = await requestWithTimeout({
       request: (requestSignal) =>
         params.client.request(
           "spark.voice.tts.stream",
@@ -1897,11 +1897,11 @@ async function requestSparkTtsStreamChunks(params: {
             language: params.language,
           },
           { signal: requestSignal },
-        ) as Promise<Record<string, unknown>>,
+        ),
       timeoutMs: SPARK_TTS_TIMEOUT_MS,
       timeoutCode: "SPARK_TTS_STREAM_START_TIMEOUT",
       externalSignal: params.signal,
-    })) as Record<string, unknown>;
+    });
 
     const ackStreamIdRaw = streamStartResult?.streamId;
     const ackStreamId =
@@ -2015,7 +2015,7 @@ export async function processVoiceInputSpark(
               source: voiceSource,
             },
             { signal: requestSignal },
-          ) as Promise<Record<string, unknown>>,
+          ),
         timeoutMs: SPARK_STT_TIMEOUT_MS,
         timeoutCode: "SPARK_STT_TIMEOUT",
         externalSignal: signal,
@@ -2101,7 +2101,7 @@ export async function processVoiceInputSpark(
               provisional: params.provisional,
             },
             { signal: requestSignal },
-          ) as Promise<Record<string, unknown>>,
+          ),
         timeoutMs: params.timeoutMs,
         timeoutCode: params.timeoutCode,
         externalSignal: signal,
@@ -2252,59 +2252,30 @@ export async function processVoiceInputSpark(
     }
 
     const baseResult: VoiceProcessResult = {
-      sessionId:
-        typeof (reply as Record<string, unknown>)?.sessionId === "string"
-          ? ((reply as Record<string, unknown>).sessionId as string)
-          : "",
+      sessionId: typeof reply?.sessionId === "string" ? reply.sessionId : "",
       transcription: state.transcription,
       response: responseText,
       spokenResponse,
-      route:
-        typeof (reply as Record<string, unknown>)?.route === "string"
-          ? ((reply as Record<string, unknown>).route as string)
-          : undefined,
-      model:
-        typeof (reply as Record<string, unknown>)?.model === "string"
-          ? ((reply as Record<string, unknown>).model as string)
-          : undefined,
-      thinkingLevel:
-        typeof (reply as Record<string, unknown>)?.thinkingLevel === "string"
-          ? ((reply as Record<string, unknown>).thinkingLevel as string)
-          : undefined,
-      runId:
-        typeof (reply as Record<string, unknown>)?.runId === "string"
-          ? ((reply as Record<string, unknown>).runId as string)
-          : undefined,
+      route: typeof reply?.route === "string" ? reply.route : undefined,
+      model: typeof reply?.model === "string" ? reply.model : undefined,
+      thinkingLevel: typeof reply?.thinkingLevel === "string" ? reply.thinkingLevel : undefined,
+      runId: typeof reply?.runId === "string" ? reply.runId : undefined,
       conversationId:
-        typeof (reply as Record<string, unknown>)?.conversationId === "string"
-          ? ((reply as Record<string, unknown>).conversationId as string)
-          : conversationId,
-      turnId:
-        typeof (reply as Record<string, unknown>)?.turnId === "string"
-          ? ((reply as Record<string, unknown>).turnId as string)
-          : turnId,
+        typeof reply?.conversationId === "string" ? reply.conversationId : conversationId,
+      turnId: typeof reply?.turnId === "string" ? reply.turnId : turnId,
       clientMessageId:
-        typeof (reply as Record<string, unknown>)?.clientMessageId === "string"
-          ? ((reply as Record<string, unknown>).clientMessageId as string)
-          : clientMessageId,
-      source:
-        typeof (reply as Record<string, unknown>)?.source === "string"
-          ? ((reply as Record<string, unknown>).source as string)
-          : voiceSource,
+        typeof reply?.clientMessageId === "string" ? reply.clientMessageId : clientMessageId,
+      source: typeof reply?.source === "string" ? reply.source : voiceSource,
       userTranscriptMessageId:
-        typeof (reply as Record<string, unknown>)?.userTranscriptMessageId === "string"
-          ? ((reply as Record<string, unknown>).userTranscriptMessageId as string)
+        typeof reply?.userTranscriptMessageId === "string"
+          ? reply.userTranscriptMessageId
           : undefined,
       userTranscriptMessage:
-        (reply as Record<string, unknown>)?.userTranscriptMessage &&
-        typeof (reply as Record<string, unknown>)?.userTranscriptMessage === "object"
-          ? ((reply as Record<string, unknown>).userTranscriptMessage as Record<string, unknown>)
+        reply?.userTranscriptMessage && typeof reply.userTranscriptMessage === "object"
+          ? (reply.userTranscriptMessage as Record<string, unknown>)
           : null,
-      provisional:
-        (reply as Record<string, unknown>)?.provisional === true
-          ? true
-          : usedProvisional || undefined,
-      toolActivity: (reply as Record<string, unknown>)?.toolActivity === true ? true : undefined,
+      provisional: reply?.provisional === true ? true : usedProvisional || undefined,
+      toolActivity: reply?.toolActivity === true ? true : undefined,
     };
 
     setVoiceAttribution(
@@ -2416,7 +2387,7 @@ export async function processVoiceInputSpark(
           request: (requestSignal) =>
             client.request("spark.voice.tts", ttsParams, {
               signal: requestSignal,
-            }) as Promise<Record<string, unknown>>,
+            }),
           timeoutMs: SPARK_TTS_TIMEOUT_MS,
           timeoutCode: "SPARK_TTS_TIMEOUT",
           externalSignal: signal,
