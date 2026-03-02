@@ -662,6 +662,9 @@ export class MemoryIndexManager {
     force?: boolean;
     progress?: (update: MemorySyncProgressUpdate) => void;
   }): Promise<void> {
+    if (this.closed) {
+      return;
+    }
     if (this.syncing) {
       return this.syncing;
     }
@@ -915,6 +918,13 @@ export class MemoryIndexManager {
     if (this.sessionUnsubscribe) {
       this.sessionUnsubscribe();
       this.sessionUnsubscribe = null;
+    }
+    if (this.syncing) {
+      try {
+        await this.syncing;
+      } catch {
+        // Best-effort close: sync failures should not block shutdown.
+      }
     }
     this.db.close();
     INDEX_CACHE.delete(this.cacheKey);
