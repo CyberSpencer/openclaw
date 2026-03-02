@@ -2,9 +2,10 @@ export type ThemeMode = "system" | "light" | "dark";
 export type ResolvedTheme = "light" | "dark";
 
 export function getSystemTheme(): ResolvedTheme {
-  // Preserve the long-standing dashboard dark-first behavior for stability
-  // across runtime/session recoveries where browser system theme may flip.
-  return "dark";
+  if (typeof window === "undefined" || typeof window.matchMedia !== "function") {
+    return "light";
+  }
+  return window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light";
 }
 
 export function resolveTheme(mode: ThemeMode): ResolvedTheme {

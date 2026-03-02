@@ -369,6 +369,11 @@ export function renderVoiceBar(props: VoiceBarProps) {
               ? html`<div class="voice-bar__processing">${icons.loader}<span>Speaking...</span></div>`
               : nothing
           }
+          ${
+            !state.conversationActive && state.error
+              ? html`<div class="voice-bar__status-error" title=${state.error}>${state.error}</div>`
+              : nothing
+          }
         </div>
       </div>
 
@@ -663,6 +668,12 @@ export const voiceBarStyles = `
 
 .voice-bar__status--ready .voice-bar__status-indicator {
   background: #6c757d;
+}
+
+.voice-bar__status-error {
+  color: var(--danger, #b71c1c);
+  font-size: 0.78rem;
+  line-height: 1.25;
 }
 
 @keyframes pulse-dot {

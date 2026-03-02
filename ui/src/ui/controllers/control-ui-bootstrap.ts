@@ -12,7 +12,14 @@ export type ControlUiBootstrapState = {
   assistantAgentId: string | null;
 };
 
-export async function loadControlUiBootstrapConfig(state: ControlUiBootstrapState) {
+export type LoadControlUiBootstrapOptions = {
+  onGatewayAuthToken?: (token: string, basePath: string) => void;
+};
+
+export async function loadControlUiBootstrapConfig(
+  state: ControlUiBootstrapState,
+  options?: LoadControlUiBootstrapOptions,
+) {
   if (typeof window === "undefined") {
     return;
   }
@@ -43,6 +50,14 @@ export async function loadControlUiBootstrapConfig(state: ControlUiBootstrapStat
     state.assistantName = normalized.name;
     state.assistantAvatar = normalized.avatar;
     state.assistantAgentId = normalized.agentId ?? null;
+    const gatewayAuthToken =
+      typeof parsed.gatewayAuthToken === "string" ? parsed.gatewayAuthToken.trim() : "";
+    if (gatewayAuthToken) {
+      options?.onGatewayAuthToken?.(
+        gatewayAuthToken,
+        normalizeBasePath(parsed.basePath ?? basePath),
+      );
+    }
   } catch {
     // Ignore bootstrap failures; UI will update identity after connecting.
   }

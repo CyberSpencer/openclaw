@@ -37,6 +37,34 @@ describe("loadControlUiBootstrapConfig", () => {
     vi.unstubAllGlobals();
   });
 
+  it("passes bootstrap gateway token to callback", async () => {
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({
+        basePath: "/openclaw",
+        assistantName: "Ops",
+        assistantAvatar: "O",
+        assistantAgentId: "main",
+        gatewayAuthToken: "dev-token",
+      }),
+    });
+    vi.stubGlobal("fetch", fetchMock as unknown as typeof fetch);
+
+    const state = {
+      basePath: "/openclaw",
+      assistantName: "Assistant",
+      assistantAvatar: null,
+      assistantAgentId: null,
+    };
+    const onGatewayAuthToken = vi.fn();
+
+    await loadControlUiBootstrapConfig(state, { onGatewayAuthToken });
+
+    expect(onGatewayAuthToken).toHaveBeenCalledWith("dev-token", "/openclaw");
+
+    vi.unstubAllGlobals();
+  });
+
   it("ignores failures", async () => {
     const fetchMock = vi.fn().mockResolvedValue({ ok: false });
     vi.stubGlobal("fetch", fetchMock as unknown as typeof fetch);

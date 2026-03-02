@@ -8,6 +8,7 @@ import { isWithinDir } from "../infra/path-safety.js";
 import { openVerifiedFileSync } from "../infra/safe-open-sync.js";
 import { AVATAR_MAX_BYTES } from "../shared/avatar-policy.js";
 import { DEFAULT_ASSISTANT_IDENTITY, resolveAssistantIdentity } from "./assistant-identity.js";
+import type { ResolvedGatewayAuth } from "./auth.js";
 import {
   CONTROL_UI_BOOTSTRAP_CONFIG_PATH,
   type ControlUiBootstrapConfig,
@@ -19,12 +20,14 @@ import {
   normalizeControlUiBasePath,
   resolveAssistantAvatarUrl,
 } from "./control-ui-shared.js";
+import { isLoopbackAddress, isLoopbackHost, resolveHostName } from "./net.js";
 
 const ROOT_PREFIX = "/";
 
 export type ControlUiRequestOptions = {
   basePath?: string;
   config?: OpenClawConfig;
+  resolvedAuth?: ResolvedGatewayAuth;
   agentId?: string;
   root?: ControlUiRootState;
 };
@@ -109,6 +112,29 @@ function sendJson(res: ServerResponse, status: number, body: unknown) {
   res.setHeader("Content-Type", "application/json; charset=utf-8");
   res.setHeader("Cache-Control", "no-cache");
   res.end(JSON.stringify(body));
+}
+
+function resolveBootstrapGatewayAuthToken(params: {
+  req: IncomingMessage;
+  config?: OpenClawConfig;
+  resolvedAuth?: ResolvedGatewayAuth;
+}): string {
+  const token =
+    params.resolvedAuth?.mode === "token"
+      ? (params.resolvedAuth.token?.trim() ?? "")
+      : (params.config?.gateway?.auth?.token?.trim() ?? "");
+  if (!token) {
+    return "";
+  }
+  const remoteAddress = params.req.socket?.remoteAddress;
+  if (!isLoopbackAddress(remoteAddress)) {
+    return "";
+  }
+  const requestHost = resolveHostName(params.req.headers.host);
+  if (requestHost && !isLoopbackHost(requestHost)) {
+    return "";
+  }
+  return token;
 }
 
 function isValidAgentId(agentId: string): boolean {
@@ -329,11 +355,17 @@ export function handleControlUiHttpRequest(
       res.end();
       return true;
     }
+    const gatewayAuthToken = resolveBootstrapGatewayAuthToken({
+      req,
+      config,
+      resolvedAuth: opts?.resolvedAuth,
+    });
     sendJson(res, 200, {
       basePath,
       assistantName: identity.name,
       assistantAvatar: avatarValue ?? identity.avatar,
       assistantAgentId: identity.agentId,
+      ...(gatewayAuthToken ? { gatewayAuthToken } : {}),
     } satisfies ControlUiBootstrapConfig);
     return true;
   }

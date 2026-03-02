@@ -27,6 +27,7 @@ describe("handleControlUiHttpRequest", () => {
       assistantName: string;
       assistantAvatar: string;
       assistantAgentId: string;
+      gatewayAuthToken?: string;
     };
   }
 
@@ -167,6 +168,7 @@ describe("handleControlUiHttpRequest", () => {
         expect(parsed.assistantName).toBe("</script><script>alert(1)//");
         expect(parsed.assistantAvatar).toBe("/avatar/main");
         expect(parsed.assistantAgentId).toBe("main");
+        expect(parsed.gatewayAuthToken).toBeUndefined();
       },
     });
   });
@@ -193,6 +195,61 @@ describe("handleControlUiHttpRequest", () => {
         expect(parsed.assistantName).toBe("Ops");
         expect(parsed.assistantAvatar).toBe("/openclaw/avatar/main");
         expect(parsed.assistantAgentId).toBe("main");
+        expect(parsed.gatewayAuthToken).toBeUndefined();
+      },
+    });
+  });
+
+  it("includes gateway token in bootstrap config for loopback requests", async () => {
+    await withControlUiRoot({
+      fn: async (tmp) => {
+        const { res, end } = makeMockHttpResponse();
+        const handled = handleControlUiHttpRequest(
+          {
+            url: CONTROL_UI_BOOTSTRAP_CONFIG_PATH,
+            method: "GET",
+            headers: { host: "127.0.0.1:32555" },
+            socket: { remoteAddress: "127.0.0.1" },
+          } as IncomingMessage,
+          res,
+          {
+            root: { kind: "resolved", path: tmp },
+            config: {
+              agents: { defaults: { workspace: tmp } },
+              gateway: { auth: { mode: "token", token: "dev-gateway-token" } },
+            },
+          },
+        );
+        expect(handled).toBe(true);
+        const parsed = parseBootstrapPayload(end);
+        expect(parsed.gatewayAuthToken).toBe("dev-gateway-token");
+      },
+    });
+  });
+
+  it("does not include gateway token in bootstrap config for non-loopback host headers", async () => {
+    await withControlUiRoot({
+      fn: async (tmp) => {
+        const { res, end } = makeMockHttpResponse();
+        const handled = handleControlUiHttpRequest(
+          {
+            url: CONTROL_UI_BOOTSTRAP_CONFIG_PATH,
+            method: "GET",
+            headers: { host: "control.example.com" },
+            socket: { remoteAddress: "127.0.0.1" },
+          } as IncomingMessage,
+          res,
+          {
+            root: { kind: "resolved", path: tmp },
+            config: {
+              agents: { defaults: { workspace: tmp } },
+              gateway: { auth: { mode: "token", token: "dev-gateway-token" } },
+            },
+          },
+        );
+        expect(handled).toBe(true);
+        const parsed = parseBootstrapPayload(end);
+        expect(parsed.gatewayAuthToken).toBeUndefined();
       },
     });
   });
