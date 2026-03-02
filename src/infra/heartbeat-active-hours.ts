@@ -1,6 +1,6 @@
-import { resolveUserTimezone } from "../agents/date-time.js";
 import type { OpenClawConfig } from "../config/config.js";
 import type { AgentDefaultsConfig } from "../config/types.agent-defaults.js";
+import { resolveUserTimezone } from "../agents/date-time.js";
 
 type HeartbeatConfig = AgentDefaultsConfig["heartbeat"];
 
@@ -24,10 +24,11 @@ function resolveActiveHoursTimezone(cfg: OpenClawConfig, raw?: string): string {
 }
 
 function parseActiveHoursTime(opts: { allow24: boolean }, raw?: string): number | null {
-  if (!raw || !ACTIVE_HOURS_TIME_PATTERN.test(raw)) {
+  const normalized = raw?.trim();
+  if (!normalized || !ACTIVE_HOURS_TIME_PATTERN.test(normalized)) {
     return null;
   }
-  const [hourStr, minuteStr] = raw.split(":");
+  const [hourStr, minuteStr] = normalized.split(":");
   const hour = Number(hourStr);
   const minute = Number(minuteStr);
   if (!Number.isFinite(hour) || !Number.isFinite(minute)) {

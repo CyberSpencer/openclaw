@@ -83,4 +83,12 @@ describe("isWithinActiveHours", () => {
     expect(isWithinActiveHours(cfg, heartbeat, Date.UTC(2025, 0, 1, 9, 0, 0))).toBe(true);
     expect(isWithinActiveHours(cfg, heartbeat, Date.UTC(2025, 0, 1, 11, 0, 0))).toBe(false);
   });
+
+  it("accepts activeHours values with surrounding whitespace", () => {
+    const cfg = cfgWithUserTimezone("UTC");
+    const heartbeat = heartbeatWindow(" 08:00 ", " 10:00 ", " UTC ");
+
+    expect(isWithinActiveHours(cfg, heartbeat, Date.UTC(2025, 0, 1, 9, 0, 0))).toBe(true);
+    expect(isWithinActiveHours(cfg, heartbeat, Date.UTC(2025, 0, 1, 11, 0, 0))).toBe(false);
+  });
 });
