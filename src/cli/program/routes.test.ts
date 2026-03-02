@@ -18,9 +18,12 @@ describe("program routes", () => {
     expect(route?.loadPlugins).toBe(true);
   });
 
-  it("matches health route without eager plugin loading", () => {
+  it("matches health route and preloads plugins only for text output", () => {
     const route = expectRoute(["health"]);
-    expect(route?.loadPlugins).toBeUndefined();
+    expect(typeof route?.loadPlugins).toBe("function");
+    const shouldLoad = route?.loadPlugins as (argv: string[]) => boolean;
+    expect(shouldLoad(["node", "openclaw", "health"])).toBe(true);
+    expect(shouldLoad(["node", "openclaw", "health", "--json"])).toBe(false);
   });
 
   it("returns false when status timeout flag value is missing", async () => {

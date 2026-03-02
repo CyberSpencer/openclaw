@@ -318,6 +318,9 @@ export function handleControlUiHttpRequest(
       respondNotFound(res);
       return true;
     }
+    if (pathname === "/api" || pathname.startsWith("/api/")) {
+      return false;
+    }
   }
 
   if (basePath) {
