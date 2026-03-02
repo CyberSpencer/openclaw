@@ -249,8 +249,8 @@ describe("cron controller", () => {
     expect((addCall?.[1] as { delivery?: unknown } | undefined)?.delivery).toEqual({
       mode: "none",
     });
-    // After submit, form is reset to defaults (deliveryMode = "announce" from DEFAULT_CRON_FORM).
-    expect(state.cronForm.deliveryMode).toBe("announce");
+    // After submit, stale announce is kept normalized to none so subsequent submits cannot re-introduce it.
+    expect(state.cronForm.deliveryMode).toBe("none");
   });
 
   it("submits cron.update when editing an existing job", async () => {
