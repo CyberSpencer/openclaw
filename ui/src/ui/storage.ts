@@ -48,7 +48,7 @@ export function loadSettings(): UiSettings {
     token: "",
     sessionKey: "main",
     lastActiveSessionKey: "main",
-    theme: "system",
+    theme: "dark",
     chatFocusMode: false,
     chatShowThinking: true,
     splitRatio: 0.6,
@@ -69,6 +69,7 @@ export function loadSettings(): UiSettings {
       return defaults;
     }
     const parsed = JSON.parse(raw) as Partial<UiSettings>;
+    const parsedTheme = (parsed as { theme?: unknown }).theme;
     return {
       gatewayUrl:
         typeof parsed.gatewayUrl === "string" && parsed.gatewayUrl.trim()
@@ -85,9 +86,14 @@ export function loadSettings(): UiSettings {
           : (typeof parsed.sessionKey === "string" && parsed.sessionKey.trim()) ||
             defaults.lastActiveSessionKey,
       theme:
-        parsed.theme === "light" || parsed.theme === "dark" || parsed.theme === "system"
-          ? parsed.theme
-          : defaults.theme,
+        parsedTheme === "light" || parsedTheme === "dark"
+          ? parsedTheme
+          : parsedTheme === "system" ||
+              parsedTheme === "openknot" ||
+              parsedTheme === "fieldmanual" ||
+              parsedTheme === "clawdash"
+            ? "dark"
+            : defaults.theme,
       chatFocusMode:
         typeof parsed.chatFocusMode === "boolean" ? parsed.chatFocusMode : defaults.chatFocusMode,
       chatShowThinking:
