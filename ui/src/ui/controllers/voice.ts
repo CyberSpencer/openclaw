@@ -1114,6 +1114,30 @@ function isLiveMicStream(stream: MediaStream | null): stream is MediaStream {
   return stream.getTracks().some((track) => track.readyState !== "ended");
 }
 
+function describeMicrophoneError(err: unknown): string {
+  const message =
+    err instanceof Error ? err.message : typeof err === "string" ? err : "unknown error";
+  if (typeof DOMException !== "undefined" && err instanceof DOMException) {
+    if (err.name === "NotAllowedError" || err.name === "SecurityError") {
+      return "Microphone permission was denied by the browser.";
+    }
+    if (err.name === "NotFoundError" || err.name === "DevicesNotFoundError") {
+      return "No microphone input device is available.";
+    }
+    if (err.name === "NotReadableError" || err.name === "TrackStartError") {
+      return "Microphone is busy or blocked by another app.";
+    }
+  }
+  const lowered = message.toLowerCase();
+  if (lowered.includes("permission")) {
+    return "Microphone permission was denied by the browser.";
+  }
+  if (lowered.includes("not found") || lowered.includes("no device")) {
+    return "No microphone input device is available.";
+  }
+  return `Microphone access failed: ${message}`;
+}
+
 export async function ensureConversationMicStream(state: VoiceState): Promise<MediaStream> {
   if (isLiveMicStream(state.mediaStream)) {
     return state.mediaStream;
@@ -1485,9 +1509,7 @@ async function startRecordingWithVAD(
 
     return true;
   } catch (err) {
-    const message =
-      err instanceof Error ? err.message : typeof err === "string" ? err : "unknown error";
-    state.error = `Microphone access denied: ${message}`;
+    state.error = describeMicrophoneError(err);
     return false;
   }
 }
@@ -2855,8 +2877,10 @@ export async function startConversation(
       const micStartMs = Math.max(0, Math.round(performance.now() - micStartPerf));
 
       if (!recordSuccess) {
-        console.error("[Voice] Failed to start recording");
-        state.error = "Failed to start recording";
+        console.error("[Voice] Failed to start recording", state.error ?? "");
+        if (!state.error?.trim()) {
+          state.error = "Failed to start recording. Check microphone permissions and input device.";
+        }
         break;
       }
       console.log("[Voice] Recording started, waiting for speech...");

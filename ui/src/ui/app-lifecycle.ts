@@ -9,6 +9,7 @@ import {
 } from "./app-polling.ts";
 import { observeTopbar, scheduleChatScroll, scheduleLogsScroll } from "./app-scroll.ts";
 import {
+  applySettings,
   applySettingsFromUrl,
   attachThemeListener,
   detachThemeListener,
@@ -16,6 +17,8 @@ import {
   syncTabWithLocation,
   syncThemeWithSettings,
 } from "./app-settings.ts";
+import { loadControlUiBootstrapConfig } from "./controllers/control-ui-bootstrap.ts";
+import { normalizeBasePath } from "./navigation.ts";
 
 type LifecycleHost = GatewayHost & {
   chatManualRefreshInFlight: boolean;
@@ -24,6 +27,51 @@ type LifecycleHost = GatewayHost & {
   connect: () => void;
 };
 
+function normalizeGatewayUrl(url: string): string {
+  const raw = url.trim();
+  if (!raw) {
+    return "";
+  }
+  try {
+    const parsed = new URL(raw);
+    const pathname = parsed.pathname === "/" ? "" : parsed.pathname.replace(/\/+$/, "");
+    return `${parsed.protocol}//${parsed.host}${pathname}`;
+  } catch {
+    return raw;
+  }
+}
+
+function resolveLocalGatewayUrl(basePath: string): string {
+  const proto = window.location.protocol === "https:" ? "wss:" : "ws:";
+  const normalizedBasePath = normalizeBasePath(basePath);
+  return `${proto}//${window.location.host}${normalizedBasePath}`;
+}
+
+function maybeApplyBootstrapGatewayToken(
+  host: LifecycleHost,
+  token: string,
+  bootstrapBasePath: string,
+) {
+  const nextToken = token.trim();
+  if (!nextToken) {
+    return;
+  }
+  const localGatewayUrl = resolveLocalGatewayUrl(bootstrapBasePath || host.basePath);
+  const configuredGatewayUrl = host.settings.gatewayUrl.trim();
+  const effectiveGatewayUrl = configuredGatewayUrl || localGatewayUrl;
+  if (normalizeGatewayUrl(effectiveGatewayUrl) !== normalizeGatewayUrl(localGatewayUrl)) {
+    return;
+  }
+  if (host.settings.token === nextToken && configuredGatewayUrl === effectiveGatewayUrl) {
+    return;
+  }
+  applySettings(host, {
+    ...host.settings,
+    gatewayUrl: effectiveGatewayUrl,
+    token: nextToken,
+  });
+}
+
 export function handleConnected(host: LifecycleHost) {
   host.basePath = inferBasePath();
   applySettingsFromUrl(host);
@@ -31,7 +79,12 @@ export function handleConnected(host: LifecycleHost) {
   syncThemeWithSettings(host);
   attachThemeListener(host);
   window.addEventListener("popstate", host.popStateHandler);
-  host.connect();
+  void loadControlUiBootstrapConfig(host, {
+    onGatewayAuthToken: (token, bootstrapBasePath) =>
+      maybeApplyBootstrapGatewayToken(host, token, bootstrapBasePath),
+  }).finally(() => {
+    host.connect();
+  });
   startNodesPolling(host);
   if (host.tab === "logs") {
     startLogsPolling(host);

@@ -48,7 +48,7 @@ export function loadSettings(): UiSettings {
     token: "",
     sessionKey: "main",
     lastActiveSessionKey: "main",
-    theme: "dark",
+    theme: "system",
     chatFocusMode: false,
     chatShowThinking: true,
     splitRatio: 0.6,
@@ -88,12 +88,13 @@ export function loadSettings(): UiSettings {
       theme:
         parsedTheme === "light" || parsedTheme === "dark"
           ? parsedTheme
-          : parsedTheme === "system" ||
-              parsedTheme === "openknot" ||
-              parsedTheme === "fieldmanual" ||
-              parsedTheme === "clawdash"
-            ? "dark"
-            : defaults.theme,
+          : parsedTheme === "system"
+            ? "system"
+            : parsedTheme === "openknot" ||
+                parsedTheme === "fieldmanual" ||
+                parsedTheme === "clawdash"
+              ? "system"
+              : defaults.theme,
       chatFocusMode:
         typeof parsed.chatFocusMode === "boolean" ? parsed.chatFocusMode : defaults.chatFocusMode,
       chatShowThinking:
