@@ -22,12 +22,12 @@ jobs:
 
     steps:
       - name: Checkout openclaw (PR)
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
         with:
           path: openclaw
 
       - name: Checkout formal models
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
         with:
           repository: vignesh07/clawdbot-formal-models
           ref: main
