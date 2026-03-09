@@ -7,6 +7,7 @@ import {
   ToolsLinksSchema,
   ToolsMediaSchema,
 } from "./zod-schema.core.js";
+import { sensitive } from "./zod-schema.sensitive.js";
 
 export const HeartbeatSchema = z
   .object({
@@ -174,13 +175,13 @@ export const ToolsWebSearchSchema = z
   .object({
     enabled: z.boolean().optional(),
     provider: z.union([z.literal("brave"), z.literal("perplexity"), z.literal("grok")]).optional(),
-    apiKey: z.string().optional(),
+    apiKey: z.string().register(sensitive).optional(),
     maxResults: z.number().int().positive().optional(),
     timeoutSeconds: z.number().int().positive().optional(),
     cacheTtlMinutes: z.number().nonnegative().optional(),
     perplexity: z
       .object({
-        apiKey: z.string().optional(),
+        apiKey: z.string().register(sensitive).optional(),
         baseUrl: z.string().optional(),
         model: z.string().optional(),
       })
@@ -188,7 +189,7 @@ export const ToolsWebSearchSchema = z
       .optional(),
     grok: z
       .object({
-        apiKey: z.string().optional(),
+        apiKey: z.string().register(sensitive).optional(),
         model: z.string().optional(),
         inlineCitations: z.boolean().optional(),
       })
@@ -334,6 +335,7 @@ export const MemorySearchSchema = z
         z.literal("local"),
         z.literal("gemini"),
         z.literal("voyage"),
+        z.literal("mistral"),
         z.literal("auto"),
       ])
       .optional(),
@@ -346,7 +348,7 @@ export const MemorySearchSchema = z
               .object({
                 baseUrl: z.string().optional(),
                 url: z.string().optional(),
-                apiKey: z.string().optional(),
+                apiKey: z.string().register(sensitive).optional(),
                 headers: z.record(z.string(), z.string()).optional(),
                 priority: z.number().int().optional(),
                 timeoutMs: z.number().int().positive().optional(),
@@ -366,7 +368,7 @@ export const MemorySearchSchema = z
               }),
           )
           .optional(),
-        apiKey: z.string().optional(),
+        apiKey: z.string().register(sensitive).optional(),
         headers: z.record(z.string(), z.string()).optional(),
         batch: z
           .object({
@@ -431,6 +433,7 @@ export const MemorySearchSchema = z
         z.literal("gemini"),
         z.literal("local"),
         z.literal("voyage"),
+        z.literal("mistral"),
         z.literal("none"),
       ])
       .optional(),
@@ -454,7 +457,7 @@ export const MemorySearchSchema = z
                 z
                   .object({
                     url: z.string(),
-                    apiKey: z.string().optional(),
+                    apiKey: z.string().register(sensitive).optional(),
                     headers: z.record(z.string(), z.string()).optional(),
                     timeoutMs: z.number().int().positive().optional(),
                     priority: z.number().int().optional(),
@@ -468,7 +471,7 @@ export const MemorySearchSchema = z
               )
               .optional(),
             collection: z.string().optional(),
-            apiKey: z.string().optional(),
+            apiKey: z.string().register(sensitive).optional(),
             timeoutMs: z.number().int().positive().optional(),
           })
           .strict()

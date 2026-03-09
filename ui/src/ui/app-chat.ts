@@ -1,10 +1,7 @@
-import type { OpenClawApp } from "./app.ts";
-import type { GatewayHelloOk } from "./gateway.ts";
-import type { SessionsListResult } from "./types.ts";
-import type { ChatAttachment, ChatQueueItem } from "./ui-types.ts";
 import { parseAgentSessionKey } from "../../../src/sessions/session-key-utils.js";
 import { scheduleChatScroll } from "./app-scroll.ts";
 import { setLastActiveSessionKey } from "./app-settings.ts";
+import type { OpenClawApp } from "./app.ts";
 import { loadChatThreads } from "./controllers/chat-threads.ts";
 import {
   abortChatRun,
@@ -12,7 +9,10 @@ import {
   sendChatMessage,
   steerChatMessage,
 } from "./controllers/chat.ts";
+import type { GatewayHelloOk } from "./gateway.ts";
 import { normalizeBasePath } from "./navigation.ts";
+import type { SessionsListResult } from "./types.ts";
+import type { ChatAttachment, ChatQueueItem } from "./ui-types.ts";
 import { generateUUID } from "./uuid.ts";
 
 export type ChatHost = {

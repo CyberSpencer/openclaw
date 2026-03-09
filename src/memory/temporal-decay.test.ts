@@ -74,13 +74,11 @@ describe("temporal decay", () => {
     expect(decayed[1]?.score).toBeCloseTo(0.75);
   });
 
-  it("applies decay in hybrid merging before ranking", () => {
+  it("applies decay before ranking", async () => {
     const merged = mergeHybridResults({
       vectorWeight: 1,
       textWeight: 0,
-      temporalDecay: { enabled: true, halfLifeDays: 30 },
       mmr: { enabled: false },
-      nowMs: NOW_MS,
       vector: [
         {
           id: "old",
@@ -104,17 +102,24 @@ describe("temporal decay", () => {
       keyword: [],
     });
 
-    expect(merged[0]?.path).toBe("memory/2026-02-10.md");
-    expect(merged[0]?.score ?? 0).toBeGreaterThan(merged[1]?.score ?? 0);
+    const decayed = await applyTemporalDecayToHybridResults({
+      results: merged,
+      workspaceDir: process.cwd(),
+      temporalDecay: { enabled: true, halfLifeDays: 30 },
+      nowMs: NOW_MS,
+    });
+
+    const byPath = new Map(decayed.map((entry) => [entry.path, entry]));
+    expect(byPath.get("memory/2026-02-10.md")?.score ?? 0).toBeGreaterThan(
+      byPath.get("memory/2025-01-01.md")?.score ?? 0,
+    );
   });
 
-  it("handles future dates, zero age, and very old memories", () => {
+  it("handles future dates, zero age, and very old memories", async () => {
     const merged = mergeHybridResults({
       vectorWeight: 1,
       textWeight: 0,
-      temporalDecay: { enabled: true, halfLifeDays: 30 },
       mmr: { enabled: false },
-      nowMs: NOW_MS,
       vector: [
         {
           id: "future",
@@ -147,7 +152,14 @@ describe("temporal decay", () => {
       keyword: [],
     });
 
-    const byPath = new Map(merged.map((entry) => [entry.path, entry]));
+    const decayed = await applyTemporalDecayToHybridResults({
+      results: merged,
+      workspaceDir: process.cwd(),
+      temporalDecay: { enabled: true, halfLifeDays: 30 },
+      nowMs: NOW_MS,
+    });
+
+    const byPath = new Map(decayed.map((entry) => [entry.path, entry]));
     expect(byPath.get("memory/2099-01-01.md")?.score).toBeCloseTo(0.9);
     expect(byPath.get("memory/2026-02-10.md")?.score).toBeCloseTo(0.8);
     expect(byPath.get("memory/2000-01-01.md")?.score ?? 1).toBeLessThan(0.001);

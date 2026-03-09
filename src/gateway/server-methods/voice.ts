@@ -10,13 +10,10 @@
  * - voice.synthesize: TTS only
  */
 
-import { CURRENT_SESSION_VERSION, SessionManager } from "@mariozechner/pi-coding-agent";
 import { randomUUID } from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
-import type { MsgContext } from "../../auto-reply/templating.js";
-import type { VoiceConfig } from "../../config/types.voice.js";
-import type { GatewayRequestHandlers } from "./types.js";
+import { CURRENT_SESSION_VERSION, SessionManager } from "@mariozechner/pi-coding-agent";
 import { resolveSessionAgentId } from "../../agents/agent-scope.js";
 import { resolveEffectiveMessagesConfig, resolveIdentityName } from "../../agents/identity.js";
 import { dispatchInboundMessage } from "../../auto-reply/dispatch.js";
@@ -25,8 +22,10 @@ import {
   extractShortModelName,
   type ResponsePrefixContext,
 } from "../../auto-reply/reply/response-prefix-template.js";
+import type { MsgContext } from "../../auto-reply/templating.js";
 import { loadConfig } from "../../config/config.js";
 import { updateSessionStore, type SessionEntry } from "../../config/sessions.js";
+import type { VoiceConfig } from "../../config/types.voice.js";
 import { INTERNAL_MESSAGE_CHANNEL } from "../../utils/message-channel.js";
 import { transcribeWithWhisper, resolveWhisperConfig } from "../../voice/local-stt.js";
 import { synthesizeWithLocalTts, resolveLocalTtsConfig } from "../../voice/local-tts.js";
@@ -49,6 +48,7 @@ import { GATEWAY_CLIENT_CAPS, hasGatewayClientCap } from "../protocol/client-inf
 import { ErrorCodes, errorShape } from "../protocol/index.js";
 import { loadSessionEntry } from "../session-utils.js";
 import { formatForLog } from "../ws-log.js";
+import type { GatewayRequestHandlers } from "./types.js";
 
 /**
  * Get voice configuration from OpenClaw config.

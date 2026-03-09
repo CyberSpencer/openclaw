@@ -1,8 +1,8 @@
 import { html, nothing } from "lit";
-import type { GatewayHelloOk } from "../gateway.ts";
-import type { UiSettings } from "../storage.ts";
 import { formatAgo, formatDurationHuman, formatRelativeTimestamp } from "../format.ts";
+import type { GatewayHelloOk } from "../gateway.ts";
 import { formatNextRun } from "../presenter.ts";
+import type { UiSettings } from "../storage.ts";
 
 type ControlUiBuildMeta = {
   uiIndexMtimeMs?: number | null;

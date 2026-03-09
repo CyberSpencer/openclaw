@@ -24,7 +24,7 @@ describe("sessions_spawn requesterOrigin threading", () => {
     });
     expect(result.details).toMatchObject({ status: "accepted", runId: "run-1" });
 
-    const runs = listSubagentRunsForRequester("main");
+    const runs = listSubagentRunsForRequester("agent:main:main");
     expect(runs).toHaveLength(1);
     return runs[0];
   };

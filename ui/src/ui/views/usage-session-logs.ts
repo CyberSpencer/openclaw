@@ -1,7 +1,7 @@
 import { html, nothing } from "lit";
-import type { SessionLogEntry, SessionLogRole } from "./usageTypes.ts";
 import { parseToolSummary } from "../usage-helpers.ts";
 import { formatTokens } from "./usage-shared.ts";
+import type { SessionLogEntry, SessionLogRole } from "./usageTypes.ts";
 
 export function renderSessionLogsCompact(
   logs: SessionLogEntry[] | null,

@@ -1,9 +1,11 @@
 # Custom Preservation Manifest (2026-03-01)
 
 ## Purpose
+
 Preserve custom/private behavior while integrating latest `origin/main` into current custom branch.
 
 ## Required Non-Regression Contracts
+
 1. Terminal auth failures do not reconnect-loop in Control UI transport.
 2. Auth disconnects render actionable remediation text in Settings/Chat UI.
 3. `voice.personaplex.endpoints` remains no-op/non-restart classification in config reload.
@@ -11,6 +13,7 @@ Preserve custom/private behavior while integrating latest `origin/main` into cur
 5. Existing DGX/session continuity behavior in gateway+ui remains intact.
 
 ## Commit Preservation Set (`aii-private/main..HEAD`)
+
 - fe6145dd1 feat(voice): ship STT latency contract and live-smoke closure
 - 17826e5de config(sync): allow runtime-only workspace extensions in schema guard
 - e9be62b0e feat: batch pending memory+routing+voice updates
@@ -28,6 +31,7 @@ Preserve custom/private behavior while integrating latest `origin/main` into cur
 - 863a1b607 refactor(ui): split usage session detail panels into focused modules
 
 ## Behavior-to-Test Mapping
+
 - Auth reconnect terminal behavior:
   - `ui/src/ui/gateway.ts`
   - Test: `ui/src/ui/gateway.auth-reconnect.test.ts`
@@ -49,6 +53,7 @@ Preserve custom/private behavior while integrating latest `origin/main` into cur
   - Test: `src/agents/subagent-announce.format.test.ts`
 
 ## Manual Semantic Review Hotspots
+
 - `ui/src/ui/*` (auth/reconnect/session continuity paths)
 - `src/gateway/*` (method registration, reload classifications, protocol compatibility)
 - `src/config/*` (schema + runtime substitution behavior)
@@ -56,6 +61,7 @@ Preserve custom/private behavior while integrating latest `origin/main` into cur
 - `src/cli/*` (status + invalid-config safety)
 
 ## Compatibility-Critical Interface Files
+
 - `src/gateway/protocol/schema.ts`
 - `src/gateway/protocol/schema/types.ts`
 - `src/gateway/server-methods-list.ts`
@@ -65,6 +71,7 @@ Preserve custom/private behavior while integrating latest `origin/main` into cur
 - `apps/shared/OpenClawKit/Sources/OpenClawProtocol/GatewayModels.swift`
 
 ## Merge Resolution Policy
+
 - Custom-first for continuity-critical UI/gateway/auth/session behavior.
 - Upstream-first for generic security/tooling/infrastructure unless it breaks custom contracts.
 - Document every conflict decision in PR body, including rationale and affected tests.

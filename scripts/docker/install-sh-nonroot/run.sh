@@ -20,6 +20,15 @@ export PATH="$HOME/.npm-global/bin:$PATH"
 echo "==> Verify git installed"
 command -v git >/dev/null
 
+normalize_semver() {
+  local raw="$1"
+  if [[ "$raw" =~ ([0-9]+\.[0-9]+\.[0-9]+([.-][0-9A-Za-z]+)*) ]]; then
+    printf "%s" "${BASH_REMATCH[1]}"
+  else
+    printf "%s" "$raw"
+  fi
+}
+
 EXPECTED_VERSION="${OPENCLAW_INSTALL_EXPECT_VERSION:-}"
 if [[ -n "$EXPECTED_VERSION" ]]; then
   LATEST_VERSION="$EXPECTED_VERSION"
@@ -45,14 +54,15 @@ if [[ -z "$CMD_PATH" && -z "$ENTRY_PATH" ]]; then
 fi
 echo "==> Verify CLI installed: $CLI_NAME"
 if [[ -n "$CMD_PATH" ]]; then
-  INSTALLED_VERSION="$("$CMD_PATH" --version 2>/dev/null | head -n 1 | tr -d '\r')"
+  INSTALLED_VERSION_RAW="$("$CMD_PATH" --version 2>/dev/null | head -n 1 | tr -d '\r')"
 else
-  INSTALLED_VERSION="$(node "$ENTRY_PATH" --version 2>/dev/null | head -n 1 | tr -d '\r')"
+  INSTALLED_VERSION_RAW="$(node "$ENTRY_PATH" --version 2>/dev/null | head -n 1 | tr -d '\r')"
 fi
+INSTALLED_VERSION="$(normalize_semver "$INSTALLED_VERSION_RAW")"
 
-echo "cli=$CLI_NAME installed=$INSTALLED_VERSION expected=$LATEST_VERSION"
+echo "cli=$CLI_NAME installed_raw=$INSTALLED_VERSION_RAW installed=$INSTALLED_VERSION expected=$LATEST_VERSION"
 if [[ "$INSTALLED_VERSION" != "$LATEST_VERSION" ]]; then
-  echo "ERROR: expected ${CLI_NAME}@${LATEST_VERSION}, got ${CLI_NAME}@${INSTALLED_VERSION}" >&2
+  echo "ERROR: expected ${CLI_NAME}@${LATEST_VERSION}, got ${CLI_NAME}@${INSTALLED_VERSION_RAW}" >&2
   exit 1
 fi
 

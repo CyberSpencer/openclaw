@@ -2,13 +2,13 @@ import crypto from "node:crypto";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import type { GatewayRequestHandlers } from "./types.js";
 import { loadConfig } from "../../config/config.js";
 import { resolveStateDir } from "../../config/paths.js";
 import { loadSessionStore, type SessionEntry } from "../../config/sessions.js";
 import { deriveDefaultRootConversationId } from "../../orchestration/identity.js";
 import { ErrorCodes, errorShape } from "../protocol/index.js";
 import { resolveGatewaySessionStoreTarget } from "../session-utils.js";
+import type { GatewayRequestHandlers } from "./types.js";
 
 type OrchestrationLaneId = "backlog" | "running" | "review" | "done" | "failed" | (string & {});
 

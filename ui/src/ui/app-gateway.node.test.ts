@@ -5,6 +5,7 @@ import { connectGateway } from "./app-gateway.ts";
 type GatewayClientMock = {
   start: ReturnType<typeof vi.fn>;
   stop: ReturnType<typeof vi.fn>;
+  reconnect: ReturnType<typeof vi.fn>;
   emitClose: (info: {
     code: number;
     reason?: string;
@@ -31,6 +32,7 @@ vi.mock("./gateway.ts", () => {
   class GatewayBrowserClient {
     readonly start = vi.fn();
     readonly stop = vi.fn();
+    readonly reconnect = vi.fn();
 
     constructor(
       private opts: {
@@ -46,6 +48,7 @@ vi.mock("./gateway.ts", () => {
       gatewayClientInstances.push({
         start: this.start,
         stop: this.stop,
+        reconnect: this.reconnect,
         emitClose: (info) => {
           this.opts.onClose?.({
             code: info.code,
@@ -129,9 +132,9 @@ describe("connectGateway", () => {
     expect(host.lastError).toBeNull();
 
     secondClient.emitGap(20, 24);
-    expect(host.lastError).toBe(
-      "event gap detected (expected seq 20, got 24); refresh recommended",
-    );
+    expect(host.lastError).toBe("event gap detected (expected seq 20, got 24); auto-reconnecting");
+    expect(host.lastErrorCode).toBe("event_gap");
+    expect(secondClient.reconnect).toHaveBeenCalledWith("event gap recovery");
   });
 
   it("ignores stale client onEvent callbacks after reconnect", () => {

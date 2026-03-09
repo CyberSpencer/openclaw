@@ -1,8 +1,8 @@
 import { html, nothing } from "lit";
-import type { AppViewState } from "../app-view-state.ts";
-import type { UiSettings } from "../storage.ts";
 import { renderThemeToggle } from "../app-render.helpers.ts";
+import type { AppViewState } from "../app-view-state.ts";
 import { icons } from "../icons.ts";
+import type { UiSettings } from "../storage.ts";
 import { TTS_MOOD_PRESETS } from "./voice-bar.ts";
 
 function platformCommandKey(): string {

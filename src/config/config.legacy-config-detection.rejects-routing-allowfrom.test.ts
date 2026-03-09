@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import type { OpenClawConfig } from "./config.js";
 import { migrateLegacyConfig, validateConfigObject } from "./config.js";
+import { resolveGatewayPort } from "./paths.js";
 
 function getLegacyRouting(config: unknown) {
   return (config as { routing?: Record<string, unknown> } | undefined)?.routing;
@@ -366,9 +367,10 @@ describe("legacy config detection", () => {
     });
     expect(res.changes).not.toContain("Migrated gateway.bind from 'tailnet' to 'auto'.");
     expect(res.config?.gateway?.bind).toBe("tailnet");
+    const defaultPort = resolveGatewayPort({}, process.env);
     expect(res.config?.gateway?.controlUi?.allowedOrigins).toEqual([
-      "http://localhost:18789",
-      "http://127.0.0.1:18789",
+      `http://localhost:${defaultPort}`,
+      `http://127.0.0.1:${defaultPort}`,
     ]);
 
     const validated = validateConfigObject({ gateway: { bind: "tailnet" as const } });

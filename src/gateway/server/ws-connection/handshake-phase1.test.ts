@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
-import type { ConnectParams } from "../../protocol/index.js";
 import { GATEWAY_CLIENT_IDS } from "../../protocol/client-info.js";
+import type { ConnectParams } from "../../protocol/index.js";
 import {
   extractFrameMeta,
   validateBrowserOrigin,

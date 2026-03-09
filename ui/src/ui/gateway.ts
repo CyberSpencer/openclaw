@@ -101,6 +101,11 @@ type Pending = {
   reject: (err: unknown) => void;
 };
 
+type GatewayRequestOptions = {
+  signal?: AbortSignal;
+  timeoutMs?: number;
+};
+
 export type GatewayBrowserClientOptions = {
   url: string;
   token?: string;
@@ -114,11 +119,20 @@ export type GatewayBrowserClientOptions = {
   onEvent?: (evt: GatewayEventFrame) => void;
   onClose?: (info: { code: number; reason: string; error?: GatewayErrorInfo }) => void;
   onGap?: (info: { expected: number; received: number }) => void;
+  requestTimeoutMs?: number;
+  connectRequestTimeoutMs?: number;
+  activityWatchdogMultiplier?: number;
 };
 
 // 4008 = application-defined code (browser rejects 1008 "Policy Violation")
 const CONNECT_FAILED_CLOSE_CODE = 4008;
+const ACTIVITY_TIMEOUT_CLOSE_CODE = 4010;
 const MAX_CLOSE_REASON_LENGTH = 123;
+const DEFAULT_REQUEST_TIMEOUT_MS = 30_000;
+const DEFAULT_CONNECT_REQUEST_TIMEOUT_MS = 15_000;
+const DEFAULT_ACTIVITY_WATCHDOG_MULTIPLIER = 3;
+const MIN_ACTIVITY_TIMEOUT_MS = 5_000;
+const ACTIVITY_WATCHDOG_TICK_MS = 1000;
 
 function toErrorMessage(err: unknown): string {
   if (err instanceof Error) {
@@ -170,6 +184,13 @@ function toGatewayErrorInfo(err: unknown): GatewayErrorInfo | undefined {
   return undefined;
 }
 
+function resolvePositiveNumber(value: number | undefined, fallback: number): number {
+  if (typeof value !== "number" || !Number.isFinite(value) || value <= 0) {
+    return fallback;
+  }
+  return value;
+}
+
 export class GatewayBrowserClient {
   private ws: WebSocket | null = null;
   private pending = new Map<string, Pending>();
@@ -181,17 +202,39 @@ export class GatewayBrowserClient {
   private backoffMs = 800;
   private terminalAuthFailureReason: string | null = null;
   private pendingConnectError: GatewayErrorInfo | undefined;
+  private activityWatchdogTimer: number | null = null;
+  private lastActivityAtMs = 0;
+  private activityTimeoutMs = DEFAULT_CONNECT_REQUEST_TIMEOUT_MS * 3;
+  private readonly requestTimeoutMs: number;
+  private readonly connectRequestTimeoutMs: number;
+  private readonly activityWatchdogMultiplier: number;
 
-  constructor(private opts: GatewayBrowserClientOptions) {}
+  constructor(private opts: GatewayBrowserClientOptions) {
+    this.requestTimeoutMs = resolvePositiveNumber(
+      opts.requestTimeoutMs,
+      DEFAULT_REQUEST_TIMEOUT_MS,
+    );
+    this.connectRequestTimeoutMs = resolvePositiveNumber(
+      opts.connectRequestTimeoutMs,
+      DEFAULT_CONNECT_REQUEST_TIMEOUT_MS,
+    );
+    this.activityWatchdogMultiplier = resolvePositiveNumber(
+      opts.activityWatchdogMultiplier,
+      DEFAULT_ACTIVITY_WATCHDOG_MULTIPLIER,
+    );
+  }
 
   start() {
     this.closed = false;
     this.terminalAuthFailureReason = null;
+    this.lastActivityAtMs = Date.now();
+    this.armActivityWatchdog();
     this.connect();
   }
 
   stop() {
     this.closed = true;
+    this.disarmActivityWatchdog();
     this.ws?.close();
     this.ws = null;
     this.pendingConnectError = undefined;
@@ -202,12 +245,27 @@ export class GatewayBrowserClient {
     return this.ws?.readyState === WebSocket.OPEN;
   }
 
+  reconnect(reason = "event gap recovery") {
+    if (this.closed) {
+      return;
+    }
+    const ws = this.ws;
+    if (ws && ws.readyState === WebSocket.OPEN) {
+      ws.close(ACTIVITY_TIMEOUT_CLOSE_CODE, truncateCloseReason(reason, "reconnect"));
+      return;
+    }
+    this.connect();
+  }
+
   private connect() {
     if (this.closed) {
       return;
     }
     this.ws = new WebSocket(this.opts.url);
-    this.ws.addEventListener("open", () => this.queueConnect());
+    this.ws.addEventListener("open", () => {
+      this.markActivity();
+      this.queueConnect();
+    });
     this.ws.addEventListener("message", (ev) => this.handleMessage(String(ev.data ?? "")));
     this.ws.addEventListener("close", (ev) => {
       const reason = String(ev.reason ?? "");
@@ -236,6 +294,41 @@ export class GatewayBrowserClient {
     const delay = this.backoffMs;
     this.backoffMs = Math.min(this.backoffMs * 1.7, 15_000);
     window.setTimeout(() => this.connect(), delay);
+  }
+
+  private markActivity() {
+    this.lastActivityAtMs = Date.now();
+  }
+
+  private disarmActivityWatchdog() {
+    if (this.activityWatchdogTimer !== null) {
+      window.clearInterval(this.activityWatchdogTimer);
+      this.activityWatchdogTimer = null;
+    }
+  }
+
+  private armActivityWatchdog() {
+    this.disarmActivityWatchdog();
+    this.activityWatchdogTimer = window.setInterval(() => {
+      if (this.closed) {
+        return;
+      }
+      const ws = this.ws;
+      if (!ws || ws.readyState !== WebSocket.OPEN) {
+        return;
+      }
+      const idleMs = Date.now() - this.lastActivityAtMs;
+      if (idleMs < this.activityTimeoutMs) {
+        return;
+      }
+      ws.close(
+        ACTIVITY_TIMEOUT_CLOSE_CODE,
+        truncateCloseReason(
+          `activity timeout after ${Math.round(idleMs / 1000)}s`,
+          "activity timeout",
+        ),
+      );
+    }, ACTIVITY_WATCHDOG_TICK_MS);
   }
 
   private flushPending(err: Error) {
@@ -334,7 +427,9 @@ export class GatewayBrowserClient {
       locale: navigator.language,
     };
 
-    void this.request<GatewayHelloOk>("connect", params)
+    void this.request<GatewayHelloOk>("connect", params, {
+      timeoutMs: this.connectRequestTimeoutMs,
+    })
       .then((hello) => {
         if (hello?.auth?.deviceToken && deviceIdentity) {
           storeDeviceAuthToken({
@@ -344,6 +439,18 @@ export class GatewayBrowserClient {
             scopes: hello.auth.scopes ?? [],
           });
         }
+        const policyTickIntervalMs =
+          typeof hello?.policy?.tickIntervalMs === "number" &&
+          Number.isFinite(hello.policy.tickIntervalMs)
+            ? hello.policy.tickIntervalMs
+            : null;
+        if (policyTickIntervalMs && policyTickIntervalMs > 0) {
+          this.activityTimeoutMs = Math.max(
+            MIN_ACTIVITY_TIMEOUT_MS,
+            Math.round(policyTickIntervalMs * this.activityWatchdogMultiplier),
+          );
+        }
+        this.markActivity();
         this.backoffMs = 800;
         this.opts.onHello?.(hello);
       })
@@ -371,6 +478,7 @@ export class GatewayBrowserClient {
     }
 
     const frame = parsed as { type?: unknown };
+    this.markActivity();
     if (frame.type === "event") {
       const evt = parsed as GatewayEventFrame;
       if (evt.event === "connect.challenge") {
@@ -427,11 +535,7 @@ export class GatewayBrowserClient {
     }
   }
 
-  request<T = unknown>(
-    method: string,
-    params?: unknown,
-    opts?: { signal?: AbortSignal },
-  ): Promise<T> {
+  request<T = unknown>(method: string, params?: unknown, opts?: GatewayRequestOptions): Promise<T> {
     if (!this.ws || this.ws.readyState !== WebSocket.OPEN) {
       return Promise.reject(new Error("gateway not connected"));
     }
@@ -442,7 +546,9 @@ export class GatewayBrowserClient {
     const id = generateUUID();
     const frame = { type: "req", id, method, params };
     const signal = opts?.signal;
+    const requestTimeoutMs = resolvePositiveNumber(opts?.timeoutMs, this.requestTimeoutMs);
     let abortHandler: (() => void) | null = null;
+    let timeoutHandle: ReturnType<typeof setTimeout> | null = null;
     let settled = false;
 
     const p = new Promise<T>((resolve, reject) => {
@@ -451,6 +557,10 @@ export class GatewayBrowserClient {
           signal.removeEventListener("abort", abortHandler);
         }
         abortHandler = null;
+        if (timeoutHandle) {
+          clearTimeout(timeoutHandle);
+        }
+        timeoutHandle = null;
       };
       const settleResolve = (value: unknown) => {
         if (settled) {
@@ -470,6 +580,16 @@ export class GatewayBrowserClient {
       };
 
       this.pending.set(id, { resolve: settleResolve, reject: settleReject });
+      if (requestTimeoutMs > 0) {
+        timeoutHandle = setTimeout(() => {
+          const pending = this.pending.get(id);
+          if (!pending) {
+            return;
+          }
+          this.pending.delete(id);
+          pending.reject(new Error(`request timed out after ${requestTimeoutMs}ms`));
+        }, requestTimeoutMs);
+      }
       if (signal) {
         abortHandler = () => {
           const pending = this.pending.get(id);

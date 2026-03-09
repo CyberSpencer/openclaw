@@ -236,7 +236,8 @@ function isAuthDisconnect(code: number, reason: string): boolean {
 
 function formatDisconnectMessage(code: number, reason: string): string | null {
   // Code 1012 = Service Restart (expected during config saves, don't show as error).
-  if (code === 1012) {
+  // Code 4010 = client-triggered recovery reconnect (do not surface as an error toast).
+  if (code === 1012 || code === 4010) {
     return null;
   }
   const resolvedReason = reason.trim() || "no reason";
@@ -313,8 +314,9 @@ export function connectGateway(host: GatewayHost) {
       if (host.client !== client) {
         return;
       }
-      host.lastError = `event gap detected (expected seq ${expected}, got ${received}); refresh recommended`;
-      host.lastErrorCode = null;
+      host.lastError = `event gap detected (expected seq ${expected}, got ${received}); auto-reconnecting`;
+      host.lastErrorCode = "event_gap";
+      client.reconnect("event gap recovery");
     },
   });
   host.client = client;

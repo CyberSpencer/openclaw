@@ -1,6 +1,6 @@
 import { html, svg, nothing } from "lit";
-import type { TimeSeriesPoint, UsageSessionEntry } from "./usageTypes.ts";
 import { charsToTokens, formatCost, formatTokens } from "./usage-shared.ts";
+import type { TimeSeriesPoint, UsageSessionEntry } from "./usageTypes.ts";
 
 function pct(part: number, total: number): number {
   if (total === 0) {

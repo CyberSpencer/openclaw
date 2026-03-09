@@ -1,6 +1,6 @@
 import { spawn } from "node:child_process";
-import type { GatewayRequestHandlers } from "./types.js";
 import { scheduleGatewaySigusr1Restart } from "../../infra/restart.js";
+import type { GatewayRequestHandlers } from "./types.js";
 
 function readNumber(value: unknown): number | undefined {
   return typeof value === "number" && Number.isFinite(value) ? value : undefined;

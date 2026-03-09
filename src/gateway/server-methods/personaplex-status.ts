@@ -1,4 +1,3 @@
-import type { GatewayRequestHandlers } from "./types.js";
 import { ErrorCodes, errorShape } from "../protocol/index.js";
 import {
   appendUrlPath,
@@ -9,6 +8,7 @@ import {
   resolveEffectiveEnv,
   resolveWanServiceBaseUrl,
 } from "./dgx-access.js";
+import type { GatewayRequestHandlers } from "./types.js";
 
 const DEFAULT_PERSONAPLEX_PORT = 8998;
 

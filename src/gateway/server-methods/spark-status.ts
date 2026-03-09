@@ -1,4 +1,3 @@
-import type { GatewayRequestHandlers } from "./types.js";
 import { ErrorCodes, errorShape } from "../protocol/index.js";
 import {
   appendUrlPath,
@@ -12,6 +11,7 @@ import {
   resolveWanServiceBaseUrl,
   type DgxAccessContext,
 } from "./dgx-access.js";
+import type { GatewayRequestHandlers } from "./types.js";
 
 const DEFAULT_OLLAMA_PORT = 11434;
 const DEFAULT_QDRANT_PORT = 6333;

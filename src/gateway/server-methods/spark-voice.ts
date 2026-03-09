@@ -6,7 +6,6 @@
  */
 
 import { randomUUID } from "node:crypto";
-import type { GatewayClient, GatewayRequestContext, GatewayRequestHandlers } from "./types.js";
 import { loadConfig } from "../../config/config.js";
 import { ErrorCodes, errorShape } from "../protocol/index.js";
 import {
@@ -19,6 +18,7 @@ import {
   resolveWanServiceBaseUrl,
   type DgxAccessContext,
 } from "./dgx-access.js";
+import type { GatewayClient, GatewayRequestContext, GatewayRequestHandlers } from "./types.js";
 
 const DEFAULT_STT_PORT = 9001;
 const DEFAULT_TTS_PORT = 9002;

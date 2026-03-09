@@ -1,10 +1,4 @@
 import { html, nothing } from "lit";
-import type {
-  SessionLogEntry,
-  SessionLogRole,
-  TimeSeriesPoint,
-  UsageSessionEntry,
-} from "./usageTypes.ts";
 import { formatDurationCompact } from "../../../../src/infra/format-time/format-duration.ts";
 import {
   renderContextPanel,
@@ -12,6 +6,12 @@ import {
   renderTimeSeriesCompact,
 } from "./usage-session-sections.ts";
 import { formatCost, formatTokens } from "./usage-shared.ts";
+import type {
+  SessionLogEntry,
+  SessionLogRole,
+  TimeSeriesPoint,
+  UsageSessionEntry,
+} from "./usageTypes.ts";
 
 function renderInsightList(
   title: string,

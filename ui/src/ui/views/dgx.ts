@@ -1,6 +1,6 @@
 import { html, nothing, type TemplateResult } from "lit";
-import type { SparkStatus, SparkGpuStatus, SparkContainer } from "../types.js";
 import { icons } from "../icons.js";
+import type { SparkStatus, SparkGpuStatus, SparkContainer } from "../types.js";
 
 // ---------------------------------------------------------------------------
 // Types

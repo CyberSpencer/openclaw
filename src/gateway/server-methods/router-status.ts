@@ -1,6 +1,5 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import path from "node:path";
-import type { GatewayRequestHandlers } from "./types.js";
 import { ErrorCodes, errorShape } from "../protocol/index.js";
 import {
   appendUrlPath,
@@ -12,6 +11,7 @@ import {
   resolveEffectiveEnv,
   resolveWanServiceBaseUrl,
 } from "./dgx-access.js";
+import type { GatewayRequestHandlers } from "./types.js";
 
 const DEFAULT_ROUTER_URL = "http://127.0.0.1:8001/sfc_router/chat/completions";
 const DEFAULT_ROUTER_HEALTH_URL = "http://127.0.0.1:8001/health";

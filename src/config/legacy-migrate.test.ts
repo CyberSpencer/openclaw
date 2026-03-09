@@ -1,5 +1,16 @@
 import { describe, expect, it } from "vitest";
 import { migrateLegacyConfig } from "./legacy-migrate.js";
+import { resolveGatewayPort } from "./paths.js";
+
+function defaultGatewayOrigins(): string[] {
+  const port = resolveGatewayPort({}, process.env);
+  return [`http://localhost:${port}`, `http://127.0.0.1:${port}`];
+}
+
+function defaultGatewayOriginForHost(host: string): string {
+  const port = resolveGatewayPort({}, process.env);
+  return `http://${host}:${port}`;
+}
 
 describe("legacy migrate audio transcription", () => {
   it("moves routing.transcribeAudio into tools.media.audio.models", () => {
@@ -113,10 +124,7 @@ describe("legacy migrate controlUi.allowedOrigins seed (issue #29385)", () => {
         auth: { mode: "token", token: "tok" },
       },
     });
-    expect(res.config?.gateway?.controlUi?.allowedOrigins).toEqual([
-      "http://localhost:18789",
-      "http://127.0.0.1:18789",
-    ]);
+    expect(res.config?.gateway?.controlUi?.allowedOrigins).toEqual(defaultGatewayOrigins());
     expect(res.changes.some((c) => c.includes("gateway.controlUi.allowedOrigins"))).toBe(true);
     expect(res.changes.some((c) => c.includes("bind=lan"))).toBe(true);
   });
@@ -143,8 +151,12 @@ describe("legacy migrate controlUi.allowedOrigins seed (issue #29385)", () => {
         auth: { mode: "token", token: "tok" },
       },
     });
-    expect(res.config?.gateway?.controlUi?.allowedOrigins).toContain("http://192.168.1.100:18789");
-    expect(res.config?.gateway?.controlUi?.allowedOrigins).toContain("http://localhost:18789");
+    expect(res.config?.gateway?.controlUi?.allowedOrigins).toContain(
+      defaultGatewayOriginForHost("192.168.1.100"),
+    );
+    expect(res.config?.gateway?.controlUi?.allowedOrigins).toContain(
+      defaultGatewayOriginForHost("localhost"),
+    );
   });
 
   it("does not overwrite existing allowedOrigins — returns null (no migration needed)", () => {
@@ -181,10 +193,7 @@ describe("legacy migrate controlUi.allowedOrigins seed (issue #29385)", () => {
         controlUi: { allowedOrigins: ["", "   "] },
       },
     });
-    expect(res.config?.gateway?.controlUi?.allowedOrigins).toEqual([
-      "http://localhost:18789",
-      "http://127.0.0.1:18789",
-    ]);
+    expect(res.config?.gateway?.controlUi?.allowedOrigins).toEqual(defaultGatewayOrigins());
     expect(res.changes.some((c) => c.includes("gateway.controlUi.allowedOrigins"))).toBe(true);
   });
 
@@ -208,9 +217,6 @@ describe("legacy migrate controlUi.allowedOrigins seed (issue #29385)", () => {
       },
     });
     expect(res.config?.gateway?.controlUi?.basePath).toBe("/app");
-    expect(res.config?.gateway?.controlUi?.allowedOrigins).toEqual([
-      "http://localhost:18789",
-      "http://127.0.0.1:18789",
-    ]);
+    expect(res.config?.gateway?.controlUi?.allowedOrigins).toEqual(defaultGatewayOrigins());
   });
 });

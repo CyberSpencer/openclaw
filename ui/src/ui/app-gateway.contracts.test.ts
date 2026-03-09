@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
-import type { GatewayEventFrame } from "./gateway.ts";
 import { handleGatewayEvent, type GatewayHost } from "./app-gateway.ts";
+import type { GatewayEventFrame } from "./gateway.ts";
 
 function buildHost(overrides?: Partial<GatewayHost>): GatewayHost {
   const runHost = {

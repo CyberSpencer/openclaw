@@ -51,6 +51,15 @@ echo "==> Run official installer one-liner"
 curl -fsSL "$INSTALL_URL" | bash
 
 echo "==> Verify installed version"
+normalize_semver() {
+  local raw="$1"
+  if [[ "$raw" =~ ([0-9]+\.[0-9]+\.[0-9]+([.-][0-9A-Za-z]+)*) ]]; then
+    printf "%s" "${BASH_REMATCH[1]}"
+  else
+    printf "%s" "$raw"
+  fi
+}
+
 CLI_NAME="$PACKAGE_NAME"
 CMD_PATH="$(command -v "$CLI_NAME" || true)"
 if [[ -z "$CMD_PATH" && -x "$HOME/.npm-global/bin/$PACKAGE_NAME" ]]; then
@@ -71,14 +80,15 @@ if [[ -n "${OPENCLAW_INSTALL_LATEST_OUT:-}" ]]; then
   printf "%s" "$LATEST_VERSION" > "${OPENCLAW_INSTALL_LATEST_OUT:-}"
 fi
 if [[ -n "$CMD_PATH" ]]; then
-  INSTALLED_VERSION="$("$CMD_PATH" --version 2>/dev/null | head -n 1 | tr -d '\r')"
+  INSTALLED_VERSION_RAW="$("$CMD_PATH" --version 2>/dev/null | head -n 1 | tr -d '\r')"
 else
-  INSTALLED_VERSION="$(node "$ENTRY_PATH" --version 2>/dev/null | head -n 1 | tr -d '\r')"
+  INSTALLED_VERSION_RAW="$(node "$ENTRY_PATH" --version 2>/dev/null | head -n 1 | tr -d '\r')"
 fi
-echo "cli=$CLI_NAME installed=$INSTALLED_VERSION expected=$LATEST_VERSION"
+INSTALLED_VERSION="$(normalize_semver "$INSTALLED_VERSION_RAW")"
+echo "cli=$CLI_NAME installed_raw=$INSTALLED_VERSION_RAW installed=$INSTALLED_VERSION expected=$LATEST_VERSION"
 
 if [[ "$INSTALLED_VERSION" != "$LATEST_VERSION" ]]; then
-  echo "ERROR: expected ${CLI_NAME}@${LATEST_VERSION}, got ${CLI_NAME}@${INSTALLED_VERSION}" >&2
+  echo "ERROR: expected ${CLI_NAME}@${LATEST_VERSION}, got ${CLI_NAME}@${INSTALLED_VERSION_RAW}" >&2
   exit 1
 fi
 

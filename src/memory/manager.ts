@@ -724,11 +724,27 @@ export class MemoryIndexManager {
     if (!absPath.endsWith(".md")) {
       throw new Error("path required");
     }
-    const stat = await fs.lstat(absPath);
+    let stat;
+    try {
+      stat = await fs.lstat(absPath);
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === "ENOENT") {
+        return { text: "", path: relPath };
+      }
+      throw error;
+    }
     if (stat.isSymbolicLink() || !stat.isFile()) {
       throw new Error("path required");
     }
-    const content = await fs.readFile(absPath, "utf-8");
+    let content: string;
+    try {
+      content = await fs.readFile(absPath, "utf-8");
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === "ENOENT") {
+        return { text: "", path: relPath };
+      }
+      throw error;
+    }
     if (!params.from && !params.lines) {
       return { text: content, path: relPath };
     }

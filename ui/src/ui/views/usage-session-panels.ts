@@ -1,7 +1,7 @@
 import { html, nothing } from "lit";
-import type { UsageColumnId, UsageSessionEntry } from "./usageTypes.ts";
 import { formatDurationCompact } from "../../../../src/infra/format-time/format-duration.ts";
 import { formatCost, formatTokens } from "./usage-shared.ts";
+import type { UsageColumnId, UsageSessionEntry } from "./usageTypes.ts";
 
 export function renderSessionsCard(
   sessions: UsageSessionEntry[],

@@ -13,9 +13,9 @@ AI Integrations maintains a separate **workspace/ops repo** that documents how w
 
 ## Related repos
 
-- **OpenClaw upstream (public OSS):** https://github.com/openclaw/openclaw
-- **OpenClaw core private mirror (this repo):** https://github.com/AI-Integrations/openclaw-core
-- **Jarvis workspace / ops repo (private):** https://github.com/AI-Integrations/jarvis-moltbot-spencer
+- **OpenClaw upstream (public OSS):** <https://github.com/openclaw/openclaw>
+- **OpenClaw core private mirror (this repo):** <https://github.com/AI-Integrations/openclaw-core>
+- **Jarvis workspace / ops repo (private):** <https://github.com/AI-Integrations/jarvis-moltbot-spencer>
 
 ## How they fit together
 
@@ -38,7 +38,7 @@ AI Integrations can run an optional DGX Spark host as a **LAN compute backend** 
 
 Canonical Mac-side documentation lives in the workspace repo:
 
-- https://github.com/AI-Integrations/jarvis-moltbot-spencer/blob/main/docs/spark-integration.md
+- <https://github.com/AI-Integrations/jarvis-moltbot-spencer/blob/main/docs/spark-integration.md>
 
 Key invariant:
 

@@ -190,4 +190,58 @@ describe("GatewayBrowserClient auth reconnect policy", () => {
 
     expect(MockWebSocket.instances).toHaveLength(1);
   });
+
+  it("times out stalled requests and clears pending entries", async () => {
+    const client = new GatewayBrowserClient({
+      url: "ws://gateway.local",
+      requestTimeoutMs: 200,
+      connectRequestTimeoutMs: 2000,
+    });
+
+    client.start();
+    const ws = MockWebSocket.instances[0];
+    expect(ws).toBeDefined();
+    ws?.open();
+    await vi.advanceTimersByTimeAsync(750);
+
+    const connectReq = JSON.parse(ws?.sent[0] ?? "{}") as { id?: string };
+    ws?.receive({
+      type: "res",
+      id: connectReq.id,
+      ok: true,
+      payload: { type: "hello-ok", protocol: 3 },
+    });
+
+    const pendingPromise = client.request("status");
+    const pendingAssertion = expect(pendingPromise).rejects.toThrow(
+      "request timed out after 200ms",
+    );
+    await vi.advanceTimersByTimeAsync(250);
+    await pendingAssertion;
+  });
+
+  it("auto-reconnects when activity watchdog times out", async () => {
+    const client = new GatewayBrowserClient({
+      url: "ws://gateway.local",
+      connectRequestTimeoutMs: 3000,
+      activityWatchdogMultiplier: 2,
+    });
+
+    client.start();
+    const ws = MockWebSocket.instances[0];
+    expect(ws).toBeDefined();
+    ws?.open();
+    await vi.advanceTimersByTimeAsync(750);
+
+    const connectReq = JSON.parse(ws?.sent[0] ?? "{}") as { id?: string };
+    ws?.receive({
+      type: "res",
+      id: connectReq.id,
+      ok: true,
+      payload: { type: "hello-ok", protocol: 3, policy: { tickIntervalMs: 1000 } },
+    });
+
+    await vi.advanceTimersByTimeAsync(7_000);
+    expect(MockWebSocket.instances.length).toBeGreaterThanOrEqual(2);
+  });
 });

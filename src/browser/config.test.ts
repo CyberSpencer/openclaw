@@ -1,12 +1,22 @@
 import { describe, expect, it } from "vitest";
+import { resolveGatewayPort } from "../config/paths.js";
+import {
+  deriveDefaultBrowserControlPort,
+  deriveDefaultBrowserCdpPortRange,
+} from "../config/port-defaults.js";
 import { withEnv } from "../test-utils/env.js";
 import { resolveBrowserConfig, resolveProfile, shouldStartLocalBrowserServer } from "./config.js";
 
 describe("browser config", () => {
   it("defaults to enabled with loopback defaults and lobster-orange color", () => {
+    const gatewayPort = resolveGatewayPort({}, process.env);
+    const controlPort = deriveDefaultBrowserControlPort(gatewayPort);
+    const extensionPort = controlPort + 1;
+    const openclawPort = deriveDefaultBrowserCdpPortRange(controlPort).start;
+
     const resolved = resolveBrowserConfig(undefined);
     expect(resolved.enabled).toBe(true);
-    expect(resolved.controlPort).toBe(18791);
+    expect(resolved.controlPort).toBe(controlPort);
     expect(resolved.color).toBe("#FF4500");
     expect(shouldStartLocalBrowserServer(resolved)).toBe(true);
     expect(resolved.cdpHost).toBe("127.0.0.1");
@@ -14,13 +24,13 @@ describe("browser config", () => {
     const profile = resolveProfile(resolved, resolved.defaultProfile);
     expect(profile?.name).toBe("chrome");
     expect(profile?.driver).toBe("extension");
-    expect(profile?.cdpPort).toBe(18792);
-    expect(profile?.cdpUrl).toBe("http://127.0.0.1:18792");
+    expect(profile?.cdpPort).toBe(extensionPort);
+    expect(profile?.cdpUrl).toBe(`http://127.0.0.1:${extensionPort}`);
 
     const openclaw = resolveProfile(resolved, "openclaw");
     expect(openclaw?.driver).toBe("openclaw");
-    expect(openclaw?.cdpPort).toBe(18800);
-    expect(openclaw?.cdpUrl).toBe("http://127.0.0.1:18800");
+    expect(openclaw?.cdpPort).toBe(openclawPort);
+    expect(openclaw?.cdpUrl).toBe(`http://127.0.0.1:${openclawPort}`);
     expect(resolved.remoteCdpTimeoutMs).toBe(1500);
     expect(resolved.remoteCdpHandshakeTimeoutMs).toBe(3000);
   });
@@ -126,9 +136,11 @@ describe("browser config", () => {
   });
 
   it("does not add the built-in chrome extension profile if the derived relay port is already used", () => {
+    const gatewayPort = resolveGatewayPort({}, process.env);
+    const relayPort = deriveDefaultBrowserControlPort(gatewayPort) + 1;
     const resolved = resolveBrowserConfig({
       profiles: {
-        openclaw: { cdpPort: 18792, color: "#FF4500" },
+        openclaw: { cdpPort: relayPort, color: "#FF4500" },
       },
     });
     expect(resolveProfile(resolved, "chrome")).toBe(null);

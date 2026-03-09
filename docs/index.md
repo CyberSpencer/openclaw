@@ -49,7 +49,7 @@ OpenClaw is a **self-hosted gateway** that connects your favorite chat apps — 
 
 - **New install from zero:** [Getting Started](/start/getting-started)
 - **Guided setup (recommended):** [Wizard](/start/wizard) (`openclaw onboard`)
-- **Open the dashboard (local Gateway):** http://127.0.0.1:32555/ (or http://localhost:32555/)
+- **Open the dashboard (local Gateway):** <http://127.0.0.1:32555/> (or <http://localhost:32555/>)
 
 - **Self-hosted**: runs on your hardware, your rules
 - **Multi-channel**: one Gateway serves WhatsApp, Telegram, Discord, and more simultaneously
@@ -59,7 +59,7 @@ OpenClaw is a **self-hosted gateway** that connects your favorite chat apps — 
 **What do you need?** Node 22+, an API key (Anthropic recommended), and 5 minutes.
 
 The dashboard is the browser Control UI for chat, config, nodes, sessions, and more.
-Local default: http://127.0.0.1:32555/
+Local default: <http://127.0.0.1:32555/>
 Remote access: [Web surfaces](/web) and [Tailscale](/gateway/tailscale)
 
 <p align="center">

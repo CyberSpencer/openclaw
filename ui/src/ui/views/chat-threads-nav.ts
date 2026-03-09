@@ -1,8 +1,8 @@
 import { html, nothing } from "lit";
 import { repeat } from "lit/directives/repeat.js";
-import type { GatewaySessionRow, SessionsListResult } from "../types.ts";
 import { formatAgo, truncateText } from "../format.ts";
 import { icons } from "../icons.ts";
+import type { GatewaySessionRow, SessionsListResult } from "../types.ts";
 
 export type ChatThreadsNavProps = {
   connected: boolean;

@@ -20,7 +20,7 @@ describe("doctor config flow safe bins", () => {
     noteSpy.mockClear();
   });
 
-  it("scaffolds missing custom safe-bin profiles on repair but skips interpreter bins", async () => {
+  it("keeps safeBins unchanged in repair mode and skips interpreter bins", async () => {
     const result = await runDoctorConfigWithInput({
       repair: true,
       config: {
@@ -62,10 +62,10 @@ describe("doctor config flow safe bins", () => {
         }>;
       };
     };
-    expect(cfg.tools?.exec?.safeBinProfiles?.myfilter).toEqual({});
+    expect(cfg.tools?.exec?.safeBinProfiles?.myfilter).toBeUndefined();
     expect(cfg.tools?.exec?.safeBinProfiles?.python3).toBeUndefined();
     const ops = cfg.agents?.list?.find((entry) => entry.id === "ops");
-    expect(ops?.tools?.exec?.safeBinProfiles?.mytool).toEqual({});
+    expect(ops?.tools?.exec?.safeBinProfiles?.mytool).toBeUndefined();
     expect(ops?.tools?.exec?.safeBinProfiles?.node).toBeUndefined();
   });
 

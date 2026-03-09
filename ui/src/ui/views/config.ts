@@ -1,6 +1,6 @@
 import { html, nothing } from "lit";
-import type { ConfigUiHints } from "../types.ts";
 import { icons as uiIcons } from "../icons.ts";
+import type { ConfigUiHints } from "../types.ts";
 import { hintForPath, humanize, schemaType, type JsonSchema } from "./config-form.shared.ts";
 import { analyzeConfigSchema, renderConfigForm, SECTION_META } from "./config-form.ts";
 import { getTagFilters, replaceTagFilters } from "./config-search.ts";

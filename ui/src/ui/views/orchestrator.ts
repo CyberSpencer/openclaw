@@ -1,5 +1,7 @@
 import { html, nothing } from "lit";
 import type { AppViewState } from "../app-view-state.ts";
+import { truncateText } from "../format.ts";
+import { icons } from "../icons.ts";
 import type {
   OrchestrationBoard,
   OrchestrationCard,
@@ -8,8 +10,6 @@ import type {
   OrchestrationRunner,
   CodexMode,
 } from "../orchestrator-store.ts";
-import { truncateText } from "../format.ts";
-import { icons } from "../icons.ts";
 import {
   ORCHESTRATOR_TEMPLATES,
   hydrateTemplatePrompt,
