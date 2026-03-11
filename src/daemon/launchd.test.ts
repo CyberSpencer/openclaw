@@ -143,7 +143,7 @@ describe("launchctl list detection", () => {
 describe("launchd gateway supervisor fallback", () => {
   const domain = typeof process.getuid === "function" ? `gui/${process.getuid()}` : "gui/501";
 
-  it("treats the supervisor launch agent as loaded when configured", async () => {
+  it("keeps loaded checks scoped to the canonical launch agent while still reporting supervisor runtime", async () => {
     const env = {
       HOME: "/Users/test",
       OPENCLAW_PROFILE: "default",
@@ -162,7 +162,7 @@ describe("launchd gateway supervisor fallback", () => {
     const loaded = await isLaunchAgentLoaded({ env });
     const runtime = await readLaunchAgentRuntime(env);
 
-    expect(loaded).toBe(true);
+    expect(loaded).toBe(false);
     expect(runtime.status).toBe("running");
     expect(runtime.pid).toBe(39395);
     expect(runtime.detail).toBe("via ai.openclaw.stack");
