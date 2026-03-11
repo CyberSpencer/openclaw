@@ -49,6 +49,37 @@ describe("readServiceStatusSummary", () => {
     expect(summary.loadedText).toBe("running (externally managed)");
   });
 
+  it("treats stack-supervised services as OpenClaw-managed when the supervisor plist is detected", async () => {
+    const summary = await readServiceStatusSummary(
+      createService({
+        label: "LaunchAgent",
+        loadedText: "loaded",
+        notLoadedText: "not loaded",
+        isLoaded: vi.fn(async () => true),
+        readCommand: vi.fn(async () => ({
+          programArguments: ["/Users/test/clawd/scripts/stack_supervisor.sh"],
+          sourcePath: "/Users/test/Library/LaunchAgents/ai.openclaw.stack.plist",
+        })),
+        readRuntime: vi.fn(async () => ({
+          status: "running",
+          pid: 39395,
+          detail: "via ai.openclaw.stack",
+        })),
+      }),
+      "Daemon",
+    );
+
+    expect(summary.installed).toBe(true);
+    expect(summary.managedByOpenClaw).toBe(true);
+    expect(summary.externallyManaged).toBe(false);
+    expect(summary.loadedText).toBe("loaded");
+    expect(summary.runtime).toMatchObject({
+      status: "running",
+      pid: 39395,
+      detail: "via ai.openclaw.stack",
+    });
+  });
+
   it("keeps missing services as not installed when nothing is running", async () => {
     const summary = await readServiceStatusSummary(createService({}), "Daemon");
 

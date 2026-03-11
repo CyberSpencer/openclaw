@@ -150,6 +150,29 @@ describe("auditGatewayServiceConfig", () => {
       audit.issues.some((issue) => issue.code === SERVICE_AUDIT_CODES.gatewayTokenMismatch),
     ).toBe(false);
   });
+
+  it("skips the gateway subcommand audit for configured supervisor launch agents", async () => {
+    const audit = await auditGatewayServiceConfig({
+      env: {
+        HOME: "/tmp",
+        OPENCLAW_GATEWAY_SUPERVISOR_LABEL: "ai.openclaw.stack",
+      },
+      platform: "darwin",
+      command: {
+        programArguments: ["/Users/test/clawd/scripts/stack_supervisor.sh"],
+        sourcePath: "/Users/test/Library/LaunchAgents/ai.openclaw.stack.plist",
+        environment: {
+          PATH: buildMinimalServicePath({
+            platform: "darwin",
+            env: { HOME: "/tmp" },
+          }),
+        },
+      },
+    });
+    expect(
+      audit.issues.some((issue) => issue.code === SERVICE_AUDIT_CODES.gatewayCommandMissing),
+    ).toBe(false);
+  });
 });
 
 describe("checkTokenDrift", () => {
