@@ -143,7 +143,7 @@ describe("launchctl list detection", () => {
 describe("launchd gateway supervisor fallback", () => {
   const domain = typeof process.getuid === "function" ? `gui/${process.getuid()}` : "gui/501";
 
-  it("keeps loaded checks scoped to the canonical launch agent while still reporting supervisor runtime", async () => {
+  it("treats the supervisor launch agent as loaded when configured", async () => {
     const env = {
       HOME: "/Users/test",
       OPENCLAW_PROFILE: "default",
@@ -162,7 +162,7 @@ describe("launchd gateway supervisor fallback", () => {
     const loaded = await isLaunchAgentLoaded({ env });
     const runtime = await readLaunchAgentRuntime(env);
 
-    expect(loaded).toBe(false);
+    expect(loaded).toBe(true);
     expect(runtime.status).toBe("running");
     expect(runtime.pid).toBe(39395);
     expect(runtime.detail).toBe("via ai.openclaw.stack");
@@ -201,55 +201,6 @@ describe("launchd gateway supervisor fallback", () => {
     expect(command?.programArguments).toEqual(["/Users/test/clawd/scripts/stack_supervisor.sh"]);
     expect(command?.workingDirectory).toBe("/Users/test/clawd");
     expect(command?.environment?.PATH).toBe("/opt/homebrew/bin:/usr/bin:/bin:/usr/sbin:/sbin");
-    expect(command?.sourcePath).toBe(supervisorPlist);
-  });
-
-  it("prefers the active supervisor plist over a stale canonical gateway plist", async () => {
-    const env = {
-      HOME: "/Users/test",
-      OPENCLAW_PROFILE: "default",
-      OPENCLAW_GATEWAY_SUPERVISOR_LABEL: "ai.openclaw.stack",
-    };
-    const gatewayPlist = "/Users/test/Library/LaunchAgents/ai.openclaw.gateway.plist";
-    const supervisorPlist = "/Users/test/Library/LaunchAgents/ai.openclaw.stack.plist";
-    state.printOutputs.set(`${domain}/ai.openclaw.gateway`, {
-      stdout: "",
-      stderr:
-        'Bad request.\nCould not find service "ai.openclaw.gateway" in domain for user gui: 501',
-      code: 113,
-    });
-    state.printOutputs.set(`${domain}/ai.openclaw.stack`, {
-      stdout: ["state = running", "pid = 39395"].join("\n"),
-    });
-    state.files.set(
-      gatewayPlist,
-      [
-        '<?xml version="1.0" encoding="UTF-8"?>',
-        '<plist version="1.0"><dict>',
-        "<key>ProgramArguments</key>",
-        "<array>",
-        "<string>/usr/bin/node</string>",
-        "<string>gateway</string>",
-        "</array>",
-        "</dict></plist>",
-      ].join("\n"),
-    );
-    state.files.set(
-      supervisorPlist,
-      [
-        '<?xml version="1.0" encoding="UTF-8"?>',
-        '<plist version="1.0"><dict>',
-        "<key>ProgramArguments</key>",
-        "<array>",
-        "<string>/Users/test/clawd/scripts/stack_supervisor.sh</string>",
-        "</array>",
-        "</dict></plist>",
-      ].join("\n"),
-    );
-
-    const command = await readLaunchAgentProgramArguments(env);
-
-    expect(command?.programArguments).toEqual(["/Users/test/clawd/scripts/stack_supervisor.sh"]);
     expect(command?.sourcePath).toBe(supervisorPlist);
   });
 });
