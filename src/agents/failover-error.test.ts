@@ -12,7 +12,7 @@ describe("failover-error", () => {
     expect(resolveFailoverReasonFromError({ status: 402 })).toBe("billing");
     expect(resolveFailoverReasonFromError({ statusCode: "429" })).toBe("rate_limit");
     expect(resolveFailoverReasonFromError({ status: 403 })).toBe("auth");
-    expect(resolveFailoverReasonFromError({ status: 408 })).toBe("network");
+    expect(resolveFailoverReasonFromError({ status: 408 })).toBe("timeout");
     expect(resolveFailoverReasonFromError({ status: 400 })).toBe("format");
     // Transient server errors (502/503/504) should trigger failover as timeout.
     expect(resolveFailoverReasonFromError({ status: 502 })).toBe("timeout");
@@ -29,8 +29,8 @@ describe("failover-error", () => {
   });
 
   it("infers timeout from common node error codes", () => {
-    expect(resolveFailoverReasonFromError({ code: "ETIMEDOUT" })).toBe("network");
-    expect(resolveFailoverReasonFromError({ code: "ECONNRESET" })).toBe("network");
+    expect(resolveFailoverReasonFromError({ code: "ETIMEDOUT" })).toBe("timeout");
+    expect(resolveFailoverReasonFromError({ code: "ECONNRESET" })).toBe("timeout");
   });
 
   it("infers timeout from abort stop-reason messages", () => {
