@@ -37,7 +37,7 @@ Call tools
 - Selector: `mcporter call linear.list_issues team=ENG limit:5`
 - Function syntax: `mcporter call "linear.create_issue(title: \"Bug\")"`
 - Full URL: `mcporter call https://api.example.com/mcp.fetch url:https://example.com`
-- Stdio: `mcporter call --stdio "bun run ./server.ts" scrape url=https://example.com`
+- Stdio: `mcporter call --stdio "bun run <entrypoint.ts>" scrape url=https://example.com`
 - JSON payload: `mcporter call <server.tool> --args '{"limit":5}'`
 
 Auth + config
@@ -57,5 +57,5 @@ Codegen
 
 Notes
 
-- Config default: `./config/mcporter.json` (override with `--config`).
+- Config default: a local `mcporter.json` under your working directory's `config` folder (override with `--config`).
 - Prefer `--output json` for machine-readable results.

@@ -1,3 +1,8 @@
+---
+name: canvas
+description: Display HTML, dashboards, or interactive demos on connected OpenClaw nodes via the canvas bridge. Use when Spencer wants to present a page or visualization on a Mac, iPhone, or Android node.
+---
+
 # Canvas Skill
 
 Display HTML content on connected OpenClaw nodes (Mac app, iOS, Android).
