@@ -1,4 +1,4 @@
-import type { ChannelId } from "../channels/plugins/types.js";
+import type { GatewayMessageChannel } from "../utils/message-channel.js";
 
 export type CronSchedule =
   | { kind: "at"; at: string }
@@ -14,7 +14,7 @@ export type CronSchedule =
 export type CronSessionTarget = "main" | "isolated";
 export type CronWakeMode = "next-heartbeat" | "now";
 
-export type CronMessageChannel = ChannelId | "last";
+export type CronMessageChannel = GatewayMessageChannel | "last";
 
 export type CronDeliveryMode = "none" | "announce" | "webhook";
 

@@ -18,6 +18,7 @@ import {
   mergeDeliveryContext,
   normalizeDeliveryContext,
 } from "../utils/delivery-context.js";
+import { isDeliverableMessageChannel } from "../utils/message-channel.js";
 import {
   isEmbeddedPiRunActive,
   queueEmbeddedPiMessage,
@@ -126,18 +127,23 @@ async function sendAnnounce(item: AnnounceQueueItem) {
   const origin = item.origin;
   const cfg = loadConfig();
   const timeoutMs = resolveAnnounceTimeoutMs(cfg);
+  const canDeliverExternally = Boolean(
+    origin?.channel && origin?.to && isDeliverableMessageChannel(origin.channel),
+  );
   const threadId =
-    origin?.threadId != null && origin.threadId !== "" ? String(origin.threadId) : undefined;
+    canDeliverExternally && origin?.threadId != null && origin.threadId !== ""
+      ? String(origin.threadId)
+      : undefined;
   await callGateway({
     method: "agent",
     params: {
       sessionKey: item.sessionKey,
       message: item.prompt,
-      channel: origin?.channel,
-      accountId: origin?.accountId,
-      to: origin?.to,
+      channel: canDeliverExternally ? origin?.channel : undefined,
+      accountId: canDeliverExternally ? origin?.accountId : undefined,
+      to: canDeliverExternally ? origin?.to : undefined,
       threadId,
-      deliver: true,
+      deliver: canDeliverExternally,
       idempotencyKey: crypto.randomUUID(),
     },
     expectFinal: true,
@@ -360,6 +366,43 @@ async function readLatestAssistantReplyWithRetry(params: {
     }
   }
   return reply;
+}
+
+export async function captureSubagentCompletionReply(
+  sessionKey: string,
+): Promise<string | undefined> {
+  const immediate = await readLatestAssistantReply({ sessionKey });
+  if (immediate?.trim()) {
+    return immediate.trim();
+  }
+  const maxAttempts = process.env.OPENCLAW_TEST_FAST === "1" ? 2 : 5;
+  const delayMs = process.env.OPENCLAW_TEST_FAST === "1" ? 10 : 300;
+  for (let attempt = 0; attempt < maxAttempts; attempt += 1) {
+    const history = await callGateway<{ messages?: Array<unknown> }>({
+      method: "chat.history",
+      params: { sessionKey, limit: 20 },
+    });
+    const messages = Array.isArray(history?.messages) ? history.messages : [];
+    for (let i = messages.length - 1; i >= 0; i -= 1) {
+      const message = messages[i] as { role?: unknown; content?: unknown };
+      if (message?.role !== "toolResult" || !Array.isArray(message.content)) {
+        continue;
+      }
+      const textPart = message.content.find(
+        (part): part is { type: "text"; text: string } =>
+          !!part &&
+          typeof part === "object" &&
+          (part as { type?: unknown }).type === "text" &&
+          typeof (part as { text?: unknown }).text === "string" &&
+          (part as { text: string }).text.trim().length > 0,
+      );
+      if (textPart?.text?.trim()) {
+        return textPart.text.trim();
+      }
+    }
+    await new Promise((resolve) => setTimeout(resolve, delayMs));
+  }
+  return undefined;
 }
 
 export function buildSubagentSystemPrompt(params: {
@@ -619,12 +662,14 @@ export async function runSubagentAnnounceFlow(params: {
       direct: async (): Promise<SubagentAnnounceDeliveryResult> => {
         try {
           // Completion-mode direct send is only possible when we have an explicit
-          // delivery target. Otherwise send back through the requester session.
-          if (
+          // deliverable target. Internal channels like webchat/control-ui must
+          // flow back through the requester session instead of gateway.send.
+          const canDirectSendCompletion =
             params.expectsCompletionMessage === true &&
             directOrigin?.channel &&
-            directOrigin?.to
-          ) {
+            directOrigin?.to &&
+            isDeliverableMessageChannel(directOrigin.channel);
+          if (canDirectSendCompletion && directOrigin) {
             await callGateway({
               method: "send",
               params: {
@@ -643,19 +688,33 @@ export async function runSubagentAnnounceFlow(params: {
             return { delivered: true, path: "direct" };
           }
 
+          const sessionOnlyCompletionTarget =
+            params.expectsCompletionMessage === true &&
+            (!directOrigin?.channel ||
+              !directOrigin?.to ||
+              !isDeliverableMessageChannel(directOrigin.channel));
+          if (sessionOnlyCompletionTarget) {
+            const { entry } = loadRequesterSessionEntry(canonicalRequesterSessionKey);
+            const sessionId = entry?.sessionId;
+            if (sessionId && isEmbeddedPiRunActive(sessionId)) {
+              return { delivered: false, path: "none" };
+            }
+          }
+
+          const deliver = !sessionOnlyCompletionTarget;
           await callGateway({
             method: "agent",
             params: {
               sessionKey: canonicalRequesterSessionKey,
               message: triggerMessage,
-              channel: directOrigin?.channel,
-              accountId: directOrigin?.accountId,
-              to: directOrigin?.to,
+              channel: deliver ? directOrigin?.channel : undefined,
+              accountId: deliver ? directOrigin?.accountId : undefined,
+              to: deliver ? directOrigin?.to : undefined,
               threadId:
                 directOrigin?.threadId != null && directOrigin.threadId !== ""
                   ? String(directOrigin.threadId)
                   : undefined,
-              deliver: true,
+              deliver,
               idempotencyKey: crypto.randomUUID(),
             },
             expectFinal: true,

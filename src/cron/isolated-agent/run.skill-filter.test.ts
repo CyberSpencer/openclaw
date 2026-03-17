@@ -1,3 +1,6 @@
+import fs from "node:fs/promises";
+import os from "node:os";
+import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { runWithModelFallback } from "../../agents/model-fallback.js";
 
@@ -116,9 +119,11 @@ vi.mock("../../cli/outbound-send-deps.js", () => ({
   createOutboundSendDeps: vi.fn().mockReturnValue({}),
 }));
 
+const resolveSessionTranscriptPathMock = vi.fn().mockReturnValue("/tmp/transcript.jsonl");
+
 vi.mock("../../config/sessions.js", () => ({
   resolveAgentMainSessionKey: vi.fn().mockReturnValue("main:default"),
-  resolveSessionTranscriptPath: vi.fn().mockReturnValue("/tmp/transcript.jsonl"),
+  resolveSessionTranscriptPath: resolveSessionTranscriptPathMock,
   setSessionRuntimeModel: vi.fn(),
   updateSessionStore: vi.fn().mockResolvedValue(undefined),
 }));
@@ -235,6 +240,8 @@ describe("runCronIsolatedAgentTurn — skill filter", () => {
     resolveThinkingDefaultMock.mockReturnValue(undefined);
     getModelRefStatusMock.mockReturnValue({ allowed: false });
     isCliProviderMock.mockReturnValue(false);
+    resolveSessionTranscriptPathMock.mockReset();
+    resolveSessionTranscriptPathMock.mockReturnValue("/tmp/transcript.jsonl");
     logWarnMock.mockReset();
     // Fresh session object per test — prevents mutation leaking between tests
     resolveCronSessionMock.mockReturnValue({
@@ -494,6 +501,28 @@ describe("runCronIsolatedAgentTurn — skill filter", () => {
       expect(result.error).toBe("invalid model: openai/");
       expect(logWarnMock).not.toHaveBeenCalled();
       expect(runWithModelFallbackMock).not.toHaveBeenCalled();
+    });
+  });
+
+  describe("transcript durability", () => {
+    it("touches the isolated cron transcript before provider execution", async () => {
+      const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), "openclaw-cron-transcript-"));
+      const transcriptPath = path.join(tempDir, "nested", "cron-session.jsonl");
+      resolveSessionTranscriptPathMock.mockReturnValueOnce(transcriptPath);
+      runWithModelFallbackMock.mockImplementationOnce(
+        async (params: { run: (provider: string, model: string) => Promise<unknown> }) => {
+          await expect(fs.stat(transcriptPath)).resolves.toBeDefined();
+          const result = await params.run("openai", "gpt-4");
+          return { result, provider: "openai", model: "gpt-4", attempts: [] };
+        },
+      );
+
+      try {
+        await runCronIsolatedAgentTurn(makeParams());
+        await expect(fs.stat(transcriptPath)).resolves.toBeDefined();
+      } finally {
+        await fs.rm(tempDir, { recursive: true, force: true });
+      }
     });
   });
 

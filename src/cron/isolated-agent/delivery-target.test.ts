@@ -256,6 +256,28 @@ describe("resolveDeliveryTarget", () => {
     expect(result.error.message).toContain("Channel is required");
   });
 
+  it("keeps internal webchat delivery on webchat-backed sessions", async () => {
+    setMainSessionEntry({
+      sessionId: "sess-webchat",
+      updatedAt: 1000,
+      lastChannel: "webchat",
+      lastTo: "",
+      channel: "webchat",
+      deliveryContext: { channel: "webchat" },
+    });
+    vi.mocked(resolveMessageChannelSelection).mockClear();
+
+    const result = await resolveForAgent({
+      cfg: makeCfg({ bindings: [] }),
+      target: { channel: "last", to: undefined },
+    });
+
+    expect(result.ok).toBe(true);
+    expect(result.channel).toBe("webchat");
+    expect(result.to).toBeUndefined();
+    expect(resolveMessageChannelSelection).not.toHaveBeenCalled();
+  });
+
   it("uses sessionKey thread entry before main session entry", async () => {
     vi.mocked(loadSessionStore).mockReturnValue({
       "agent:test:main": {

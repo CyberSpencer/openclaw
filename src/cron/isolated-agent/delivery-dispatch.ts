@@ -4,12 +4,18 @@ import { SILENT_REPLY_TOKEN } from "../../auto-reply/tokens.js";
 import type { ReplyPayload } from "../../auto-reply/types.js";
 import { createOutboundSendDeps, type CliDeps } from "../../cli/outbound-send-deps.js";
 import type { OpenClawConfig } from "../../config/config.js";
-import { resolveAgentMainSessionKey } from "../../config/sessions.js";
+import {
+  loadSessionStore,
+  resolveAgentMainSessionKey,
+  resolveStorePath,
+} from "../../config/sessions.js";
 import { deliverOutboundPayloads } from "../../infra/outbound/deliver.js";
 import { resolveAgentOutboundIdentity } from "../../infra/outbound/identity.js";
 import { resolveOutboundSessionRoute } from "../../infra/outbound/outbound-session.js";
 import { buildOutboundSessionContext } from "../../infra/outbound/session-context.js";
 import { logWarn } from "../../logger.js";
+import { deliveryContextFromSession, type DeliveryContext } from "../../utils/delivery-context.js";
+import { INTERNAL_MESSAGE_CHANNEL } from "../../utils/message-channel.js";
 import type { CronJob, CronRunTelemetry } from "../types.js";
 import type { DeliveryTargetResolution } from "./delivery-target.js";
 import { pickSummaryFromOutput } from "./helpers.js";
@@ -83,6 +89,29 @@ async function resolveCronAnnounceSessionKey(params: {
   return params.fallbackSessionKey;
 }
 
+function resolveSessionOnlyAnnounceTarget(params: {
+  cfg: OpenClawConfig;
+  agentId: string;
+  sessionKey?: string;
+}): { requesterSessionKey: string; requesterOrigin: DeliveryContext } | null {
+  const requesterSessionKey = params.sessionKey?.trim();
+  if (!requesterSessionKey) {
+    return null;
+  }
+  try {
+    const storePath = resolveStorePath(params.cfg.session?.store, { agentId: params.agentId });
+    const store = loadSessionStore(storePath);
+    const entry = store[requesterSessionKey];
+    const requesterOrigin = deliveryContextFromSession(entry);
+    if (requesterOrigin?.channel !== INTERNAL_MESSAGE_CHANNEL) {
+      return null;
+    }
+    return { requesterSessionKey, requesterOrigin };
+  } catch {
+    return null;
+  }
+}
+
 export type SuccessfulDeliveryTarget = Extract<DeliveryTargetResolution, { ok: true }>;
 
 type DispatchCronDeliveryParams = {
@@ -151,6 +180,19 @@ export async function dispatchCronDelivery(
   const deliverViaDirect = async (
     delivery: SuccessfulDeliveryTarget,
   ): Promise<RunCronAgentTurnResult | null> => {
+    if (delivery.channel === INTERNAL_MESSAGE_CHANNEL) {
+      if (!params.deliveryBestEffort) {
+        return params.withRunSession({
+          status: "error",
+          summary,
+          outputText,
+          error: `cron direct delivery does not support internal channel: ${delivery.channel}`,
+          deliveryAttempted,
+          ...params.telemetry,
+        });
+      }
+      return null;
+    }
     const identity = resolveAgentOutboundIdentity(params.cfgWithAgentDefaults, params.agentId);
     try {
       const payloadsForDelivery =
@@ -206,9 +248,11 @@ export async function dispatchCronDelivery(
     }
   };
 
-  const deliverViaAnnounce = async (
-    delivery: SuccessfulDeliveryTarget,
-  ): Promise<RunCronAgentTurnResult | null> => {
+  const deliverViaAnnounce = async (options: {
+    requesterSessionKey?: string;
+    requesterOrigin?: DeliveryContext;
+    delivery?: SuccessfulDeliveryTarget;
+  }): Promise<RunCronAgentTurnResult | null> => {
     if (!synthesizedText) {
       return null;
     }
@@ -216,17 +260,21 @@ export async function dispatchCronDelivery(
       cfg: params.cfg,
       agentId: params.agentId,
     });
-    const announceSessionKey = await resolveCronAnnounceSessionKey({
-      cfg: params.cfgWithAgentDefaults,
-      agentId: params.agentId,
-      fallbackSessionKey: announceMainSessionKey,
-      delivery: {
-        channel: delivery.channel,
-        to: delivery.to,
-        accountId: delivery.accountId,
-        threadId: delivery.threadId,
-      },
-    });
+    const announceSessionKey = options.requesterSessionKey
+      ? options.requesterSessionKey
+      : options.delivery
+        ? await resolveCronAnnounceSessionKey({
+            cfg: params.cfgWithAgentDefaults,
+            agentId: params.agentId,
+            fallbackSessionKey: announceMainSessionKey,
+            delivery: {
+              channel: options.delivery.channel,
+              to: options.delivery.to,
+              accountId: options.delivery.accountId,
+              threadId: options.delivery.threadId,
+            },
+          })
+        : announceMainSessionKey;
     const taskLabel =
       typeof params.job.name === "string" && params.job.name.trim()
         ? params.job.name.trim()
@@ -298,12 +346,16 @@ export async function dispatchCronDelivery(
         childSessionKey: params.agentSessionKey,
         childRunId: `${params.job.id}:${params.runSessionId}:${params.runStartedAt}`,
         requesterSessionKey: announceSessionKey,
-        requesterOrigin: {
-          channel: delivery.channel,
-          to: delivery.to,
-          accountId: delivery.accountId,
-          threadId: delivery.threadId,
-        },
+        requesterOrigin:
+          options.requesterOrigin ??
+          (options.delivery
+            ? {
+                channel: options.delivery.channel,
+                to: options.delivery.to,
+                accountId: options.delivery.accountId,
+                threadId: options.delivery.threadId,
+              }
+            : undefined),
         requesterDisplayKey: announceSessionKey,
         task: taskLabel,
         timeoutMs: params.timeoutMs,
@@ -313,15 +365,11 @@ export async function dispatchCronDelivery(
         // target channel via the completion-direct-send path rather than injecting
         // a trigger message into the (likely idle) main agent session.
         expectsCompletionMessage: true,
-        // Keep delivery outcome truthful for cron state: if outbound send fails,
-        // announce flow must report false so caller can apply best-effort policy.
-        bestEffortDeliver: false,
         waitForCompletion: false,
         startedAt: params.runStartedAt,
         endedAt: params.runEndedAt,
         outcome: { status: "ok" },
         announceType: "cron job",
-        signal: params.abortSignal,
       });
       if (didAnnounce) {
         delivered = true;
@@ -360,7 +408,37 @@ export async function dispatchCronDelivery(
     !params.skipHeartbeatDelivery &&
     !params.skipMessagingToolDelivery
   ) {
+    const sessionOnlyAnnounceTarget = resolveSessionOnlyAnnounceTarget({
+      cfg: params.cfgWithAgentDefaults,
+      agentId: params.agentId,
+      sessionKey: params.job.sessionKey,
+    });
+
     if (!params.resolvedDelivery.ok) {
+      if (sessionOnlyAnnounceTarget && !params.deliveryPayloadHasStructuredContent) {
+        const announceResult = await deliverViaAnnounce(sessionOnlyAnnounceTarget);
+        if (announceResult) {
+          return {
+            result: announceResult,
+            delivered,
+            deliveryAttempted,
+            summary,
+            outputText,
+            synthesizedText,
+            deliveryPayloads,
+          };
+        }
+        if (deliveryAttempted) {
+          return {
+            delivered,
+            deliveryAttempted,
+            summary,
+            outputText,
+            synthesizedText,
+            deliveryPayloads,
+          };
+        }
+      }
       if (!params.deliveryBestEffort) {
         return {
           result: failDeliveryTarget(params.resolvedDelivery.error.message),
@@ -399,7 +477,8 @@ export async function dispatchCronDelivery(
     // be swallowed by ANNOUNCE_SKIP/NO_REPLY in the target agent turn, which
     // silently drops cron output for topic-bound sessions.
     const useDirectDelivery =
-      params.deliveryPayloadHasStructuredContent || params.resolvedDelivery.threadId != null;
+      params.resolvedDelivery.channel !== INTERNAL_MESSAGE_CHANNEL &&
+      (params.deliveryPayloadHasStructuredContent || params.resolvedDelivery.threadId != null);
     if (useDirectDelivery) {
       const directResult = await deliverViaDirect(params.resolvedDelivery);
       if (directResult) {
@@ -414,7 +493,11 @@ export async function dispatchCronDelivery(
         };
       }
     } else {
-      const announceResult = await deliverViaAnnounce(params.resolvedDelivery);
+      const announceResult = await deliverViaAnnounce(
+        params.resolvedDelivery.channel === INTERNAL_MESSAGE_CHANNEL && sessionOnlyAnnounceTarget
+          ? sessionOnlyAnnounceTarget
+          : { delivery: params.resolvedDelivery },
+      );
       if (announceResult) {
         return {
           result: announceResult,

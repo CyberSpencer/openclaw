@@ -14,21 +14,28 @@ import {
 import { readChannelAllowFromStoreSync } from "../../pairing/pairing-store.js";
 import { buildChannelAccountBindings } from "../../routing/bindings.js";
 import { normalizeAccountId, normalizeAgentId } from "../../routing/session-key.js";
+import { deliveryContextFromSession } from "../../utils/delivery-context.js";
+import {
+  INTERNAL_MESSAGE_CHANNEL,
+  type GatewayMessageChannel,
+} from "../../utils/message-channel.js";
 import { resolveWhatsAppAccount } from "../../web/accounts.js";
 import { normalizeWhatsAppTarget } from "../../whatsapp/normalize.js";
+
+type DeliveryTargetChannel = Exclude<OutboundChannel, "none"> | GatewayMessageChannel;
 
 export type DeliveryTargetResolution =
   | {
       ok: true;
-      channel: Exclude<OutboundChannel, "none">;
-      to: string;
+      channel: DeliveryTargetChannel;
+      to?: string;
       accountId?: string;
       threadId?: string | number;
       mode: "explicit" | "implicit";
     }
   | {
       ok: false;
-      channel?: Exclude<OutboundChannel, "none">;
+      channel?: DeliveryTargetChannel;
       to?: string;
       accountId?: string;
       threadId?: string | number;
@@ -40,7 +47,7 @@ export async function resolveDeliveryTarget(
   cfg: OpenClawConfig,
   agentId: string,
   jobPayload: {
-    channel?: "last" | ChannelId;
+    channel?: "last" | ChannelId | GatewayMessageChannel;
     to?: string;
     accountId?: string;
     sessionKey?: string;
@@ -67,10 +74,18 @@ export async function resolveDeliveryTarget(
     explicitTo,
     allowMismatchedLastTo,
   });
+  const sessionDeliveryContext = deliveryContextFromSession(main);
+  const wantsInternalSessionDelivery =
+    explicitTo === undefined &&
+    (requestedChannel === INTERNAL_MESSAGE_CHANNEL ||
+      ((requestedChannel === "last" || requestedChannel === undefined) &&
+        (sessionDeliveryContext?.channel === INTERNAL_MESSAGE_CHANNEL ||
+          main?.lastChannel === INTERNAL_MESSAGE_CHANNEL ||
+          main?.channel === INTERNAL_MESSAGE_CHANNEL)));
 
   let fallbackChannel: Exclude<OutboundChannel, "none"> | undefined;
   let channelResolutionError: Error | undefined;
-  if (!preliminary.channel) {
+  if (!preliminary.channel && !wantsInternalSessionDelivery) {
     if (preliminary.lastChannel) {
       fallbackChannel = preliminary.lastChannel;
     } else {
@@ -129,6 +144,16 @@ export async function resolveDeliveryTarget(
       : undefined;
 
   if (!channel) {
+    if (wantsInternalSessionDelivery) {
+      return {
+        ok: true,
+        channel: INTERNAL_MESSAGE_CHANNEL,
+        to: undefined,
+        accountId: undefined,
+        threadId: undefined,
+        mode,
+      };
+    }
     return {
       ok: false,
       channel: undefined,

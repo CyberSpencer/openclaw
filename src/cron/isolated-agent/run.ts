@@ -1,3 +1,5 @@
+import fs from "node:fs/promises";
+import path from "node:path";
 import {
   resolveAgentConfig,
   resolveAgentDir,
@@ -87,6 +89,15 @@ export type RunCronAgentTurnResult = {
   deliveryAttempted?: boolean;
 } & CronRunOutcome &
   CronRunTelemetry;
+
+async function ensureCronSessionTranscriptFile(sessionFile: string, jobId: string): Promise<void> {
+  try {
+    await fs.mkdir(path.dirname(sessionFile), { recursive: true });
+    await fs.appendFile(sessionFile, "", "utf-8");
+  } catch (err) {
+    logWarn(`[cron:${jobId}] Failed to create session transcript file: ${String(err)}`);
+  }
+}
 
 export async function runCronIsolatedAgentTurn(params: {
   cfg: OpenClawConfig;
@@ -437,6 +448,7 @@ export async function runCronIsolatedAgentTurn(params: {
   let runEndedAt = runStartedAt;
   try {
     const sessionFile = resolveSessionTranscriptPath(cronSession.sessionEntry.sessionId, agentId);
+    await ensureCronSessionTranscriptFile(sessionFile, params.job.id);
     const resolvedVerboseLevel =
       normalizeVerboseLevel(cronSession.sessionEntry.verboseLevel) ??
       normalizeVerboseLevel(agentCfg?.verboseDefault) ??

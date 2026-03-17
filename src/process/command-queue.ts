@@ -1,3 +1,4 @@
+import { AsyncLocalStorage } from "node:async_hooks";
 import { diagnosticLogger as diag, logLaneDequeue, logLaneEnqueue } from "../logging/diagnostic.js";
 import { CommandLane } from "./lanes.js";
 /**
@@ -51,6 +52,8 @@ type LaneState = {
 
 const lanes = new Map<string, LaneState>();
 let nextTaskId = 1;
+type ActiveLaneFrame = { lane: string; taskId: number };
+const activeLaneStack = new AsyncLocalStorage<ActiveLaneFrame[]>();
 
 function getLaneState(lane: string): LaneState {
   const existing = lanes.get(lane);
@@ -108,7 +111,10 @@ function drainLane(lane: string) {
         const taskId = nextTaskId++;
         const taskGeneration = state.generation;
         state.activeTaskIds.add(taskId);
-        void (async () => {
+        const currentLaneStack = activeLaneStack.getStore() ?? [];
+        const parentLaneStack =
+          currentLaneStack.at(-1)?.lane === lane ? currentLaneStack.slice(0, -1) : currentLaneStack;
+        void activeLaneStack.run([...parentLaneStack, { lane, taskId }], async () => {
           const startTime = Date.now();
           try {
             const result = await entry.task();
@@ -133,7 +139,7 @@ function drainLane(lane: string) {
             }
             entry.reject(err);
           }
-        })();
+        });
       }
     } finally {
       state.draining = false;
@@ -166,10 +172,18 @@ export function enqueueCommandInLane<T>(
     onWait?: (waitMs: number, queuedAhead: number) => void;
   },
 ): Promise<T> {
+  const cleaned = lane.trim() || CommandLane.Main;
+  const currentLaneStack = activeLaneStack.getStore();
+  const activeFrame = currentLaneStack?.at(-1);
+  if (
+    activeFrame?.lane === cleaned &&
+    getLaneState(cleaned).activeTaskIds.has(activeFrame.taskId)
+  ) {
+    return Promise.resolve().then(task);
+  }
   if (gatewayDraining) {
     return Promise.reject(new GatewayDrainingError());
   }
-  const cleaned = lane.trim() || CommandLane.Main;
   const warnAfterMs = opts?.warnAfterMs ?? 2_000;
   const state = getLaneState(cleaned);
   return new Promise<T>((resolve, reject) => {

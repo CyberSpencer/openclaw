@@ -274,6 +274,91 @@ describe("command queue", () => {
     await Promise.all([first, second]);
   });
 
+  it("runs same-lane nested enqueues inline instead of deadlocking", async () => {
+    const lane = `reentrant-${Date.now()}-${Math.random().toString(16).slice(2)}`;
+    setCommandLaneConcurrency(lane, 1);
+
+    const steps: string[] = [];
+    const result = await enqueueCommandInLane(lane, async () => {
+      steps.push("outer:start");
+      const nested = await enqueueCommandInLane(lane, async () => {
+        steps.push("inner");
+        return "nested-ok";
+      });
+      steps.push("outer:end");
+      return nested;
+    });
+
+    expect(result).toBe("nested-ok");
+    expect(steps).toEqual(["outer:start", "inner", "outer:end"]);
+    expect(getQueueSize(lane)).toBe(0);
+    expect(diagnosticMocks.logLaneEnqueue).toHaveBeenCalledTimes(1);
+  });
+
+  it("does not inline inherited same-lane callbacks after the active task unwinds", async () => {
+    const lane = `reentrant-inherited-${Date.now()}-${Math.random().toString(16).slice(2)}`;
+    setCommandLaneConcurrency(lane, 1);
+
+    const releaseSecond = createDeferred();
+    const steps: string[] = [];
+    let active = 0;
+    let maxActive = 0;
+    let nestedTask!: Promise<string>;
+    let resolveNestedScheduled!: () => void;
+    const nestedScheduled = new Promise<void>((resolve) => {
+      resolveNestedScheduled = resolve;
+    });
+
+    const first = enqueueCommandInLane(lane, async () => {
+      steps.push("first");
+      setTimeout(() => {
+        steps.push("timer");
+        nestedTask = enqueueCommandInLane(lane, async () => {
+          active += 1;
+          maxActive = Math.max(maxActive, active);
+          steps.push("nested:start");
+          await Promise.resolve();
+          steps.push("nested:end");
+          active -= 1;
+          return "nested";
+        });
+        resolveNestedScheduled();
+      }, 0);
+    });
+
+    const second = enqueueCommandInLane(lane, async () => {
+      active += 1;
+      maxActive = Math.max(maxActive, active);
+      steps.push("second:start");
+      await releaseSecond.promise;
+      steps.push("second:end");
+      active -= 1;
+      return "second";
+    });
+
+    await first;
+    await nestedScheduled;
+    await vi.waitFor(() => {
+      expect(steps).toContain("second:start");
+      expect(steps).toContain("timer");
+    });
+    expect(steps).not.toContain("nested:start");
+
+    releaseSecond.resolve();
+
+    await expect(second).resolves.toBe("second");
+    await expect(nestedTask).resolves.toBe("nested");
+    expect(maxActive).toBe(1);
+    expect(steps).toEqual([
+      "first",
+      "second:start",
+      "timer",
+      "second:end",
+      "nested:start",
+      "nested:end",
+    ]);
+  });
+
   it("clearCommandLane rejects pending promises", async () => {
     // First task blocks the lane.
     const { task: first, release } = enqueueBlockedMainTask(async () => "first");

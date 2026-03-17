@@ -4,10 +4,17 @@ import os from "node:os";
 import path from "node:path";
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import type { HeartbeatRunResult } from "../infra/heartbeat-wake.js";
+import {
+  clearCommandLane,
+  enqueueCommandInLane,
+  setCommandLaneConcurrency,
+} from "../process/command-queue.js";
+import { CommandLane } from "../process/lanes.js";
 import * as schedule from "./schedule.js";
 import { CronService } from "./service.js";
 import { createDeferred, createRunningCronServiceState } from "./service.test-harness.js";
 import { computeJobNextRunAtMs } from "./service/jobs.js";
+import { run as runJob } from "./service/ops.js";
 import { createCronServiceState, type CronEvent } from "./service/state.js";
 import { DEFAULT_JOB_TIMEOUT_MS, executeJobCore, onTimer, runMissedJobs } from "./service/timer.js";
 import type { CronJob, CronJobState } from "./types.js";
@@ -1512,6 +1519,65 @@ describe("Cron issue regressions", () => {
     const jobs = state.store?.jobs ?? [];
     expect(jobs.find((job) => job.id === first.id)?.state.lastStatus).toBe("ok");
     expect(jobs.find((job) => job.id === second.id)?.state.lastStatus).toBe("ok");
+  });
+
+  it("allows queued manual force-runs to enter nested cron-lane isolated work", async () => {
+    vi.useRealTimers();
+    clearCommandLane(CommandLane.Cron);
+    setCommandLaneConcurrency(CommandLane.Cron, 1);
+
+    try {
+      const dueAt = Date.parse("2026-02-06T10:05:03.000Z");
+      const store = await makeStorePath();
+      const job = createDueIsolatedJob({
+        id: "queued-nested-cron-lane",
+        nowMs: dueAt,
+        nextRunAtMs: dueAt,
+      });
+      const events: CronEvent[] = [];
+      const state = createCronServiceState({
+        cronEnabled: true,
+        storePath: store.storePath,
+        cronConfig: { maxConcurrentRuns: 1 },
+        log: noopLogger,
+        nowMs: () => dueAt,
+        enqueueSystemEvent: vi.fn(),
+        requestHeartbeatNow: vi.fn(),
+        onEvent: (evt) => {
+          events.push(evt);
+        },
+        runIsolatedAgentJob: vi.fn(
+          async () =>
+            await enqueueCommandInLane(CommandLane.Cron, async () => ({
+              status: "ok" as const,
+              summary: "nested cron lane run",
+            })),
+        ),
+      });
+
+      await fs.writeFile(store.storePath, JSON.stringify({ version: 1, jobs: [job] }), "utf-8");
+
+      const result = await runJob(state, job.id, "force");
+      expect(result).toEqual({ ok: true, ran: true });
+
+      await vi.waitFor(() => {
+        expect(events).toEqual(
+          expect.arrayContaining([
+            expect.objectContaining({ jobId: job.id, action: "started" }),
+            expect.objectContaining({
+              jobId: job.id,
+              action: "finished",
+              status: "ok",
+              summary: "nested cron lane run",
+            }),
+          ]),
+        );
+      });
+
+      expect(state.store?.jobs.find((entry) => entry.id === job.id)?.state.lastStatus).toBe("ok");
+    } finally {
+      clearCommandLane(CommandLane.Cron);
+    }
   });
 
   // Regression: isolated cron runs must not abort at 1/3 of configured timeoutSeconds.
