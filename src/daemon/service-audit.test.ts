@@ -1,3 +1,6 @@
+import fs from "node:fs/promises";
+import os from "node:os";
+import path from "node:path";
 import { describe, expect, it } from "vitest";
 import {
   auditGatewayServiceConfig,
@@ -99,6 +102,95 @@ describe("auditGatewayServiceConfig", () => {
     expect(
       audit.issues.some((issue) => issue.code === SERVICE_AUDIT_CODES.gatewayTokenMismatch),
     ).toBe(false);
+  });
+
+  it("skips the gateway subcommand audit for configured supervisor launch agents", async () => {
+    const audit = await auditGatewayServiceConfig({
+      env: {
+        HOME: "/tmp",
+        OPENCLAW_GATEWAY_SUPERVISOR_LABEL: "ai.openclaw.stack",
+      },
+      platform: "darwin",
+      command: {
+        programArguments: ["/Users/test/clawd/scripts/stack_supervisor.sh"],
+        sourcePath: "/Users/test/Library/LaunchAgents/ai.openclaw.stack.plist",
+        environment: {
+          PATH: buildMinimalServicePath({
+            platform: "darwin",
+            env: { HOME: "/tmp" },
+          }),
+        },
+      },
+    });
+    expect(
+      audit.issues.some((issue) => issue.code === SERVICE_AUDIT_CODES.gatewayCommandMissing),
+    ).toBe(false);
+  });
+
+  it("audits RunAtLoad and KeepAlive on the active supervisor plist", async () => {
+    const homeDir = await fs.mkdtemp(path.join(os.tmpdir(), "openclaw-service-audit-"));
+    const launchAgentsDir = path.join(homeDir, "Library", "LaunchAgents");
+    await fs.mkdir(launchAgentsDir, { recursive: true });
+
+    const gatewayPlist = path.join(launchAgentsDir, "ai.openclaw.gateway.plist");
+    const supervisorPlist = path.join(launchAgentsDir, "ai.openclaw.stack.plist");
+    await fs.writeFile(
+      gatewayPlist,
+      [
+        '<?xml version="1.0" encoding="UTF-8"?>',
+        '<plist version="1.0"><dict>',
+        "<key>RunAtLoad</key>",
+        "<true/>",
+        "<key>KeepAlive</key>",
+        "<true/>",
+        "</dict></plist>",
+      ].join("\n"),
+      "utf8",
+    );
+    await fs.writeFile(
+      supervisorPlist,
+      [
+        '<?xml version="1.0" encoding="UTF-8"?>',
+        '<plist version="1.0"><dict>',
+        "</dict></plist>",
+      ].join("\n"),
+      "utf8",
+    );
+
+    try {
+      const audit = await auditGatewayServiceConfig({
+        env: {
+          HOME: homeDir,
+          OPENCLAW_GATEWAY_SUPERVISOR_LABEL: "ai.openclaw.stack",
+        },
+        platform: "darwin",
+        command: {
+          programArguments: ["/Users/test/clawd/scripts/stack_supervisor.sh"],
+          sourcePath: supervisorPlist,
+          environment: {
+            PATH: buildMinimalServicePath({
+              platform: "darwin",
+              env: { HOME: homeDir },
+            }),
+          },
+        },
+      });
+
+      expect(audit.issues).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            code: SERVICE_AUDIT_CODES.launchdRunAtLoad,
+            detail: supervisorPlist,
+          }),
+          expect.objectContaining({
+            code: SERVICE_AUDIT_CODES.launchdKeepAlive,
+            detail: supervisorPlist,
+          }),
+        ]),
+      );
+    } finally {
+      await fs.rm(homeDir, { recursive: true, force: true });
+    }
   });
 });
 

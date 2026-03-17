@@ -40,6 +40,54 @@ function resolveLaunchAgentPlistPathForLabel(
   return path.posix.join(home, "Library", "LaunchAgents", `${label}.plist`);
 }
 
+function resolveGatewaySupervisorLaunchAgentLabel(
+  env: Record<string, string | undefined>,
+): string | null {
+  const raw = env.OPENCLAW_GATEWAY_SUPERVISOR_LABEL?.trim();
+  if (!raw) {
+    return null;
+  }
+  const canonical = resolveLaunchAgentLabel({ env });
+  return raw === canonical ? null : raw;
+}
+
+async function execLaunchctlPrintForLabel(
+  env: Record<string, string | undefined>,
+  label: string,
+): Promise<{ stdout: string; stderr: string; code: number }> {
+  const domain = resolveGuiDomain();
+  return await execLaunchctl(["print", `${domain}/${label}`]);
+}
+
+async function readLaunchAgentProgramArgumentsForLabel(
+  env: GatewayServiceEnv,
+  label: string,
+): Promise<GatewayServiceCommandConfig | null> {
+  const plistPath = resolveLaunchAgentPlistPathForLabel(env, label);
+  return readLaunchAgentProgramArgumentsFromFile(plistPath);
+}
+
+async function resolveActiveLaunchAgentPrint(env: GatewayServiceEnv): Promise<{
+  label: string;
+  res: { stdout: string; stderr: string; code: number };
+  viaSupervisor: boolean;
+}> {
+  const label = resolveLaunchAgentLabel({ env });
+  const res = await execLaunchctlPrintForLabel(env, label);
+  if (res.code === 0) {
+    return { label, res, viaSupervisor: false };
+  }
+  const supervisorLabel = resolveGatewaySupervisorLaunchAgentLabel(env);
+  if (!supervisorLabel) {
+    return { label, res, viaSupervisor: false };
+  }
+  const supervisorRes = await execLaunchctlPrintForLabel(env, supervisorLabel);
+  if (supervisorRes.code === 0) {
+    return { label: supervisorLabel, res: supervisorRes, viaSupervisor: true };
+  }
+  return { label, res, viaSupervisor: false };
+}
+
 export function resolveLaunchAgentPlistPath(env: GatewayServiceEnv): string {
   const label = resolveLaunchAgentLabel({ env });
   return resolveLaunchAgentPlistPathForLabel(env, label);
@@ -63,8 +111,24 @@ export function resolveGatewayLogPaths(env: GatewayServiceEnv): {
 export async function readLaunchAgentProgramArguments(
   env: GatewayServiceEnv,
 ): Promise<GatewayServiceCommandConfig | null> {
-  const plistPath = resolveLaunchAgentPlistPath(env);
-  return readLaunchAgentProgramArgumentsFromFile(plistPath);
+  const active = await resolveActiveLaunchAgentPrint(env);
+  const labels = [active.label];
+  const supervisorLabel = resolveGatewaySupervisorLaunchAgentLabel(env);
+  if (supervisorLabel && supervisorLabel !== active.label) {
+    labels.push(supervisorLabel);
+  }
+
+  for (const label of labels) {
+    const command = await readLaunchAgentProgramArgumentsForLabel(env, label);
+    if (command) {
+      return {
+        ...command,
+        sourcePath: command.sourcePath ?? resolveLaunchAgentPlistPathForLabel(env, label),
+      };
+    }
+  }
+
+  return null;
 }
 
 export function buildLaunchAgentPlist({
@@ -147,9 +211,8 @@ export function parseLaunchctlPrint(output: string): LaunchctlPrintInfo {
 }
 
 export async function isLaunchAgentLoaded(args: GatewayServiceEnvArgs): Promise<boolean> {
-  const domain = resolveGuiDomain();
   const label = resolveLaunchAgentLabel({ env: args.env });
-  const res = await execLaunchctl(["print", `${domain}/${label}`]);
+  const res = await execLaunchctlPrintForLabel(args.env, label);
   return res.code === 0;
 }
 
@@ -175,18 +238,23 @@ export async function launchAgentPlistExists(env: GatewayServiceEnv): Promise<bo
 export async function readLaunchAgentRuntime(
   env: Record<string, string | undefined>,
 ): Promise<GatewayServiceRuntime> {
-  const domain = resolveGuiDomain();
-  const label = resolveLaunchAgentLabel({ env });
-  const res = await execLaunchctl(["print", `${domain}/${label}`]);
-  if (res.code !== 0) {
+  const active = await resolveActiveLaunchAgentPrint(env);
+  const activeLabel = active.label;
+  const activeRes = active.res;
+  const viaSupervisor = active.viaSupervisor;
+
+  if (activeRes.code !== 0) {
     return {
       status: "unknown",
-      detail: (res.stderr || res.stdout).trim() || undefined,
+      detail: (activeRes.stderr || activeRes.stdout).trim() || undefined,
       missingUnit: true,
     };
   }
-  const parsed = parseLaunchctlPrint(res.stdout || res.stderr || "");
-  const plistExists = await launchAgentPlistExists(env);
+  const parsed = parseLaunchctlPrint(activeRes.stdout || activeRes.stderr || "");
+  const plistExists = await fs
+    .access(resolveLaunchAgentPlistPathForLabel(env, activeLabel))
+    .then(() => true)
+    .catch(() => false);
   const state = parsed.state?.toLowerCase();
   const status = state === "running" || parsed.pid ? "running" : state ? "stopped" : "unknown";
   return {
@@ -196,6 +264,7 @@ export async function readLaunchAgentRuntime(
     lastExitStatus: parsed.lastExitStatus,
     lastExitReason: parsed.lastExitReason,
     cachedLabel: !plistExists,
+    ...(viaSupervisor ? { detail: `via ${activeLabel}` } : {}),
   };
 }
 

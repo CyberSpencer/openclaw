@@ -161,8 +161,8 @@ async function auditSystemdUnit(
 async function auditLaunchdPlist(
   env: Record<string, string | undefined>,
   issues: ServiceConfigIssue[],
+  plistPath = resolveLaunchAgentPlistPath(env),
 ) {
-  const plistPath = resolveLaunchAgentPlistPath(env);
   let content = "";
   try {
     content = await fs.readFile(plistPath, "utf8");
@@ -188,6 +188,20 @@ async function auditLaunchdPlist(
       level: "recommended",
     });
   }
+}
+
+function isGatewaySupervisorCommand(
+  env: Record<string, string | undefined>,
+  command: GatewayServiceCommand,
+): boolean {
+  const supervisorLabel = env.OPENCLAW_GATEWAY_SUPERVISOR_LABEL?.trim();
+  if (!supervisorLabel || !command) {
+    return false;
+  }
+  if (command.sourcePath?.endsWith(`/${supervisorLabel}.plist`)) {
+    return true;
+  }
+  return command.programArguments.some((arg) => arg.includes("stack_supervisor.sh"));
 }
 
 function auditGatewayCommand(programArguments: string[] | undefined, issues: ServiceConfigIssue[]) {
@@ -390,7 +404,9 @@ export async function auditGatewayServiceConfig(params: {
   const issues: ServiceConfigIssue[] = [];
   const platform = params.platform ?? process.platform;
 
-  auditGatewayCommand(params.command?.programArguments, issues);
+  if (!isGatewaySupervisorCommand(params.env, params.command)) {
+    auditGatewayCommand(params.command?.programArguments, issues);
+  }
   auditGatewayToken(params.command, issues, params.expectedGatewayToken);
   auditGatewayServicePath(params.command, issues, params.env, platform);
   await auditGatewayRuntime(params.env, params.command, issues, platform);
@@ -398,7 +414,10 @@ export async function auditGatewayServiceConfig(params: {
   if (platform === "linux") {
     await auditSystemdUnit(params.env, issues);
   } else if (platform === "darwin") {
-    await auditLaunchdPlist(params.env, issues);
+    const plistPath = isGatewaySupervisorCommand(params.env, params.command)
+      ? params.command?.sourcePath
+      : undefined;
+    await auditLaunchdPlist(params.env, issues, plistPath);
   }
 
   return { ok: issues.length === 0, issues };

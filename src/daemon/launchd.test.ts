@@ -4,7 +4,10 @@ import { LAUNCH_AGENT_THROTTLE_INTERVAL_SECONDS } from "./launchd-plist.js";
 import {
   installLaunchAgent,
   isLaunchAgentListed,
+  isLaunchAgentLoaded,
   parseLaunchctlPrint,
+  readLaunchAgentProgramArguments,
+  readLaunchAgentRuntime,
   repairLaunchAgentBootstrap,
   restartLaunchAgent,
   resolveLaunchAgentPlistPath,
@@ -14,6 +17,7 @@ const state = vi.hoisted(() => ({
   launchctlCalls: [] as string[][],
   listOutput: "",
   printOutput: "",
+  printOutputs: new Map<string, { stdout: string; stderr?: string; code?: number }>(),
   bootstrapError: "",
   dirs: new Set<string>(),
   files: new Map<string, string>(),
@@ -39,6 +43,15 @@ vi.mock("./exec-file.js", () => ({
       return { stdout: state.listOutput, stderr: "", code: 0 };
     }
     if (call[0] === "print") {
+      const key = call[1] ?? "";
+      const override = state.printOutputs.get(key);
+      if (override) {
+        return {
+          stdout: override.stdout,
+          stderr: override.stderr ?? "",
+          code: override.code ?? 0,
+        };
+      }
       return { stdout: state.printOutput, stderr: "", code: 0 };
     }
     if (call[0] === "bootstrap" && state.bootstrapError) {
@@ -62,6 +75,13 @@ vi.mock("node:fs/promises", async (importOriginal) => {
     mkdir: vi.fn(async (p: string) => {
       state.dirs.add(String(p));
     }),
+    readFile: vi.fn(async (p: string) => {
+      const key = String(p);
+      if (state.files.has(key)) {
+        return state.files.get(key) ?? "";
+      }
+      throw new Error(`ENOENT: no such file or directory, readFile '${key}'`);
+    }),
     unlink: vi.fn(async (p: string) => {
       state.files.delete(String(p));
     }),
@@ -78,6 +98,7 @@ beforeEach(() => {
   state.launchctlCalls.length = 0;
   state.listOutput = "";
   state.printOutput = "";
+  state.printOutputs.clear();
   state.bootstrapError = "";
   state.dirs.clear();
   state.files.clear();
@@ -116,6 +137,120 @@ describe("launchctl list detection", () => {
       env: { HOME: "/Users/test", OPENCLAW_PROFILE: "default" },
     });
     expect(listed).toBe(false);
+  });
+});
+
+describe("launchd gateway supervisor fallback", () => {
+  const domain = typeof process.getuid === "function" ? `gui/${process.getuid()}` : "gui/501";
+
+  it("keeps loaded checks scoped to the canonical launch agent while still reporting supervisor runtime", async () => {
+    const env = {
+      HOME: "/Users/test",
+      OPENCLAW_PROFILE: "default",
+      OPENCLAW_GATEWAY_SUPERVISOR_LABEL: "ai.openclaw.stack",
+    };
+    state.printOutputs.set(`${domain}/ai.openclaw.gateway`, {
+      stdout: "",
+      stderr:
+        'Bad request.\nCould not find service "ai.openclaw.gateway" in domain for user gui: 501',
+      code: 113,
+    });
+    state.printOutputs.set(`${domain}/ai.openclaw.stack`, {
+      stdout: ["state = running", "pid = 39395"].join("\n"),
+    });
+
+    const loaded = await isLaunchAgentLoaded({ env });
+    const runtime = await readLaunchAgentRuntime(env);
+
+    expect(loaded).toBe(false);
+    expect(runtime.status).toBe("running");
+    expect(runtime.pid).toBe(39395);
+    expect(runtime.detail).toBe("via ai.openclaw.stack");
+    expect(runtime.missingUnit).toBeUndefined();
+  });
+
+  it("reads program arguments from the supervisor plist when the gateway plist is absent", async () => {
+    const env = {
+      HOME: "/Users/test",
+      OPENCLAW_PROFILE: "default",
+      OPENCLAW_GATEWAY_SUPERVISOR_LABEL: "ai.openclaw.stack",
+    };
+    const supervisorPlist = "/Users/test/Library/LaunchAgents/ai.openclaw.stack.plist";
+    state.files.set(
+      supervisorPlist,
+      [
+        '<?xml version="1.0" encoding="UTF-8"?>',
+        '<plist version="1.0"><dict>',
+        "<key>ProgramArguments</key>",
+        "<array>",
+        "<string>/Users/test/clawd/scripts/stack_supervisor.sh</string>",
+        "</array>",
+        "<key>WorkingDirectory</key>",
+        "<string>/Users/test/clawd</string>",
+        "<key>EnvironmentVariables</key>",
+        "<dict>",
+        "<key>PATH</key>",
+        "<string>/opt/homebrew/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>",
+        "</dict>",
+        "</dict></plist>",
+      ].join("\n"),
+    );
+
+    const command = await readLaunchAgentProgramArguments(env);
+
+    expect(command?.programArguments).toEqual(["/Users/test/clawd/scripts/stack_supervisor.sh"]);
+    expect(command?.workingDirectory).toBe("/Users/test/clawd");
+    expect(command?.environment?.PATH).toBe("/opt/homebrew/bin:/usr/bin:/bin:/usr/sbin:/sbin");
+    expect(command?.sourcePath).toBe(supervisorPlist);
+  });
+
+  it("prefers the active supervisor plist over a stale canonical gateway plist", async () => {
+    const env = {
+      HOME: "/Users/test",
+      OPENCLAW_PROFILE: "default",
+      OPENCLAW_GATEWAY_SUPERVISOR_LABEL: "ai.openclaw.stack",
+    };
+    const gatewayPlist = "/Users/test/Library/LaunchAgents/ai.openclaw.gateway.plist";
+    const supervisorPlist = "/Users/test/Library/LaunchAgents/ai.openclaw.stack.plist";
+    state.printOutputs.set(`${domain}/ai.openclaw.gateway`, {
+      stdout: "",
+      stderr:
+        'Bad request.\nCould not find service "ai.openclaw.gateway" in domain for user gui: 501',
+      code: 113,
+    });
+    state.printOutputs.set(`${domain}/ai.openclaw.stack`, {
+      stdout: ["state = running", "pid = 39395"].join("\n"),
+    });
+    state.files.set(
+      gatewayPlist,
+      [
+        '<?xml version="1.0" encoding="UTF-8"?>',
+        '<plist version="1.0"><dict>',
+        "<key>ProgramArguments</key>",
+        "<array>",
+        "<string>/usr/bin/node</string>",
+        "<string>gateway</string>",
+        "</array>",
+        "</dict></plist>",
+      ].join("\n"),
+    );
+    state.files.set(
+      supervisorPlist,
+      [
+        '<?xml version="1.0" encoding="UTF-8"?>',
+        '<plist version="1.0"><dict>',
+        "<key>ProgramArguments</key>",
+        "<array>",
+        "<string>/Users/test/clawd/scripts/stack_supervisor.sh</string>",
+        "</array>",
+        "</dict></plist>",
+      ].join("\n"),
+    );
+
+    const command = await readLaunchAgentProgramArguments(env);
+
+    expect(command?.programArguments).toEqual(["/Users/test/clawd/scripts/stack_supervisor.sh"]);
+    expect(command?.sourcePath).toBe(supervisorPlist);
   });
 });
 
