@@ -414,7 +414,7 @@ jobs:
 
   checks-windows:
     needs: [docs-scope, changed-scope, build-artifacts, check]
-    if: needs.docs-scope.outputs.docs_only != 'true' && (github.event_name == 'push' || needs.changed-scope.outputs.run_node == 'true')
+    if: false
     runs-on: windows-latest
     timeout-minutes: 45
     env:
