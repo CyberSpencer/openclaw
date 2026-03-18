@@ -87,6 +87,37 @@ describe("loadSubagentMonitor", () => {
     ]);
   });
 
+  it("normalizes modelApplied to a boolean when loading subagent rows", async () => {
+    const request = vi.fn().mockResolvedValue({
+      ts: 125,
+      tasks: [
+        {
+          runId: "run-model",
+          childSessionKey: "agent:main:subagent:model",
+          label: "Task model",
+          task: "Check model",
+          status: "running",
+          createdAt: 100,
+          startedAt: 110,
+          modelApplied: true,
+        },
+      ],
+    });
+    const state = createState({
+      client: { request } as unknown as SubagentMonitorState["client"],
+      sessionKey: "agent:main:main",
+    });
+
+    await loadSubagentMonitor(state, { limit: 10 });
+
+    expect(state.subagentMonitorResult?.sessions).toEqual([
+      expect.objectContaining({
+        key: "agent:main:subagent:model",
+        modelApplied: true,
+      }),
+    ]);
+  });
+
   it("falls back to sessions.list when sessions.subagents fails", async () => {
     const request = vi
       .fn()
