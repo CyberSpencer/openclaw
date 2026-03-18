@@ -7,6 +7,7 @@ export type SubagentRunRecord = {
   runId: string;
   childSessionKey: string;
   requesterSessionKey: string;
+  requesterSourceSessionKey?: string;
   requesterOrigin?: DeliveryContext;
   requesterDisplayKey: string;
   task: string;

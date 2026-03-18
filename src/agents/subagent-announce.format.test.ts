@@ -344,7 +344,7 @@ describe("subagent announce formatting", () => {
       childSessionKey: "agent:main:subagent:test",
       childRunId: "run-direct",
       requesterSessionKey: "agent:main:main",
-      requesterOrigin: { channel: "whatsapp", accountId: "acct-123" },
+      requesterOrigin: { channel: "whatsapp", to: "+1555", accountId: "acct-123" },
       requesterDisplayKey: "main",
       task: "do thing",
       timeoutMs: 1000,
@@ -459,7 +459,7 @@ describe("subagent announce formatting", () => {
       childSessionKey: "agent:main:subagent:test",
       childRunId: "run-direct-origin",
       requesterSessionKey: "agent:main:main",
-      requesterOrigin: { channel: " whatsapp ", accountId: " acct-987 " },
+      requesterOrigin: { channel: " whatsapp ", to: " +1666 ", accountId: " acct-987 " },
       requesterDisplayKey: "main",
       task: "do thing",
       timeoutMs: 1000,
@@ -566,6 +566,44 @@ describe("subagent announce formatting", () => {
     expect(accountIds).toContain("acct-a");
     expect(accountIds).toContain("acct-b");
     expect(agentSpy).toHaveBeenCalledTimes(2);
+  });
+
+  it("keeps queued announce delivery internal when requester origin lacks an explicit target", async () => {
+    const { runSubagentAnnounceFlow } = await import("./subagent-announce.js");
+    embeddedRunMock.isEmbeddedPiRunActive.mockReturnValue(true);
+    embeddedRunMock.isEmbeddedPiRunStreaming.mockReturnValue(false);
+    sessionStore = {
+      "agent:main:main": {
+        sessionId: "session-queue-no-target",
+        lastChannel: "whatsapp",
+        lastTo: "+1555",
+        queueMode: "collect",
+        queueDebounceMs: 0,
+      },
+    };
+
+    const didAnnounce = await runSubagentAnnounceFlow({
+      childSessionKey: "agent:main:subagent:test",
+      childRunId: "run-no-target",
+      requesterSessionKey: "main",
+      requesterOrigin: { channel: "whatsapp" },
+      requesterDisplayKey: "main",
+      task: "do thing",
+      timeoutMs: 1000,
+      cleanup: "keep",
+      waitForCompletion: false,
+      startedAt: 10,
+      endedAt: 20,
+      outcome: { status: "ok" },
+    });
+
+    expect(didAnnounce).toBe(true);
+    await expect.poll(() => agentSpy.mock.calls.length).toBe(1);
+
+    const call = agentSpy.mock.calls[0]?.[0] as { params?: Record<string, unknown> };
+    expect(call?.params?.deliver).toBe(false);
+    expect(call?.params?.channel).toBeUndefined();
+    expect(call?.params?.to).toBeUndefined();
   });
 
   it("warns when requester and child lineage do not match", async () => {

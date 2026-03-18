@@ -24,6 +24,7 @@ import {
   resolveInternalSessionKey,
   resolveMainSessionAlias,
 } from "./tools/sessions-helpers.js";
+import { looksLikeSessionId, shouldResolveSessionIdInput } from "./tools/sessions-resolution.js";
 
 export const SUBAGENT_SPAWN_MODES = ["run", "session"] as const;
 export type SpawnSubagentMode = (typeof SUBAGENT_SPAWN_MODES)[number];
@@ -105,7 +106,12 @@ function resolveRequesterRegistrySessionKey(params: {
   if (!raw) {
     return resolveMainSessionKey(params.cfg);
   }
-  if (raw === "global" || raw === "unknown" || raw.startsWith("agent:")) {
+  if (
+    raw === "global" ||
+    raw === "unknown" ||
+    raw.startsWith("agent:") ||
+    looksLikeSessionId(raw)
+  ) {
     return raw;
   }
   const mainKey = params.cfg.session?.mainKey?.trim() || "main";
@@ -240,12 +246,15 @@ export async function spawnSubagentDirect(
   let threadBindingReady = false;
   const { mainKey, alias } = resolveMainSessionAlias(cfg);
   const requesterSessionKey = ctx.agentSessionKey;
+  const requesterSourceSessionKey = requesterSessionKey?.trim() || alias;
   const requesterAliasKey = requesterSessionKey
-    ? resolveInternalSessionKey({
-        key: requesterSessionKey,
-        alias,
-        mainKey,
-      })
+    ? shouldResolveSessionIdInput(requesterSourceSessionKey)
+      ? requesterSourceSessionKey
+      : resolveInternalSessionKey({
+          key: requesterSessionKey,
+          alias,
+          mainKey,
+        })
     : alias;
   const requesterInternalKey = resolveRequesterRegistrySessionKey({
     cfg,
@@ -350,9 +359,14 @@ export async function spawnSubagentDirect(
   try {
     await callGateway({
       method: "sessions.patch",
-      params: { key: childSessionKey, spawnDepth: childDepth },
+      params: {
+        key: childSessionKey,
+        spawnDepth: childDepth,
+        ...(resolvedModel ? { model: resolvedModel } : {}),
+      },
       timeoutMs: 10_000,
     });
+    modelApplied = Boolean(resolvedModel);
   } catch (err) {
     const messageText =
       err instanceof Error ? err.message : typeof err === "string" ? err : "error";
@@ -361,25 +375,6 @@ export async function spawnSubagentDirect(
       error: messageText,
       childSessionKey,
     };
-  }
-
-  if (resolvedModel) {
-    try {
-      await callGateway({
-        method: "sessions.patch",
-        params: { key: childSessionKey, model: resolvedModel },
-        timeoutMs: 10_000,
-      });
-      modelApplied = true;
-    } catch (err) {
-      const messageText =
-        err instanceof Error ? err.message : typeof err === "string" ? err : "error";
-      return {
-        status: "error",
-        error: messageText,
-        childSessionKey,
-      };
-    }
   }
   if (thinkingOverride !== undefined) {
     try {
@@ -408,7 +403,7 @@ export async function spawnSubagentDirect(
       agentId: targetAgentId,
       label: label || undefined,
       mode: spawnMode,
-      requesterSessionKey: requesterInternalKey,
+      requesterSessionKey: requesterSourceSessionKey,
       requester: {
         channel: requesterOrigin?.channel,
         accountId: requesterOrigin?.accountId,
@@ -500,7 +495,7 @@ export async function spawnSubagentDirect(
             {
               runId: childRunId,
               childSessionKey,
-              requesterSessionKey: requesterInternalKey,
+              requesterSessionKey: requesterSourceSessionKey,
             },
           );
           endedHookEmitted = true;
@@ -537,6 +532,7 @@ export async function spawnSubagentDirect(
     runId: childRunId,
     childSessionKey,
     requesterSessionKey: requesterInternalKey,
+    requesterSourceSessionKey,
     requesterOrigin,
     requesterDisplayKey,
     task,
@@ -568,7 +564,7 @@ export async function spawnSubagentDirect(
         {
           runId: childRunId,
           childSessionKey,
-          requesterSessionKey: requesterInternalKey,
+          requesterSessionKey: requesterSourceSessionKey,
         },
       );
     } catch {

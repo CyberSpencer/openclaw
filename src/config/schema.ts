@@ -1,10 +1,12 @@
 import { CHANNEL_IDS } from "../channels/registry.js";
 import { VERSION } from "../version.js";
+import { applyDerivedTags } from "./schema.tags.js";
 import { OpenClawSchema } from "./zod-schema.js";
 
 export type ConfigUiHint = {
   label?: string;
   help?: string;
+  tags?: string[];
   group?: string;
   order?: number;
   advanced?: boolean;
@@ -387,6 +389,11 @@ const FIELD_LABELS: Record<string, string> = {
   "channels.discord.intents.guildMembers": "Discord Guild Members Intent",
   "channels.discord.pluralkit.enabled": "Discord PluralKit Enabled",
   "channels.discord.pluralkit.token": "Discord PluralKit Token",
+  "channels.discord.threadBindings.enabled": "Discord Thread Binding Enabled",
+  "channels.discord.threadBindings.idleHours": "Discord Thread Binding Idle Timeout (hours)",
+  "channels.discord.threadBindings.maxAgeHours": "Discord Thread Binding Max Age (hours)",
+  "channels.discord.threadBindings.spawnSubagentSessions": "Discord Thread-Bound Subagent Spawn",
+  "channels.discord.threadBindings.spawnAcpSessions": "Discord Thread-Bound ACP Spawn",
   "channels.slack.dm.policy": "Slack DM Policy",
   "channels.slack.allowBots": "Slack Allow Bot Messages",
   "channels.discord.token": "Discord Bot Token",
@@ -840,6 +847,16 @@ const FIELD_HELP: Record<string, string> = {
     "Resolve PluralKit proxied messages and treat system members as distinct senders.",
   "channels.discord.pluralkit.token":
     "Optional PluralKit token for resolving private systems or members.",
+  "channels.discord.threadBindings.enabled":
+    "Enable Discord thread binding features (/focus, bound-thread routing/delivery, and thread-bound subagent sessions). Overrides session.threadBindings.enabled when set.",
+  "channels.discord.threadBindings.idleHours":
+    "Inactivity window in hours for Discord thread-bound sessions (/focus and spawned thread sessions). Set 0 to disable idle auto-unfocus (default: 24). Overrides session.threadBindings.idleHours when set.",
+  "channels.discord.threadBindings.maxAgeHours":
+    "Optional hard max age in hours for Discord thread-bound sessions. Set 0 to disable hard cap (default: 0). Overrides session.threadBindings.maxAgeHours when set.",
+  "channels.discord.threadBindings.spawnSubagentSessions":
+    "Whether Discord thread-bound spawns default to persistent subagent sessions instead of one-off runs.",
+  "channels.discord.threadBindings.spawnAcpSessions":
+    "Whether Discord thread-bound ACP spawns create persistent ACP sessions instead of one-off runs.",
   "channels.slack.dm.policy":
     'Direct message access control ("pairing" recommended). "open" requires channels.slack.dm.allowFrom=["*"].',
 };
@@ -858,10 +875,35 @@ const FIELD_PLACEHOLDERS: Record<string, string> = {
   "dgx.wanBaseUrl": "https://xxxx.ngrok-free.app",
 };
 
-const SENSITIVE_PATTERNS = [/token/i, /password/i, /secret/i, /api.?key/i];
+const SENSITIVE_KEY_WHITELIST_SUFFIXES = [
+  "maxtokens",
+  "maxoutputtokens",
+  "maxinputtokens",
+  "maxcompletiontokens",
+  "contexttokens",
+  "totaltokens",
+  "tokencount",
+  "tokenlimit",
+  "tokenbudget",
+  "passwordFile",
+] as const;
+const NORMALIZED_SENSITIVE_KEY_WHITELIST_SUFFIXES = SENSITIVE_KEY_WHITELIST_SUFFIXES.map((suffix) =>
+  suffix.toLowerCase(),
+);
+const SENSITIVE_PATTERNS = [
+  /token$/i,
+  /password/i,
+  /secret/i,
+  /api.?key/i,
+  /serviceaccount(?:ref)?$/i,
+];
 
 function isSensitivePath(path: string): boolean {
-  return SENSITIVE_PATTERNS.some((pattern) => pattern.test(path));
+  const lowerPath = path.toLowerCase();
+  const isWhitelisted = NORMALIZED_SENSITIVE_KEY_WHITELIST_SUFFIXES.some((suffix) =>
+    lowerPath.endsWith(suffix),
+  );
+  return !isWhitelisted && SENSITIVE_PATTERNS.some((pattern) => pattern.test(path));
 }
 
 type JsonSchemaObject = JsonSchemaNode & {
@@ -937,12 +979,15 @@ function buildBaseHints(): ConfigUiHints {
     const current = hints[path];
     hints[path] = current ? { ...current, placeholder } : { placeholder };
   }
-  return hints;
+  return applyDerivedTags(hints);
 }
 
 function applySensitiveHints(hints: ConfigUiHints): ConfigUiHints {
   const next = { ...hints };
   for (const key of Object.keys(next)) {
+    if (next[key]?.sensitive !== undefined) {
+      continue;
+    }
     if (isSensitivePath(key)) {
       next[key] = { ...next[key], sensitive: true };
     }
@@ -1160,6 +1205,10 @@ function buildBaseConfigSchema(): ConfigSchemaResponse {
     target: "draft-07",
     unrepresentable: "any",
   });
+  schema.$schema = "http://json-schema.org/draft-07/schema#";
+  if (schema.properties && typeof schema.properties === "object") {
+    delete (schema.properties as Record<string, unknown>).$schema;
+  }
   schema.title = "OpenClawConfig";
   const hints = applySensitiveHints(buildBaseHints());
   const next = {

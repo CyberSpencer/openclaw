@@ -81,7 +81,8 @@ export async function emitSubagentEndedHookOnce(params: {
         {
           runId: params.entry.runId,
           childSessionKey: params.entry.childSessionKey,
-          requesterSessionKey: params.entry.requesterSessionKey,
+          requesterSessionKey:
+            params.entry.requesterSourceSessionKey ?? params.entry.requesterSessionKey,
         },
       );
     }

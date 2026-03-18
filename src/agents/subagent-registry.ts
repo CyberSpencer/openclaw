@@ -385,7 +385,7 @@ function startSubagentAnnounceCleanupFlow(runId: string, entry: SubagentRunRecor
   void runSubagentAnnounceFlow({
     childSessionKey: entry.childSessionKey,
     childRunId: entry.runId,
-    requesterSessionKey: entry.requesterSessionKey,
+    requesterSessionKey: entry.requesterSourceSessionKey ?? entry.requesterSessionKey,
     requesterOrigin,
     requesterDisplayKey: entry.requesterDisplayKey,
     task: entry.task,
@@ -896,6 +896,7 @@ export function registerSubagentRun(params: {
   runId: string;
   childSessionKey: string;
   requesterSessionKey: string;
+  requesterSourceSessionKey?: string;
   requesterOrigin?: DeliveryContext;
   requesterDisplayKey: string;
   task: string;
@@ -919,6 +920,7 @@ export function registerSubagentRun(params: {
     runId: params.runId,
     childSessionKey: params.childSessionKey,
     requesterSessionKey: params.requesterSessionKey,
+    requesterSourceSessionKey: params.requesterSourceSessionKey,
     requesterOrigin,
     requesterDisplayKey: params.requesterDisplayKey,
     task: params.task,

@@ -51,19 +51,21 @@ function setSubagentLimits(subagents: Record<string, unknown>) {
 function seedDepthTwoAncestryStore(params?: { sessionIds?: boolean }) {
   const depth1 = "agent:main:subagent:depth-1";
   const callerKey = "agent:main:subagent:depth-2";
+  const depth1SessionId = "11111111-1111-4111-8111-111111111111";
+  const callerSessionId = "22222222-2222-4222-8222-222222222222";
   writeStore("main", {
     [depth1]: {
-      sessionId: params?.sessionIds ? "depth-1-session" : "depth-1",
+      sessionId: params?.sessionIds ? depth1SessionId : "depth-1",
       updatedAt: Date.now(),
       spawnedBy: "agent:main:main",
     },
     [callerKey]: {
-      sessionId: params?.sessionIds ? "depth-2-session" : "depth-2",
+      sessionId: params?.sessionIds ? callerSessionId : "depth-2",
       updatedAt: Date.now(),
       spawnedBy: depth1,
     },
   });
-  return { depth1, callerKey };
+  return { depth1, callerKey, depth1SessionId, callerSessionId };
 }
 
 describe("sessions_spawn depth + child limits", () => {
@@ -164,15 +166,33 @@ describe("sessions_spawn depth + child limits", () => {
 
   it("rejects depth-2 callers when the requester key is a sessionId", async () => {
     setSubagentLimits({ maxSpawnDepth: 2 });
-    seedDepthTwoAncestryStore({ sessionIds: true });
+    const { callerSessionId } = seedDepthTwoAncestryStore({ sessionIds: true });
 
-    const tool = createSessionsSpawnTool({ agentSessionKey: "depth-2-session" });
+    const tool = createSessionsSpawnTool({ agentSessionKey: callerSessionId });
     const result = await tool.execute("call-depth-sessionid-reject", { task: "hello" });
 
     expect(result.details).toMatchObject({
       status: "forbidden",
       error: "sessions_spawn is not allowed at this depth (current depth: 2, max: 2)",
     });
+  });
+
+  it("canonicalizes non-prefixed requester keys before storing spawnedBy lineage", async () => {
+    setSubagentLimits({ maxSpawnDepth: 2 });
+
+    const tool = createSessionsSpawnTool({ agentSessionKey: "workbench" });
+    const result = await tool.execute("call-workbench-lineage", { task: "hello" });
+
+    expect(result.details).toMatchObject({
+      status: "accepted",
+      runId: "run-depth",
+    });
+
+    const calls = callGatewayMock.mock.calls.map(
+      (call) => call[0] as { method?: string; params?: Record<string, unknown> },
+    );
+    const agentCall = calls.find((entry) => entry.method === "agent");
+    expect(agentCall?.params?.spawnedBy).toBe("agent:main:workbench");
   });
 
   it("rejects when active children for requester session reached maxChildrenPerAgent", async () => {

@@ -369,7 +369,7 @@ function mergeConfig(
     provider === "mistral" ||
     provider === "auto";
   const batch = {
-    enabled: overrideRemote?.batch?.enabled ?? defaultRemote?.batch?.enabled ?? true,
+    enabled: overrideRemote?.batch?.enabled ?? defaultRemote?.batch?.enabled ?? false,
     wait: overrideRemote?.batch?.wait ?? defaultRemote?.batch?.wait ?? true,
     concurrency: Math.max(
       1,
@@ -380,18 +380,22 @@ function mergeConfig(
     timeoutMinutes:
       overrideRemote?.batch?.timeoutMinutes ?? defaultRemote?.batch?.timeoutMinutes ?? 60,
   };
+  const remoteEndpoints = normalizeRemoteEndpoints(
+    defaultRemote?.endpoints,
+    overrideRemote?.endpoints,
+  );
   const remote = includeRemote
     ? {
-        baseUrl: overrideRemote?.baseUrl ?? defaultRemote?.baseUrl,
-        endpoints: (() => {
-          const endpoints = normalizeRemoteEndpoints(
-            defaultRemote?.endpoints,
-            overrideRemote?.endpoints,
-          );
-          return endpoints.length > 0 ? endpoints : undefined;
-        })(),
-        apiKey: overrideRemote?.apiKey ?? defaultRemote?.apiKey,
-        headers: overrideRemote?.headers ?? defaultRemote?.headers,
+        ...((overrideRemote?.baseUrl ?? defaultRemote?.baseUrl)
+          ? { baseUrl: overrideRemote?.baseUrl ?? defaultRemote?.baseUrl }
+          : {}),
+        ...(remoteEndpoints.length > 0 ? { endpoints: remoteEndpoints } : {}),
+        ...((overrideRemote?.apiKey ?? defaultRemote?.apiKey)
+          ? { apiKey: overrideRemote?.apiKey ?? defaultRemote?.apiKey }
+          : {}),
+        ...((overrideRemote?.headers ?? defaultRemote?.headers)
+          ? { headers: overrideRemote?.headers ?? defaultRemote?.headers }
+          : {}),
         batch,
       }
     : undefined;

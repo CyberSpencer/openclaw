@@ -120,6 +120,12 @@ function resolveAnnounceOrigin(
   // requesterOrigin (captured at spawn time) reflects the channel the user is
   // actually on and must take priority over the session entry, which may carry
   // stale lastChannel / lastTo values from a previous channel interaction.
+  // If the captured origin already names a channel, keep it authoritative so we
+  // never revive a stale recipient/thread from the session store when the
+  // explicit target is missing.
+  if (normalizeDeliveryContext(requesterOrigin)?.channel) {
+    return normalizeDeliveryContext(requesterOrigin);
+  }
   return mergeDeliveryContext(requesterOrigin, deliveryContextFromSession(entry));
 }
 
@@ -127,11 +133,9 @@ async function sendAnnounce(item: AnnounceQueueItem) {
   const origin = item.origin;
   const cfg = loadConfig();
   const timeoutMs = resolveAnnounceTimeoutMs(cfg);
-  const canDeliverExternally = Boolean(
-    origin?.channel && origin?.to && isDeliverableMessageChannel(origin.channel),
-  );
+  const canDeliverViaAgent = Boolean(origin?.channel && origin.channel !== "webchat" && origin?.to);
   const threadId =
-    canDeliverExternally && origin?.threadId != null && origin.threadId !== ""
+    canDeliverViaAgent && origin?.threadId != null && origin.threadId !== ""
       ? String(origin.threadId)
       : undefined;
   await callGateway({
@@ -139,11 +143,11 @@ async function sendAnnounce(item: AnnounceQueueItem) {
     params: {
       sessionKey: item.sessionKey,
       message: item.prompt,
-      channel: canDeliverExternally ? origin?.channel : undefined,
-      accountId: canDeliverExternally ? origin?.accountId : undefined,
-      to: canDeliverExternally ? origin?.to : undefined,
+      channel: canDeliverViaAgent ? origin?.channel : undefined,
+      accountId: canDeliverViaAgent ? origin?.accountId : undefined,
+      to: canDeliverViaAgent ? origin?.to : undefined,
       threadId,
-      deliver: canDeliverExternally,
+      deliver: canDeliverViaAgent,
       idempotencyKey: crypto.randomUUID(),
     },
     expectFinal: true,
@@ -643,6 +647,7 @@ export async function runSubagentAnnounceFlow(params: {
       announceCfg,
       params.requesterSessionKey,
     );
+    const announceSessionKey = params.requesterSessionKey.trim() || canonicalRequesterSessionKey;
 
     let directOrigin = requesterOrigin;
     if (!directOrigin) {
@@ -690,9 +695,7 @@ export async function runSubagentAnnounceFlow(params: {
 
           const sessionOnlyCompletionTarget =
             params.expectsCompletionMessage === true &&
-            (!directOrigin?.channel ||
-              !directOrigin?.to ||
-              !isDeliverableMessageChannel(directOrigin.channel));
+            (!directOrigin?.channel || directOrigin.channel === "webchat");
           if (sessionOnlyCompletionTarget) {
             const { entry } = loadRequesterSessionEntry(canonicalRequesterSessionKey);
             const sessionId = entry?.sessionId;
@@ -701,11 +704,13 @@ export async function runSubagentAnnounceFlow(params: {
             }
           }
 
-          const deliver = !sessionOnlyCompletionTarget;
+          const deliver = Boolean(
+            directOrigin?.channel && directOrigin.channel !== "webchat" && directOrigin?.to,
+          );
           await callGateway({
             method: "agent",
             params: {
-              sessionKey: canonicalRequesterSessionKey,
+              sessionKey: announceSessionKey,
               message: triggerMessage,
               channel: deliver ? directOrigin?.channel : undefined,
               accountId: deliver ? directOrigin?.accountId : undefined,

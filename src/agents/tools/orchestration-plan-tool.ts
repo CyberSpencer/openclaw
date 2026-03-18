@@ -1,28 +1,27 @@
 import { Type } from "@sinclair/typebox";
 import { callGateway } from "../../gateway/call.js";
 import { emitAgentEvent } from "../../infra/agent-events.js";
+import { optionalStringEnum } from "../schema/typebox.js";
 import type { AnyAgentTool } from "./common.js";
 import { jsonResult } from "./common.js";
 
-const TaskPlanStatusSchema = Type.Union([
-  Type.Literal("todo"),
-  Type.Literal("running"),
-  Type.Literal("done"),
-  Type.Literal("blocked"),
-  Type.Literal("skipped"),
-]);
+const TaskPlanStatusSchema = optionalStringEnum([
+  "todo",
+  "running",
+  "done",
+  "blocked",
+  "skipped",
+] as const);
 
 const TaskPlanTaskSchema = Type.Object(
   {
     id: Type.String({ minLength: 1, maxLength: 80 }),
     title: Type.String({ minLength: 1, maxLength: 200 }),
     detail: Type.Optional(Type.String({ maxLength: 4000 })),
-    status: Type.Optional(TaskPlanStatusSchema),
+    status: TaskPlanStatusSchema,
     assignedSessionKey: Type.Optional(Type.String({ maxLength: 240 })),
     assignedRunId: Type.Optional(Type.String({ maxLength: 240 })),
-    failureReason: Type.Optional(
-      Type.Union([Type.Literal("error"), Type.Literal("timeout"), Type.Literal("unknown")]),
-    ),
+    failureReason: optionalStringEnum(["error", "timeout", "unknown"] as const),
     resultSummary: Type.Optional(Type.String({ maxLength: 2000 })),
   },
   { additionalProperties: false },
@@ -39,7 +38,7 @@ const TaskPlanSchema = Type.Object(
 
 const OrchestrationPlanToolSchema = Type.Object(
   {
-    action: Type.Optional(Type.Union([Type.Literal("set"), Type.Literal("clear")])),
+    action: optionalStringEnum(["set", "clear"] as const),
     plan: Type.Optional(TaskPlanSchema),
   },
   { additionalProperties: false },
