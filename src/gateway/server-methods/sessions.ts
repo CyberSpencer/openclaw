@@ -2,6 +2,10 @@ import { randomUUID } from "node:crypto";
 import fs from "node:fs";
 import { getAcpSessionManager } from "../../acp/control-plane/manager.js";
 import { resolveDefaultAgentId } from "../../agents/agent-scope.js";
+import {
+  listFinishedSessions as listFinishedProcessSessions,
+  listRunningSessions as listRunningProcessSessions,
+} from "../../agents/bash-process-registry.js";
 import { clearBootstrapSnapshot } from "../../agents/bootstrap-cache.js";
 import { abortEmbeddedPiRun, waitForEmbeddedPiRunEnd } from "../../agents/pi-embedded.js";
 import { listSubagentRunsForRequester } from "../../agents/subagent-registry.js";
@@ -76,6 +80,101 @@ function requireSessionKey(key: unknown, respond: RespondFn): string | null {
     return null;
   }
   return normalized;
+}
+
+function detectBackgroundCodingAgent(command: string): { label: string } | null {
+  const normalized = command.trim();
+  if (!normalized) {
+    return null;
+  }
+  const lower = normalized.toLowerCase();
+  if (/\bcodex\b/.test(lower)) {
+    return { label: "Codex background agent" };
+  }
+  if (
+    /run_cursor\.py|\bcursor-agent\b/.test(lower) ||
+    /(^|[\s'"`])agent(?=[\s'"`]|$)/.test(lower)
+  ) {
+    return { label: "Cursor background agent" };
+  }
+  if (/\bclaude\b/.test(lower) && /--print|--permission-mode/.test(lower)) {
+    return { label: "Claude Code background agent" };
+  }
+  if (/\bopencode\b/.test(lower)) {
+    return { label: "OpenCode background agent" };
+  }
+  if (/\bpi\b/.test(lower)) {
+    return { label: "Pi background agent" };
+  }
+  return null;
+}
+
+function normalizeBackgroundAgentTask(command: string): string {
+  const compact = command.replace(/\s+/g, " ").trim();
+  return compact || "background coding agent";
+}
+
+function listBackgroundCodingRowsForRequester(
+  requesterSessionKey: string,
+  includeCompleted: boolean,
+): SubagentTaskRow[] {
+  const target = requesterSessionKey.trim();
+  if (!target) {
+    return [];
+  }
+
+  const runningRows = listRunningProcessSessions()
+    .filter((entry) => (entry.sessionKey ?? "").trim() === target)
+    .map((entry) => ({ entry, status: "running" as const, endedAt: undefined }));
+  const finishedRows = includeCompleted
+    ? listFinishedProcessSessions()
+        .filter(
+          (entry) =>
+            (entry.scopeKey ?? "").trim() === target ||
+            (entry as { sessionKey?: string }).sessionKey?.trim() === target,
+        )
+        .map((entry) => ({
+          entry,
+          status: entry.status === "completed" ? ("done" as const) : ("error" as const),
+          endedAt: entry.endedAt,
+        }))
+    : [];
+
+  return [...runningRows, ...finishedRows]
+    .map(({ entry, status, endedAt }) => {
+      const agent = detectBackgroundCodingAgent(entry.command);
+      if (!agent) {
+        return null;
+      }
+      const task = normalizeBackgroundAgentTask(entry.command);
+      const runtimeMs = Math.max(0, (endedAt ?? Date.now()) - entry.startedAt);
+      return {
+        taskId: entry.id,
+        title: agent.label,
+        runId: entry.id,
+        assignedRunId: entry.id,
+        childSessionKey: `process:${entry.id}`,
+        assignedSessionKey: `process:${entry.id}`,
+        requesterSessionKey: target,
+        source: "background-exec",
+        openable: false,
+        label: agent.label,
+        task,
+        status,
+        cleanup: "keep",
+        outcome:
+          status === "error"
+            ? { status: "error", error: task }
+            : status === "done"
+              ? { status: "ok" }
+              : undefined,
+        createdAt: entry.startedAt,
+        startedAt: entry.startedAt,
+        endedAt,
+        runtimeMs,
+      } satisfies SubagentTaskRow;
+    })
+    .filter((row): row is SubagentTaskRow => Boolean(row));
 }
 
 function resolveGatewaySessionTargetFromKey(key: string) {
@@ -336,27 +435,8 @@ export const sessionsHandlers: GatewayRequestHandlers = {
         ? Math.max(1, Math.min(200, Math.floor(p.limit)))
         : 50;
 
-    const rows = listSubagentRunsForRequester(requesterSessionKey)
-      .toSorted((a, b) => {
-        const aTime = a.startedAt ?? a.createdAt ?? 0;
-        const bTime = b.startedAt ?? b.createdAt ?? 0;
-        return bTime - aTime;
-      })
-      .filter((entry) => includeCompleted || !entry.endedAt)
-      .filter((entry) => {
-        if (rootConversationIdFilter && entry.rootConversationId !== rootConversationIdFilter) {
-          return false;
-        }
-        if (threadIdFilter && entry.threadId !== threadIdFilter) {
-          return false;
-        }
-        if (subagentGroupIdFilter && entry.subagentGroupId !== subagentGroupIdFilter) {
-          return false;
-        }
-        return true;
-      })
-      .slice(0, limit)
-      .map((entry): SubagentTaskRow => {
+    const subagentRows = listSubagentRunsForRequester(requesterSessionKey).map(
+      (entry): SubagentTaskRow => {
         const terminalOutcome = entry.outcome?.status;
         const status = !entry.endedAt
           ? "running"
@@ -371,6 +451,9 @@ export const sessionsHandlers: GatewayRequestHandlers = {
           taskId: entry.runId,
           title: entry.label || entry.task || "subagent task",
           status,
+          requesterSessionKey: entry.requesterSessionKey,
+          source: "subagent",
+          openable: true,
           assignedSessionKey: entry.childSessionKey,
           assignedRunId: entry.runId,
           runId: entry.runId,
@@ -393,7 +476,32 @@ export const sessionsHandlers: GatewayRequestHandlers = {
           endedAt: entry.endedAt,
           runtimeMs,
         };
-      });
+      },
+    );
+
+    const rows = [
+      ...subagentRows,
+      ...listBackgroundCodingRowsForRequester(requesterSessionKey, includeCompleted),
+    ]
+      .toSorted((a, b) => {
+        const aTime = a.startedAt ?? a.createdAt ?? 0;
+        const bTime = b.startedAt ?? b.createdAt ?? 0;
+        return bTime - aTime;
+      })
+      .filter((entry) => includeCompleted || !entry.endedAt)
+      .filter((entry) => {
+        if (rootConversationIdFilter && entry.rootConversationId !== rootConversationIdFilter) {
+          return false;
+        }
+        if (threadIdFilter && entry.threadId !== threadIdFilter) {
+          return false;
+        }
+        if (subagentGroupIdFilter && entry.subagentGroupId !== subagentGroupIdFilter) {
+          return false;
+        }
+        return true;
+      })
+      .slice(0, limit);
 
     const active = rows.filter((row) => row.status === "running").length;
     const result: SessionsSubagentsResult = {

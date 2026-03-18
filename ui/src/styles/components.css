@@ -738,6 +738,11 @@
   animation: none;
 }
 
+.statusDot.active {
+  background: var(--accent);
+  box-shadow: 0 0 8px color-mix(in srgb, var(--accent) 55%, transparent);
+}
+
 /* ===========================================
    Buttons - Tactile with personality
    =========================================== */

@@ -434,12 +434,26 @@ export type GatewaySessionRow = {
   model?: string;
   modelProvider?: string;
   contextTokens?: number;
+  runStatus?: string;
+  runtimeMs?: number;
+  modelApplied?: string | boolean;
+  outcome?: { status?: string; error?: string };
+  routing?: string;
+  complexity?: string;
+  task?: string;
+  source?: "subagent" | "background-exec";
+  openable?: boolean;
 };
 
 export type SessionsListResult = {
   ts: number;
   path: string;
   count: number;
+  total?: number;
+  limit?: number;
+  offset?: number;
+  hasMore?: boolean;
+  nextOffset?: number | null;
   defaults: GatewaySessionsDefaults;
   sessions: GatewaySessionRow[];
 };

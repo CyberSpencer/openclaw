@@ -1,5 +1,10 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import {
+  addSession,
+  markBackgrounded,
+  resetProcessRegistryForTests,
+} from "../agents/bash-process-registry.js";
+import {
   addSubagentRunForTests,
   resetSubagentRegistryForTests,
 } from "../agents/subagent-registry.js";
@@ -8,6 +13,7 @@ import { handleGatewayRequest } from "./server-methods.js";
 describe("gateway sessions.subagents contract", () => {
   beforeEach(() => {
     resetSubagentRegistryForTests();
+    resetProcessRegistryForTests();
   });
 
   it("returns task rows with expected canonical fields", async () => {
@@ -135,6 +141,67 @@ describe("gateway sessions.subagents contract", () => {
       expect.objectContaining({
         count: 1,
         tasks: [expect.objectContaining({ runId: "run-allow" })],
+      }),
+      undefined,
+    );
+  });
+
+  it("includes background coding exec runs for the same requester session", async () => {
+    const session = {
+      id: "proc-codex",
+      command: 'codex exec --full-auto "fix the dashboard build"',
+      sessionKey: "agent:main:main",
+      startedAt: 500,
+      cwd: "/tmp/aii-dashboard-153-fix",
+      maxOutputChars: 10_000,
+      totalOutputChars: 0,
+      pendingStdout: [],
+      pendingStderr: [],
+      pendingStdoutChars: 0,
+      pendingStderrChars: 0,
+      aggregated: "",
+      tail: "",
+      exited: false,
+      truncated: false,
+      backgrounded: false,
+    };
+    addSession(session);
+    markBackgrounded(session);
+
+    const respond = vi.fn();
+    await handleGatewayRequest({
+      req: {
+        type: "req",
+        id: "3",
+        method: "sessions.subagents",
+        params: {
+          requesterSessionKey: "agent:main:main",
+          includeCompleted: true,
+          limit: 20,
+        },
+      },
+      respond,
+      client: {
+        connect: { role: "operator", scopes: ["operator.read"] },
+      } as never,
+      isWebchatConnect: false,
+      context: {} as never,
+    });
+
+    expect(respond).toHaveBeenCalledWith(
+      true,
+      expect.objectContaining({
+        count: 1,
+        tasks: [
+          expect.objectContaining({
+            runId: "proc-codex",
+            source: "background-exec",
+            openable: false,
+            childSessionKey: "process:proc-codex",
+            label: "Codex background agent",
+            status: "running",
+          }),
+        ],
       }),
       undefined,
     );

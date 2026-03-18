@@ -125,6 +125,30 @@ function computeTaskProgress(plan: TaskPlan | null | undefined): TaskProgress {
   return { done, total, pct };
 }
 
+function resolveDisplayedTaskStatus(
+  task: TaskPlanTask,
+  subagentByKey: Map<string, { runStatus?: string }>,
+): TaskPlanStatus {
+  const fallback = normalizeTaskStatus(task.status);
+  const assignedKey = (task.assignedSessionKey ?? "").trim();
+  if (!assignedKey) {
+    return fallback;
+  }
+  const assigned = subagentByKey.get(assignedKey);
+  const runStatus =
+    typeof assigned?.runStatus === "string" ? assigned.runStatus.trim().toLowerCase() : "";
+  if (runStatus === "running") {
+    return "running";
+  }
+  if (runStatus === "done") {
+    return "done";
+  }
+  if (runStatus === "error") {
+    return "blocked";
+  }
+  return fallback;
+}
+
 function taskStatusLabel(status: TaskPlanStatus): string {
   if (status === "running") {
     return "Running";
@@ -224,6 +248,24 @@ function formatAge(ts: number | null): string {
   }
   const day = Math.floor(hr / 24);
   return `${day}d`;
+}
+
+function formatRuntime(ms: number): string {
+  if (ms < 1000) {
+    return `${Math.max(0, Math.round(ms))}ms`;
+  }
+  const sec = Math.floor(ms / 1000);
+  if (sec < 60) {
+    return `${sec}s`;
+  }
+  const min = Math.floor(sec / 60);
+  const secRem = sec % 60;
+  if (min < 60) {
+    return secRem > 0 ? `${min}m ${secRem}s` : `${min}m`;
+  }
+  const hr = Math.floor(min / 60);
+  const minRem = min % 60;
+  return minRem > 0 ? `${hr}h ${minRem}m` : `${hr}h`;
 }
 
 function truncate(text: string, maxChars: number) {
@@ -990,7 +1032,7 @@ function renderOrchestrationCard(props: ChatProps) {
                     ? html`
                         <div class="agent-plan__list" role="list">
                           ${tasks.map((task) => {
-                            const status = normalizeTaskStatus(task.status);
+                            const status = resolveDisplayedTaskStatus(task, subagentByKey);
                             const assignedKey = (task.assignedSessionKey ?? "").trim();
                             const assigned = assignedKey
                               ? subagentByKey.get(assignedKey)
@@ -1112,7 +1154,7 @@ function renderOrchestrationCard(props: ChatProps) {
           ${
             subagents.length > 0
               ? html`
-                  <div class="agent-subagents__hint muted">spawned by this thread</div>
+                  <div class="agent-subagents__hint muted">spawned by this thread, plus background coding agents</div>
                 `
               : nothing
           }
@@ -1140,9 +1182,16 @@ function renderOrchestrationCard(props: ChatProps) {
                           s.displayName?.trim() ||
                           s.key;
                         const updatedAt = typeof s.updatedAt === "number" ? s.updatedAt : null;
-                        const preview = (s.lastMessagePreview ?? "").trim();
-                        const hasPreview = Boolean(preview);
-                        const status = subagentStatusByKey.get(s.key);
+                        const isOpenable = s.openable !== false;
+                        const st = s.runStatus || subagentStatusByKey.get(s.key);
+                        const status =
+                          st === "running"
+                            ? "running"
+                            : st === "error"
+                              ? "blocked"
+                              : st === "done"
+                                ? "done"
+                                : subagentStatusByKey.get(s.key);
                         const dotStatus =
                           status === "running"
                             ? "running"
@@ -1153,12 +1202,37 @@ function renderOrchestrationCard(props: ChatProps) {
                                 : status === "todo"
                                   ? "todo"
                                   : "neutral";
+                        const taskStr = (s.task ?? s.derivedTitle ?? "").trim();
+                        const outcomeErr = s.outcome?.error?.trim();
+                        const preview =
+                          (s.lastMessagePreview ?? "").trim() ||
+                          (status === "error"
+                            ? `Failed: ${outcomeErr || taskStr || "subagent task"}`
+                            : taskStr);
+                        const hasPreview = Boolean(preview);
+                        const metaParts: string[] = [];
+                        if (typeof s.runtimeMs === "number" && s.runtimeMs > 0) {
+                          metaParts.push(formatRuntime(s.runtimeMs));
+                        }
+                        const age = formatAge(updatedAt);
+                        if (age) {
+                          metaParts.push(age);
+                        }
+                        const title = isOpenable
+                          ? "Open subagent session"
+                          : "Background coding agent";
                         return html`
                           <button
-                            class="agent-subagent"
+                            class="agent-subagent agent-subagent--${dotStatus} ${isOpenable ? "" : "agent-subagent--static"}"
                             type="button"
-                            @click=${() => props.onSessionKeyChange(s.key)}
-                            title="Open subagent session"
+                            ?disabled=${!isOpenable}
+                            @click=${() => {
+                              if (!isOpenable) {
+                                return;
+                              }
+                              props.onSessionKeyChange(s.key);
+                            }}
+                            title=${title}
                           >
                             <div class="agent-subagent__main">
                               <div class="agent-subagent__title">
@@ -1178,7 +1252,7 @@ function renderOrchestrationCard(props: ChatProps) {
                             </div>
                             <div class="agent-subagent__meta">
                               <div class="agent-subagent__time mono">
-                                ${formatAge(updatedAt)}
+                                ${metaParts.join(" • ")}
                               </div>
                             </div>
                           </button>
