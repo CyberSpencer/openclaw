@@ -124,6 +124,12 @@ function resolveAnnounceOrigin(
   // requesterOrigin (captured at spawn time) reflects the channel the user is
   // actually on and must take priority over the session entry, which may carry
   // stale lastChannel / lastTo values from a previous channel interaction.
+  // If the captured origin already names a channel, keep it authoritative so we
+  // never revive a stale recipient/thread from the session store when the
+  // explicit target is missing.
+  if (normalizeDeliveryContext(requesterOrigin)?.channel) {
+    return normalizeDeliveryContext(requesterOrigin);
+  }
   return mergeDeliveryContext(requesterOrigin, deliveryContextFromSession(entry));
 }
 
@@ -131,7 +137,7 @@ async function sendAnnounce(item: AnnounceQueueItem) {
   const origin = item.origin;
   const cfg = loadConfig();
   const timeoutMs = resolveAnnounceTimeoutMs(cfg);
-  const canDeliverViaAgent = Boolean(origin?.channel && origin.channel !== "webchat");
+  const canDeliverViaAgent = Boolean(origin?.channel && origin.channel !== "webchat" && origin?.to);
   const threadId =
     canDeliverViaAgent && origin?.threadId != null && origin.threadId !== ""
       ? String(origin.threadId)
@@ -746,7 +752,9 @@ export async function runSubagentAnnounceFlow(params: {
             }
           }
 
-          const deliver = Boolean(directOrigin?.channel && directOrigin.channel !== "webchat");
+          const deliver = Boolean(
+            directOrigin?.channel && directOrigin.channel !== "webchat" && directOrigin?.to,
+          );
           await callGateway({
             method: "agent",
             params: {
