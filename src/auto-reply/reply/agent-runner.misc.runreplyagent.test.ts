@@ -1525,4 +1525,28 @@ describe("runReplyAgent transient HTTP retry", () => {
     const payload = Array.isArray(result) ? result[0] : result;
     expect(payload?.text).toContain("Recovered response");
   });
+
+  it("retries once after a raw normalized Codex server_error and then succeeds", async () => {
+    vi.useFakeTimers();
+    runEmbeddedPiAgentMock
+      .mockRejectedValueOnce(
+        new Error(
+          "LLM error server_error: An error occurred while processing your request. Please try again later.",
+        ),
+      )
+      .mockResolvedValueOnce({
+        payloads: [{ text: "Recovered response" }],
+        meta: {},
+      });
+
+    const result = await runTransientRetryTurn(buildTransientRetryFollowupRun());
+
+    expect(runEmbeddedPiAgentMock).toHaveBeenCalledTimes(2);
+    expect(runtimeErrorMock).toHaveBeenCalledWith(
+      expect.stringContaining("Transient provider error before reply"),
+    );
+
+    const payload = Array.isArray(result) ? result[0] : result;
+    expect(payload?.text).toContain("Recovered response");
+  });
 });

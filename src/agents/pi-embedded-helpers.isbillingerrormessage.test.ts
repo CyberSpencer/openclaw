@@ -531,6 +531,11 @@ describe("classifyFailoverReason", () => {
         '{"type":"error","error":{"type":"api_error","message":"Internal server error"}}',
       ),
     ).toBe("timeout");
+    expect(
+      classifyFailoverReason(
+        '{"type": "error", "error": {"type": "api_error", "message": "Internal server error"}}',
+      ),
+    ).toBe("timeout");
   });
 
   it("classifies normalized server_error text as timeout", () => {

@@ -783,10 +783,12 @@ function isJsonApiInternalServerError(raw: string): boolean {
   if (!raw) {
     return false;
   }
-  const value = raw.toLowerCase();
+  const info = parseApiErrorInfo(raw);
+  const type = info?.type?.toLowerCase();
+  const message = (info?.message ?? raw).toLowerCase();
   // Anthropic wraps transient 500s like:
   // {"type":"error","error":{"type":"api_error","message":"Internal server error"}}
-  if (value.includes('"type":"api_error"') && value.includes("internal server error")) {
+  if (type === "api_error" && message.includes("internal server error")) {
     return true;
   }
   // OpenAI / Codex wraps transient 500s like:
@@ -794,14 +796,14 @@ function isJsonApiInternalServerError(raw: string): boolean {
   // Some layers normalize that into text such as:
   // "LLM error server_error: An error occurred while processing your request."
   // so accept both raw JSON and normalized provider text.
-  if (value.includes('"type":"server_error"') || value.includes('"code":"server_error"')) {
+  if (type === "server_error") {
     return true;
   }
   if (
-    value.includes("server_error") &&
-    (value.includes("an error occurred while processing your request") ||
-      value.includes("internal server error") ||
-      value.includes("the server had an error processing your request"))
+    message.includes("server_error") &&
+    (message.includes("an error occurred while processing your request") ||
+      message.includes("internal server error") ||
+      message.includes("the server had an error processing your request"))
   ) {
     return true;
   }
