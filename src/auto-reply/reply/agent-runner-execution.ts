@@ -476,22 +476,27 @@ export async function runAgentTurnWithFallback(params: {
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
       const failoverInfo = describeFailoverError(err);
-      const isContextOverflow = isLikelyContextOverflowError(message);
-      const isCompactionFailure = isCompactionFailureError(message);
-      const isSessionCorruption = /function call turn comes immediately after/i.test(message);
-      const isRoleOrderingError = /incorrect role information|roles must alternate/i.test(message);
-      const isTransientHttp = isTransientHttpError(message);
+      const classifiedMessage = failoverInfo.message || message;
+      const isContextOverflow = isLikelyContextOverflowError(classifiedMessage);
+      const isCompactionFailure = isCompactionFailureError(classifiedMessage);
+      const isSessionCorruption = /function call turn comes immediately after/i.test(
+        classifiedMessage,
+      );
+      const isRoleOrderingError = /incorrect role information|roles must alternate/i.test(
+        classifiedMessage,
+      );
+      const isTransientHttp = isTransientHttpError(classifiedMessage);
       const isRetryableProviderServerError =
         !isTransientHttp &&
         failoverInfo?.reason === "timeout" &&
         /\bserver_error\b|the server had an error processing your request|an error occurred while processing your request/i.test(
-          message,
+          classifiedMessage,
         );
 
       if (
         isCompactionFailure &&
         !didResetAfterCompactionFailure &&
-        (await params.resetSessionAfterCompactionFailure(message))
+        (await params.resetSessionAfterCompactionFailure(classifiedMessage))
       ) {
         didResetAfterCompactionFailure = true;
         return {
@@ -502,7 +507,7 @@ export async function runAgentTurnWithFallback(params: {
         };
       }
       if (isRoleOrderingError) {
-        const didReset = await params.resetSessionAfterRoleOrderingConflict(message);
+        const didReset = await params.resetSessionAfterRoleOrderingConflict(classifiedMessage);
         if (didReset) {
           return {
             kind: "final",
@@ -565,7 +570,7 @@ export async function runAgentTurnWithFallback(params: {
         // provider `server_error` payloads from Codex/OpenAI that bubble up as
         // failover reason `timeout` instead of a literal HTTP status line.
         defaultRuntime.error(
-          `Transient provider error before reply (${message}). Retrying once in ${TRANSIENT_HTTP_RETRY_DELAY_MS}ms.`,
+          `Transient provider error before reply (${classifiedMessage}). Retrying once in ${TRANSIENT_HTTP_RETRY_DELAY_MS}ms.`,
         );
         await new Promise<void>((resolve) => {
           setTimeout(resolve, TRANSIENT_HTTP_RETRY_DELAY_MS);
@@ -573,11 +578,11 @@ export async function runAgentTurnWithFallback(params: {
         continue;
       }
 
-      defaultRuntime.error(`Embedded agent failed before reply: ${message}`);
+      defaultRuntime.error(`Embedded agent failed before reply: ${classifiedMessage}`);
       const safeMessage =
         isTransientHttp || isRetryableProviderServerError
-          ? sanitizeUserFacingText(message, { errorContext: true })
-          : message;
+          ? sanitizeUserFacingText(classifiedMessage, { errorContext: true })
+          : classifiedMessage;
       const trimmedMessage = safeMessage.replace(/\.\s*$/, "");
       const fallbackText = isContextOverflow
         ? "⚠️ Context overflow — prompt too large for this model. Try a shorter message or a larger-context model."
