@@ -2,6 +2,7 @@ import { html, nothing, type TemplateResult } from "lit";
 import { ref } from "lit/directives/ref.js";
 import { repeat } from "lit/directives/repeat.js";
 import { unsafeHTML } from "lit/directives/unsafe-html.js";
+import { formatDurationCompact } from "../../../../src/infra/format-time/format-duration.ts";
 import type { ModelSelectionInfo } from "../app-tool-stream.ts";
 import { extractTextCached } from "../chat/message-extract.ts";
 import { normalizeMessage, normalizeRoleForGrouping } from "../chat/message-normalizer.ts";
@@ -9,7 +10,13 @@ import { icons } from "../icons.ts";
 import { toSanitizedMarkdownHtml } from "../markdown.ts";
 import { openExternalUrlSafe } from "../open-external-url.ts";
 import type { SessionsListResult } from "../types.ts";
-import type { ChatAttachment, ChatQueueItem, TaskPlan, TaskPlanStatus } from "../ui-types.ts";
+import type {
+  ChatAttachment,
+  ChatQueueItem,
+  TaskPlan,
+  TaskPlanStatus,
+  TaskPlanTask,
+} from "../ui-types.ts";
 import { renderMarkdownSidebar } from "./markdown-sidebar.ts";
 import "../components/resizable-divider.ts";
 
@@ -114,11 +121,14 @@ function normalizeTaskStatus(raw: unknown): TaskPlanStatus {
   return "todo";
 }
 
-function computeTaskProgress(plan: TaskPlan | null | undefined): TaskProgress {
+function computeTaskProgress(
+  plan: TaskPlan | null | undefined,
+  subagentByKey: Map<string, { runStatus?: string }>,
+): TaskProgress {
   const tasks = plan?.tasks ?? [];
   const total = tasks.length;
   const done = tasks.filter((t) => {
-    const status = normalizeTaskStatus(t.status);
+    const status = resolveDisplayedTaskStatus(t, subagentByKey);
     return status === "done" || status === "skipped";
   }).length;
   const pct = total > 0 ? Math.max(0, Math.min(100, Math.round((done / total) * 100))) : 0;
@@ -248,24 +258,6 @@ function formatAge(ts: number | null): string {
   }
   const day = Math.floor(hr / 24);
   return `${day}d`;
-}
-
-function formatRuntime(ms: number): string {
-  if (ms < 1000) {
-    return `${Math.max(0, Math.round(ms))}ms`;
-  }
-  const sec = Math.floor(ms / 1000);
-  if (sec < 60) {
-    return `${sec}s`;
-  }
-  const min = Math.floor(sec / 60);
-  const secRem = sec % 60;
-  if (min < 60) {
-    return secRem > 0 ? `${min}m ${secRem}s` : `${min}m`;
-  }
-  const hr = Math.floor(min / 60);
-  const minRem = min % 60;
-  return minRem > 0 ? `${hr}h ${minRem}m` : `${hr}h`;
 }
 
 function truncate(text: string, maxChars: number) {
@@ -890,8 +882,8 @@ function renderOrchestrationCard(props: ChatProps) {
 
   const plan = props.taskPlan ?? null;
   const tasks = plan?.tasks ?? [];
-  const progress = computeTaskProgress(plan);
   const subagentByKey = new Map(subagents.map((s) => [s.key, s]));
+  const progress = computeTaskProgress(plan, subagentByKey);
   const subagentStatusByKey = (() => {
     const priority: Record<TaskPlanStatus, number> = {
       running: 5,
@@ -1206,13 +1198,16 @@ function renderOrchestrationCard(props: ChatProps) {
                         const outcomeErr = s.outcome?.error?.trim();
                         const preview =
                           (s.lastMessagePreview ?? "").trim() ||
-                          (status === "error"
+                          (status === "blocked"
                             ? `Failed: ${outcomeErr || taskStr || "subagent task"}`
                             : taskStr);
                         const hasPreview = Boolean(preview);
                         const metaParts: string[] = [];
                         if (typeof s.runtimeMs === "number" && s.runtimeMs > 0) {
-                          metaParts.push(formatRuntime(s.runtimeMs));
+                          const runtimeLabel = formatDurationCompact(s.runtimeMs, { spaced: true });
+                          if (runtimeLabel) {
+                            metaParts.push(runtimeLabel);
+                          }
                         }
                         const age = formatAge(updatedAt);
                         if (age) {

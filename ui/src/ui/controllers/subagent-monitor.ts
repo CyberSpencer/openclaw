@@ -13,7 +13,7 @@ type SessionsSubagentsResponse = {
     startedAt?: number;
     endedAt?: number;
     model?: string;
-    modelApplied?: string | boolean;
+    modelApplied?: boolean;
     routing?: string;
     complexity?: string;
     outcome?: { status?: string; error?: string };
@@ -100,7 +100,7 @@ export async function loadSubagentMonitor(
           totalTokens: 0,
           runStatus: status,
           runtimeMs: typeof task.runtimeMs === "number" ? task.runtimeMs : undefined,
-          modelApplied: task.modelApplied,
+          modelApplied: task.modelApplied === true,
           routing: typeof task.routing === "string" ? task.routing : undefined,
           complexity: typeof task.complexity === "string" ? task.complexity : undefined,
           outcome: task.outcome && typeof task.outcome === "object" ? task.outcome : undefined,

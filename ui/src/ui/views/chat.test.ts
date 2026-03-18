@@ -1,6 +1,6 @@
 import { parseHTML } from "linkedom";
 import { render } from "lit";
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it } from "vitest";
 import type { SessionsListResult } from "../types.ts";
 import { renderChat, type ChatProps } from "./chat.ts";
 
@@ -19,8 +19,26 @@ function createSessions(): SessionsListResult {
   };
 }
 
+const GLOBAL_KEYS = [
+  "window",
+  "document",
+  "customElements",
+  "HTMLElement",
+  "Element",
+  "Node",
+  "DocumentFragment",
+  "ShadowRoot",
+] as const;
+
+const originalGlobals = new Map<string, unknown>();
+
 function createDomContainer(): HTMLElement {
   const { document, window } = parseHTML("<!doctype html><html><body></body></html>");
+  for (const key of GLOBAL_KEYS) {
+    if (!originalGlobals.has(key)) {
+      originalGlobals.set(key, (globalThis as Record<string, unknown>)[key]);
+    }
+  }
   Object.assign(globalThis, {
     window,
     document,
@@ -33,6 +51,17 @@ function createDomContainer(): HTMLElement {
   });
   return document.createElement("div") as unknown as HTMLElement;
 }
+
+afterEach(() => {
+  for (const key of GLOBAL_KEYS) {
+    const value = originalGlobals.get(key);
+    if (value === undefined) {
+      delete (globalThis as Record<string, unknown>)[key];
+    } else {
+      (globalThis as Record<string, unknown>)[key] = value;
+    }
+  }
+});
 
 function createProps(overrides: Partial<ChatProps> = {}): ChatProps {
   return {
@@ -114,5 +143,7 @@ describe("chat orchestration status reconciliation", () => {
     expect(container.querySelector(".agent-task--running")).toBeNull();
     expect(container.querySelector(".agent-subagent--running")).toBeNull();
     expect(container.textContent).toContain("1/1");
+    const progressBar = container.querySelector('[role="progressbar"]');
+    expect(progressBar?.getAttribute("aria-valuenow")).toBe("1");
   });
 });

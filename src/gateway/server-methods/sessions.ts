@@ -103,7 +103,7 @@ function detectBackgroundCodingAgent(command: string): { label: string } | null 
   if (/\bopencode\b/.test(lower)) {
     return { label: "OpenCode background agent" };
   }
-  if (/\bpi\b/.test(lower)) {
+  if (/(^|[\s"'`/])(?:pi|pi-cli|pi\.exe)(?=$|[\s"'`/])/.test(lower)) {
     return { label: "Pi background agent" };
   }
   return null;

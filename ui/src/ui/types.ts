@@ -436,7 +436,7 @@ export type GatewaySessionRow = {
   contextTokens?: number;
   runStatus?: string;
   runtimeMs?: number;
-  modelApplied?: string | boolean;
+  modelApplied?: boolean;
   outcome?: { status?: string; error?: string };
   routing?: string;
   complexity?: string;
