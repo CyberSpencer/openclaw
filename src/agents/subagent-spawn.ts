@@ -24,7 +24,7 @@ import {
   resolveInternalSessionKey,
   resolveMainSessionAlias,
 } from "./tools/sessions-helpers.js";
-import { looksLikeSessionId, shouldResolveSessionIdInput } from "./tools/sessions-resolution.js";
+import { shouldResolveSessionIdInput } from "./tools/sessions-resolution.js";
 
 export const SUBAGENT_SPAWN_MODES = ["run", "session"] as const;
 export type SpawnSubagentMode = (typeof SUBAGENT_SPAWN_MODES)[number];
@@ -110,7 +110,7 @@ function resolveRequesterRegistrySessionKey(params: {
     raw === "global" ||
     raw === "unknown" ||
     raw.startsWith("agent:") ||
-    looksLikeSessionId(raw)
+    shouldResolveSessionIdInput(raw)
   ) {
     return raw;
   }

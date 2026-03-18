@@ -131,8 +131,11 @@ async function sendAnnounce(item: AnnounceQueueItem) {
   const origin = item.origin;
   const cfg = loadConfig();
   const timeoutMs = resolveAnnounceTimeoutMs(cfg);
+  const canDeliverViaAgent = Boolean(origin?.channel && origin.channel !== "webchat");
   const threadId =
-    origin?.threadId != null && origin.threadId !== "" ? String(origin.threadId) : undefined;
+    canDeliverViaAgent && origin?.threadId != null && origin.threadId !== ""
+      ? String(origin.threadId)
+      : undefined;
   // Use a stable idempotency key derived from the announceId when available so
   // retried/re-queued deliveries for the same completion are not sent twice.
   const idempotencyKey = item.announceId
@@ -143,11 +146,11 @@ async function sendAnnounce(item: AnnounceQueueItem) {
     params: {
       sessionKey: item.sessionKey,
       message: item.prompt,
-      channel: origin?.channel,
-      accountId: origin?.accountId,
-      to: origin?.to,
+      channel: canDeliverViaAgent ? origin?.channel : undefined,
+      accountId: canDeliverViaAgent ? origin?.accountId : undefined,
+      to: canDeliverViaAgent ? origin?.to : undefined,
       threadId,
-      deliver: true,
+      deliver: canDeliverViaAgent,
       idempotencyKey,
     },
     expectFinal: true,
@@ -684,6 +687,7 @@ export async function runSubagentAnnounceFlow(params: {
       announceCfg,
       params.requesterSessionKey,
     );
+    const announceSessionKey = params.requesterSessionKey.trim() || canonicalRequesterSessionKey;
 
     let directOrigin = requesterOrigin;
     if (!directOrigin) {
@@ -731,10 +735,22 @@ export async function runSubagentAnnounceFlow(params: {
             return { delivered: true, path: "direct" };
           }
 
+          const sessionOnlyCompletionTarget =
+            params.expectsCompletionMessage === true &&
+            (!directOrigin?.channel || directOrigin.channel === "webchat");
+          if (sessionOnlyCompletionTarget) {
+            const { entry } = loadRequesterSessionEntry(canonicalRequesterSessionKey);
+            const sessionId = entry?.sessionId;
+            if (sessionId && isEmbeddedPiRunActive(sessionId)) {
+              return { delivered: false, path: "none" };
+            }
+          }
+
+          const deliver = Boolean(directOrigin?.channel && directOrigin.channel !== "webchat");
           await callGateway({
             method: "agent",
             params: {
-              sessionKey: canonicalRequesterSessionKey,
+              sessionKey: announceSessionKey,
               message: triggerMessage,
               channel: directOrigin?.channel,
               accountId: directOrigin?.accountId,
@@ -743,7 +759,7 @@ export async function runSubagentAnnounceFlow(params: {
                 directOrigin?.threadId != null && directOrigin.threadId !== ""
                   ? String(directOrigin.threadId)
                   : undefined,
-              deliver: true,
+              deliver,
               idempotencyKey: stableIdempotencyKey,
             },
             expectFinal: true,
