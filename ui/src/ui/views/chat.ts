@@ -3,6 +3,7 @@ import { ref } from "lit/directives/ref.js";
 import { repeat } from "lit/directives/repeat.js";
 import { unsafeHTML } from "lit/directives/unsafe-html.js";
 import { formatDurationCompact } from "../../../../src/infra/format-time/format-duration.ts";
+import { formatRelativeTimestamp } from "../../../../src/infra/format-time/format-relative.ts";
 import type { ModelSelectionInfo } from "../app-tool-stream.ts";
 import { extractTextCached } from "../chat/message-extract.ts";
 import { normalizeMessage, normalizeRoleForGrouping } from "../chat/message-normalizer.ts";
@@ -234,30 +235,6 @@ function formatClock(ts: number | null) {
     minute: "2-digit",
     second: "2-digit",
   });
-}
-
-function formatAge(ts: number | null): string {
-  if (!ts) {
-    return "";
-  }
-  const deltaMs = Date.now() - ts;
-  if (deltaMs < 0) {
-    return "0s";
-  }
-  const sec = Math.floor(deltaMs / 1000);
-  if (sec < 60) {
-    return `${Math.max(1, sec)}s`;
-  }
-  const min = Math.floor(sec / 60);
-  if (min < 60) {
-    return `${min}m`;
-  }
-  const hr = Math.floor(min / 60);
-  if (hr < 24) {
-    return `${hr}h`;
-  }
-  const day = Math.floor(hr / 24);
-  return `${day}d`;
 }
 
 function truncate(text: string, maxChars: number) {
@@ -1029,13 +1006,21 @@ function renderOrchestrationCard(props: ChatProps) {
                             const assigned = assignedKey
                               ? subagentByKey.get(assignedKey)
                               : undefined;
-                            const canOpenAssigned = Boolean(assigned);
+                            const canOpenAssigned = Boolean(
+                              assigned && assigned.openable !== false,
+                            );
+                            const assignedMissing = Boolean(assignedKey) && !assigned;
                             const assignedLabel =
                               assigned?.label?.trim() ||
                               assigned?.derivedTitle?.trim() ||
                               assigned?.displayName?.trim() ||
                               assigned?.key ||
                               assignedKey;
+                            const assignedTitle = assignedMissing
+                              ? "Assigned subagent was pruned"
+                              : canOpenAssigned
+                                ? "Open assigned subagent"
+                                : "Assigned agent is not openable";
                             const updatedAt =
                               typeof assigned?.updatedAt === "number" ? assigned.updatedAt : null;
                             return html`
@@ -1063,20 +1048,16 @@ function renderOrchestrationCard(props: ChatProps) {
                                               }
                                               props.onSessionKeyChange(assignedKey);
                                             }}
-                                            title=${
-                                              canOpenAssigned
-                                                ? "Open assigned subagent"
-                                                : "Assigned subagent was pruned"
-                                            }
+                                            title=${assignedTitle}
                                           >
                                             <span class="mono agent-task__assignedKey">
                                               ${assignedLabel}
                                             </span>
                                             <span class="agent-task__assignedAge mono">
-                                              ${formatAge(updatedAt)}
+                                              ${formatRelativeTimestamp(updatedAt, { fallback: "" })}
                                             </span>
                                             ${
-                                              !canOpenAssigned
+                                              assignedMissing
                                                 ? html`
                                                     <span class="muted agent-task__assignedMissing">(pruned)</span>
                                                   `
@@ -1209,7 +1190,7 @@ function renderOrchestrationCard(props: ChatProps) {
                             metaParts.push(runtimeLabel);
                           }
                         }
-                        const age = formatAge(updatedAt);
+                        const age = formatRelativeTimestamp(updatedAt, { fallback: "" });
                         if (age) {
                           metaParts.push(age);
                         }

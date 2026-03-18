@@ -91,10 +91,9 @@ function detectBackgroundCodingAgent(command: string): { label: string } | null 
   if (/\bcodex\b/.test(lower)) {
     return { label: "Codex background agent" };
   }
-  if (
-    /run_cursor\.py|\bcursor-agent\b/.test(lower) ||
-    /(^|[\s'"`])agent(?=[\s'"`]|$)/.test(lower)
-  ) {
+  const firstToken = normalized.match(/^\S+/)?.[0]?.toLowerCase() ?? "";
+  const isCursorAgentExecutable = /^(?:\.\/|.*\/)?agent$/.test(firstToken);
+  if (/run_cursor\.py|\bcursor-agent\b/.test(lower) || isCursorAgentExecutable) {
     return { label: "Cursor background agent" };
   }
   if (/\bclaude\b/.test(lower) && /--print|--permission-mode/.test(lower)) {

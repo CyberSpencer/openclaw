@@ -258,4 +258,56 @@ describe("gateway sessions.subagents contract", () => {
       undefined,
     );
   });
+
+  it("does not treat generic agent mentions as Cursor background agents", async () => {
+    const session = {
+      id: "proc-mention",
+      command: 'echo "agent status pending" && sleep 1',
+      sessionKey: "agent:main:main",
+      startedAt: 650,
+      cwd: "/tmp/openclaw",
+      maxOutputChars: 10_000,
+      totalOutputChars: 0,
+      pendingStdout: [],
+      pendingStderr: [],
+      pendingStdoutChars: 0,
+      pendingStderrChars: 0,
+      aggregated: "",
+      tail: "",
+      exited: false,
+      truncated: false,
+      backgrounded: false,
+    };
+    addSession(session);
+    markBackgrounded(session);
+
+    const respond = vi.fn();
+    await handleGatewayRequest({
+      req: {
+        type: "req",
+        id: "5",
+        method: "sessions.subagents",
+        params: {
+          requesterSessionKey: "agent:main:main",
+          includeCompleted: true,
+          limit: 20,
+        },
+      },
+      respond,
+      client: {
+        connect: { role: "operator", scopes: ["operator.read"] },
+      } as never,
+      isWebchatConnect: false,
+      context: {} as never,
+    });
+
+    expect(respond).toHaveBeenCalledWith(
+      true,
+      expect.objectContaining({
+        count: 0,
+        tasks: [],
+      }),
+      undefined,
+    );
+  });
 });

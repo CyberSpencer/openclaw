@@ -146,4 +146,51 @@ describe("chat orchestration status reconciliation", () => {
     const progressBar = container.querySelector('[role="progressbar"]');
     expect(progressBar?.getAttribute("aria-valuenow")).toBe("1");
   });
+
+  it("disables assigned task chips for non-openable background agents without marking them pruned", () => {
+    const container = createDomContainer();
+    const subagents = createSessions();
+    subagents.sessions = [
+      {
+        key: "process:proc-codex",
+        kind: "direct",
+        label: "Codex background agent",
+        displayName: "Codex background agent",
+        derivedTitle: 'codex exec --full-auto "fix it"',
+        task: 'codex exec --full-auto "fix it"',
+        updatedAt: 1_500,
+        runStatus: "running",
+        openable: false,
+      },
+    ];
+    subagents.count = 1;
+    subagents.total = 1;
+    subagents.limit = 1;
+
+    render(
+      renderChat(
+        createProps({
+          taskPlan: {
+            id: "plan-2",
+            goal: "Ship the fix",
+            tasks: [
+              {
+                id: "task-2",
+                title: "Background review",
+                status: "running",
+                assignedSessionKey: "process:proc-codex",
+              },
+            ],
+          },
+          subagentMonitorResult: subagents,
+        }),
+      ),
+      container,
+    );
+
+    const assignedButton = container.querySelector(".agent-task__assigned");
+    expect(assignedButton?.disabled).toBe(true);
+    expect(assignedButton?.getAttribute("title")).toBe("Assigned agent is not openable");
+    expect(container.textContent).not.toContain("(pruned)");
+  });
 });
