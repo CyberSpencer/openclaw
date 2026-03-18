@@ -2,6 +2,7 @@ import crypto from "node:crypto";
 import fs from "node:fs";
 import { runCliAgent } from "../../agents/cli-runner.js";
 import { getCliSessionId } from "../../agents/cli-session.js";
+import { describeFailoverError, isFailoverError } from "../../agents/failover-error.js";
 import { runWithModelFallback } from "../../agents/model-fallback.js";
 import { isCliProvider } from "../../agents/model-selection.js";
 import {
@@ -474,11 +475,18 @@ export async function runAgentTurnWithFallback(params: {
       break;
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
+      const failoverInfo = isFailoverError(err) ? describeFailoverError(err) : undefined;
       const isContextOverflow = isLikelyContextOverflowError(message);
       const isCompactionFailure = isCompactionFailureError(message);
       const isSessionCorruption = /function call turn comes immediately after/i.test(message);
       const isRoleOrderingError = /incorrect role information|roles must alternate/i.test(message);
       const isTransientHttp = isTransientHttpError(message);
+      const isRetryableProviderServerError =
+        !isTransientHttp &&
+        failoverInfo?.reason === "timeout" &&
+        /\bserver_error\b|the server had an error processing your request|an error occurred while processing your request/i.test(
+          message,
+        );
 
       if (
         isCompactionFailure &&
@@ -550,14 +558,14 @@ export async function runAgentTurnWithFallback(params: {
         };
       }
 
-      if (isTransientHttp && !didRetryTransientHttpError) {
+      if ((isTransientHttp || isRetryableProviderServerError) && !didRetryTransientHttpError) {
         didRetryTransientHttpError = true;
-        // Retry the full runWithModelFallback() cycle — transient errors
-        // (502/521/etc.) typically affect the whole provider, so falling
-        // back to an alternate model first would not help. Instead we wait
-        // and retry the complete primary→fallback chain.
+        // Retry the full runWithModelFallback() cycle for transient provider failures.
+        // This covers both raw HTTP edge failures (502/521/etc.) and JSON-wrapped
+        // provider `server_error` payloads from Codex/OpenAI that bubble up as
+        // failover reason `timeout` instead of a literal HTTP status line.
         defaultRuntime.error(
-          `Transient HTTP provider error before reply (${message}). Retrying once in ${TRANSIENT_HTTP_RETRY_DELAY_MS}ms.`,
+          `Transient provider error before reply (${message}). Retrying once in ${TRANSIENT_HTTP_RETRY_DELAY_MS}ms.`,
         );
         await new Promise<void>((resolve) => {
           setTimeout(resolve, TRANSIENT_HTTP_RETRY_DELAY_MS);
@@ -566,9 +574,10 @@ export async function runAgentTurnWithFallback(params: {
       }
 
       defaultRuntime.error(`Embedded agent failed before reply: ${message}`);
-      const safeMessage = isTransientHttp
-        ? sanitizeUserFacingText(message, { errorContext: true })
-        : message;
+      const safeMessage =
+        isTransientHttp || isRetryableProviderServerError
+          ? sanitizeUserFacingText(message, { errorContext: true })
+          : message;
       const trimmedMessage = safeMessage.replace(/\.\s*$/, "");
       const fallbackText = isContextOverflow
         ? "⚠️ Context overflow — prompt too large for this model. Try a shorter message or a larger-context model."

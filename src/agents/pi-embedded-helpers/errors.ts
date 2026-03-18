@@ -784,9 +784,28 @@ function isJsonApiInternalServerError(raw: string): boolean {
     return false;
   }
   const value = raw.toLowerCase();
-  // Anthropic often wraps transient 500s in JSON payloads like:
+  // Anthropic wraps transient 500s like:
   // {"type":"error","error":{"type":"api_error","message":"Internal server error"}}
-  return value.includes('"type":"api_error"') && value.includes("internal server error");
+  if (value.includes('"type":"api_error"') && value.includes("internal server error")) {
+    return true;
+  }
+  // OpenAI / Codex wraps transient 500s like:
+  // {"type":"error","error":{"type":"server_error","code":"server_error","message":"An error occurred..."}}
+  // Some layers normalize that into text such as:
+  // "LLM error server_error: An error occurred while processing your request."
+  // so accept both raw JSON and normalized provider text.
+  if (value.includes('"type":"server_error"') || value.includes('"code":"server_error"')) {
+    return true;
+  }
+  if (
+    value.includes("server_error") &&
+    (value.includes("an error occurred while processing your request") ||
+      value.includes("internal server error") ||
+      value.includes("the server had an error processing your request"))
+  ) {
+    return true;
+  }
+  return false;
 }
 
 export function parseImageDimensionError(raw: string): {

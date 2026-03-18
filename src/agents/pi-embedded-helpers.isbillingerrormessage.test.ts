@@ -532,4 +532,17 @@ describe("classifyFailoverReason", () => {
       ),
     ).toBe("timeout");
   });
+
+  it("classifies normalized server_error text as timeout", () => {
+    expect(
+      classifyFailoverReason(
+        "LLM error server_error: An error occurred while processing your request. Please try again later.",
+      ),
+    ).toBe("timeout");
+    expect(
+      classifyFailoverReason(
+        '{"type":"error","error":{"type":"server_error","code":"server_error","message":"An error occurred while processing your request."}}',
+      ),
+    ).toBe("timeout");
+  });
 });

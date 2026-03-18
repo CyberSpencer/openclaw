@@ -1099,8 +1099,19 @@ export async function runEmbeddedPiAgent(
           const authFailure = isAuthAssistantError(lastAssistant);
           const rateLimitFailure = isRateLimitAssistantError(lastAssistant);
           const billingFailure = isBillingAssistantError(lastAssistant);
-          const failoverFailure = isFailoverAssistantError(lastAssistant);
-          const assistantFailoverReason = classifyFailoverReason(lastAssistant?.errorMessage ?? "");
+          const formattedAssistantError = lastAssistant
+            ? formatAssistantErrorText(lastAssistant, {
+                cfg: params.config,
+                sessionKey: params.sessionKey ?? params.sessionId,
+                provider: activeErrorContext.provider,
+                model: activeErrorContext.model,
+              })
+            : undefined;
+          const assistantFailoverReason =
+            classifyFailoverReason(lastAssistant?.errorMessage ?? "") ??
+            classifyFailoverReason(formattedAssistantError ?? "");
+          const failoverFailure =
+            isFailoverAssistantError(lastAssistant) || assistantFailoverReason !== null;
           const cloudCodeAssistFormatError = attempt.cloudCodeAssistFormatError;
           const imageDimensionError = parseImageDimensionError(lastAssistant?.errorMessage ?? "");
 
@@ -1169,14 +1180,7 @@ export async function runEmbeddedPiAgent(
             if (fallbackConfigured) {
               // Prefer formatted error message (user-friendly) over raw errorMessage
               const message =
-                (lastAssistant
-                  ? formatAssistantErrorText(lastAssistant, {
-                      cfg: params.config,
-                      sessionKey: params.sessionKey ?? params.sessionId,
-                      provider: activeErrorContext.provider,
-                      model: activeErrorContext.model,
-                    })
-                  : undefined) ||
+                formattedAssistantError ||
                 lastAssistant?.errorMessage?.trim() ||
                 (timedOut
                   ? "LLM request timed out."
