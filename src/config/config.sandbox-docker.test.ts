@@ -88,6 +88,67 @@ describe("sandbox docker config", () => {
     expect(res.ok).toBe(true);
   });
 
+  it("allows agent container namespace join via inherited dangerous override", () => {
+    const res = validateConfigObject({
+      agents: {
+        defaults: {
+          sandbox: {
+            docker: {
+              dangerouslyAllowContainerNamespaceJoin: true,
+            },
+          },
+        },
+        list: [
+          {
+            id: "main",
+            sandbox: {
+              docker: {
+                network: "container:peer",
+              },
+              browser: {
+                network: "container:peer",
+              },
+            },
+          },
+        ],
+      },
+    });
+    expect(res.ok).toBe(true);
+  });
+
+  it("rejects agent container namespace join when explicit false overrides inherited dangerous default", () => {
+    const res = validateConfigObject({
+      agents: {
+        defaults: {
+          sandbox: {
+            docker: {
+              dangerouslyAllowContainerNamespaceJoin: true,
+            },
+          },
+        },
+        list: [
+          {
+            id: "main",
+            sandbox: {
+              docker: {
+                dangerouslyAllowContainerNamespaceJoin: false,
+              },
+              browser: {
+                network: "container:peer",
+              },
+            },
+          },
+        ],
+      },
+    });
+    expect(res.ok).toBe(false);
+    if (!res.ok) {
+      expect(
+        res.issues.some((issue) => issue.path === "agents.list.0.sandbox.browser.network"),
+      ).toBe(true);
+    }
+  });
+
   it("uses agent override precedence for dangerous sandbox docker booleans", () => {
     for (const key of DANGEROUS_SANDBOX_DOCKER_BOOLEAN_KEYS) {
       const inherited = resolveSandboxDockerConfig({

@@ -88,6 +88,43 @@ export const HeartbeatSchema = z
   })
   .optional();
 
+export function validateSandboxNetworkMode(
+  network: string | undefined,
+  allowContainerNamespaceJoin: boolean,
+): string | null {
+  if (typeof network !== "string") {
+    return null;
+  }
+  const trimmed = network.trim();
+  if (!trimmed) {
+    return null;
+  }
+  const lowered = trimmed.toLowerCase();
+  if (lowered === "host") {
+    return `Sandbox security: network mode "${network}" is blocked. Use a custom bridge network or "none".`;
+  }
+  if (lowered.startsWith("container:") && !allowContainerNamespaceJoin) {
+    return (
+      `Sandbox security: network mode "${network}" is blocked by default. ` +
+      'Network "container:*" joins another container namespace and bypasses sandbox network isolation. ' +
+      "Use a custom bridge network, or set dangerouslyAllowContainerNamespaceJoin=true only when you fully trust this runtime."
+    );
+  }
+  return null;
+}
+
+function validateSandboxProfile(
+  profile: string | undefined,
+  kind: "seccomp" | "apparmor",
+): string | null {
+  if (typeof profile !== "string") {
+    return null;
+  }
+  return profile.trim().toLowerCase() === "unconfined"
+    ? `Sandbox security: ${kind} profile "${profile}" is blocked.`
+    : null;
+}
+
 export const SandboxDockerSchema = z
   .object({
     image: z.string().optional(),
@@ -124,6 +161,9 @@ export const SandboxDockerSchema = z
     dns: z.array(z.string()).optional(),
     extraHosts: z.array(z.string()).optional(),
     binds: z.array(z.string()).optional(),
+    dangerouslyAllowReservedContainerTargets: z.boolean().optional(),
+    dangerouslyAllowExternalBindSources: z.boolean().optional(),
+    dangerouslyAllowContainerNamespaceJoin: z.boolean().optional(),
   })
   .strict()
   .optional();
@@ -133,7 +173,9 @@ export const SandboxBrowserSchema = z
     enabled: z.boolean().optional(),
     image: z.string().optional(),
     containerPrefix: z.string().optional(),
+    network: z.string().optional(),
     cdpPort: z.number().int().positive().optional(),
+    cdpSourceRange: z.string().optional(),
     vncPort: z.number().int().positive().optional(),
     noVncPort: z.number().int().positive().optional(),
     headless: z.boolean().optional(),
@@ -141,6 +183,7 @@ export const SandboxBrowserSchema = z
     allowHostControl: z.boolean().optional(),
     autoStart: z.boolean().optional(),
     autoStartTimeoutMs: z.number().int().positive().optional(),
+    binds: z.array(z.string()).optional(),
   })
   .strict()
   .optional();
@@ -171,10 +214,27 @@ export const ToolPolicySchema = ToolPolicyBaseSchema.superRefine((value, ctx) =>
   }
 }).optional();
 
+const SafeBinProfileFixtureSchema = z
+  .object({
+    minPositional: z.number().int().nonnegative().optional(),
+    maxPositional: z.number().int().nonnegative().optional(),
+    allowedValueFlags: z.array(z.string()).optional(),
+    deniedFlags: z.array(z.string()).optional(),
+  })
+  .strict();
+
 export const ToolsWebSearchSchema = z
   .object({
     enabled: z.boolean().optional(),
-    provider: z.union([z.literal("brave"), z.literal("perplexity"), z.literal("grok")]).optional(),
+    provider: z
+      .union([
+        z.literal("brave"),
+        z.literal("perplexity"),
+        z.literal("grok"),
+        z.literal("gemini"),
+        z.literal("kimi"),
+      ])
+      .optional(),
     apiKey: z.string().register(sensitive).optional(),
     maxResults: z.number().int().positive().optional(),
     timeoutSeconds: z.number().int().positive().optional(),
@@ -192,6 +252,21 @@ export const ToolsWebSearchSchema = z
         apiKey: z.string().register(sensitive).optional(),
         model: z.string().optional(),
         inlineCitations: z.boolean().optional(),
+      })
+      .strict()
+      .optional(),
+    gemini: z
+      .object({
+        apiKey: z.string().register(sensitive).optional(),
+        model: z.string().optional(),
+      })
+      .strict()
+      .optional(),
+    kimi: z
+      .object({
+        apiKey: z.string().register(sensitive).optional(),
+        baseUrl: z.string().optional(),
+        model: z.string().optional(),
       })
       .strict()
       .optional(),
@@ -247,7 +322,7 @@ export const ElevatedAllowFromSchema = z
   .record(z.string(), z.array(z.union([z.string(), z.number()])))
   .optional();
 
-export const AgentSandboxSchema = z
+const AgentSandboxSchemaBase = z
   .object({
     mode: z.union([z.literal("off"), z.literal("non-main"), z.literal("all")]).optional(),
     workspaceAccess: z.union([z.literal("none"), z.literal("ro"), z.literal("rw")]).optional(),
@@ -259,8 +334,72 @@ export const AgentSandboxSchema = z
     browser: SandboxBrowserSchema,
     prune: SandboxPruneSchema,
   })
-  .strict()
-  .optional();
+  .strict();
+
+function addSandboxSecurityIssues(
+  value: z.infer<typeof AgentSandboxSchemaBase>,
+  ctx: z.RefinementCtx,
+  opts: {
+    validateContainerNetwork: boolean;
+    allowContainerNamespaceJoin?: boolean;
+  },
+): void {
+  const allowContainerNamespaceJoin =
+    opts.allowContainerNamespaceJoin ??
+    value.docker?.dangerouslyAllowContainerNamespaceJoin === true;
+
+  if (opts.validateContainerNetwork) {
+    const dockerNetworkIssue = validateSandboxNetworkMode(
+      value.docker?.network,
+      allowContainerNamespaceJoin,
+    );
+    if (dockerNetworkIssue) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["docker", "network"],
+        message: dockerNetworkIssue,
+      });
+    }
+
+    const browserNetworkIssue = validateSandboxNetworkMode(
+      value.browser?.network,
+      allowContainerNamespaceJoin,
+    );
+    if (browserNetworkIssue) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["browser", "network"],
+        message: browserNetworkIssue,
+      });
+    }
+  }
+
+  const seccompIssue = validateSandboxProfile(value.docker?.seccompProfile, "seccomp");
+  if (seccompIssue) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ["docker", "seccompProfile"],
+      message: seccompIssue,
+    });
+  }
+
+  const apparmorIssue = validateSandboxProfile(value.docker?.apparmorProfile, "apparmor");
+  if (apparmorIssue) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ["docker", "apparmorProfile"],
+      message: apparmorIssue,
+    });
+  }
+}
+
+export const AgentSandboxSchema = AgentSandboxSchemaBase.superRefine((value, ctx) => {
+  addSandboxSecurityIssues(value, ctx, { validateContainerNetwork: true });
+}).optional();
+
+export const AgentSandboxOverrideSchema = AgentSandboxSchemaBase.superRefine((value, ctx) => {
+  addSandboxSecurityIssues(value, ctx, { validateContainerNetwork: false });
+}).optional();
 
 export const AgentToolsSchema = z
   .object({
@@ -284,6 +423,8 @@ export const AgentToolsSchema = z
         node: z.string().optional(),
         pathPrepend: z.array(z.string()).optional(),
         safeBins: z.array(z.string()).optional(),
+        safeBinTrustedDirs: z.array(z.string()).optional(),
+        safeBinProfiles: z.record(z.string(), SafeBinProfileFixtureSchema).optional(),
         backgroundMs: z.number().int().positive().optional(),
         timeoutSec: z.number().int().positive().optional(),
         approvalRunningNoticeMs: z.number().int().nonnegative().optional(),
@@ -595,7 +736,7 @@ export const AgentEntrySchema = z
       })
       .strict()
       .optional(),
-    sandbox: AgentSandboxSchema,
+    sandbox: AgentSandboxOverrideSchema,
     tools: AgentToolsSchema,
   })
   .strict();
@@ -659,6 +800,8 @@ export const ToolsSchema = z
         node: z.string().optional(),
         pathPrepend: z.array(z.string()).optional(),
         safeBins: z.array(z.string()).optional(),
+        safeBinTrustedDirs: z.array(z.string()).optional(),
+        safeBinProfiles: z.record(z.string(), SafeBinProfileFixtureSchema).optional(),
         backgroundMs: z.number().int().positive().optional(),
         timeoutSec: z.number().int().positive().optional(),
         cleanupMs: z.number().int().positive().optional(),
