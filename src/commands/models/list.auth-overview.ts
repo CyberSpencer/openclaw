@@ -100,11 +100,9 @@ export function resolveProviderAuthOverview(params: {
       };
     }
     if (envKey) {
-      const isOAuthEnv =
-        envKey.source.includes("OAUTH_TOKEN") || envKey.source.toLowerCase().includes("oauth");
       return {
         kind: "env",
-        detail: isOAuthEnv ? "OAuth (env)" : maskApiKey(envKey.apiKey),
+        detail: envKey.authMode === "oauth" ? "OAuth (env)" : maskApiKey(envKey.apiKey),
       };
     }
     if (customKey) {
@@ -126,10 +124,7 @@ export function resolveProviderAuthOverview(params: {
     ...(envKey
       ? {
           env: {
-            value:
-              envKey.source.includes("OAUTH_TOKEN") || envKey.source.toLowerCase().includes("oauth")
-                ? "OAuth (env)"
-                : maskApiKey(envKey.apiKey),
+            value: envKey.authMode === "oauth" ? "OAuth (env)" : maskApiKey(envKey.apiKey),
             source: envKey.source,
           },
         }

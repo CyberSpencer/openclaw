@@ -119,6 +119,7 @@ describe("models.authStatus handler", () => {
     resolveEnvApiKeyMock.mockReturnValue({
       apiKey: "oauth-token",
       source: "env: OPENAI_OAUTH_TOKEN",
+      authMode: "oauth",
     });
     buildAuthProviderRecoveryMock.mockReturnValue({
       checkedAt: now,
@@ -340,6 +341,55 @@ describe("models.authStatus handler", () => {
     );
   });
 
+  it("treats token env auth as env-backed auth", async () => {
+    const now = 1_700_000_000_000;
+    vi.spyOn(Date, "now").mockReturnValue(now);
+    ensureAuthProfileStoreMock.mockReturnValue({
+      version: 1,
+      profiles: {},
+    });
+    resolveEnvApiKeyMock.mockReturnValue({
+      apiKey: "hf_token",
+      source: "env: HF_TOKEN",
+      authMode: "token",
+    });
+    buildAuthProviderRecoveryMock.mockImplementation(({ provider, hasEnvOAuth }) => ({
+      checkedAt: now,
+      provider,
+      status: hasEnvOAuth ? "ready" : "missing",
+      source: hasEnvOAuth ? "env" : "missing",
+      profileCount: 0,
+      readyProfileCount: hasEnvOAuth ? 1 : 0,
+      blockedProfileCount: 0,
+      expiredProfileCount: 0,
+      missingProfileCount: 0,
+    }));
+
+    const respond = vi.fn<GatewayResponder>();
+    const { modelsHandlers } = await import("./models.js");
+    await modelsHandlers["models.authStatus"]?.(
+      makeInvocation(respond, { provider: "huggingface" }),
+    );
+
+    expect(buildAuthProviderRecoveryMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        provider: "huggingface",
+        hasEnvOAuth: true,
+      }),
+    );
+    expect(resolveApiKeyForProfileMock).not.toHaveBeenCalled();
+    expect(respond).toHaveBeenCalledWith(
+      true,
+      expect.objectContaining({
+        provider: "huggingface",
+        status: "ready",
+        source: "env",
+        readyProfileCount: 1,
+      }),
+      undefined,
+    );
+  });
+
   it("treats google-vertex ADC as env-backed auth", async () => {
     const now = 1_700_000_000_000;
     vi.spyOn(Date, "now").mockReturnValue(now);
@@ -350,6 +400,7 @@ describe("models.authStatus handler", () => {
     resolveEnvApiKeyMock.mockReturnValue({
       apiKey: "adc-token",
       source: "gcloud adc",
+      authMode: "oauth",
     });
     buildAuthProviderRecoveryMock.mockImplementation(({ provider, hasEnvOAuth }) => ({
       checkedAt: now,

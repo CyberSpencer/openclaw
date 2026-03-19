@@ -26,7 +26,7 @@ function hasEnvBackedProviderAuth(
   if (normalizeProviderId(provider) === "google-vertex") {
     return true;
   }
-  return envKey.source.includes("OAUTH_TOKEN") || envKey.source.toLowerCase().includes("oauth");
+  return envKey.authMode === "oauth" || envKey.authMode === "token";
 }
 
 function looksLikePermanentAuthFailure(message: string): boolean {
