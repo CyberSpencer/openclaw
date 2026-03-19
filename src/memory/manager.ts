@@ -31,6 +31,7 @@ import {
   type OpenAiEmbeddingClient,
   type VoyageEmbeddingClient,
 } from "./embeddings.js";
+import { isFileMissingError } from "./fs-utils.js";
 import { bm25RankToScore, buildFtsQuery, mergeHybridResults } from "./hybrid.js";
 import {
   buildFileEntry,
@@ -1659,20 +1660,26 @@ export class MemoryIndexManager {
     ]);
     const additionalPaths = normalizeExtraMemoryPaths(this.workspaceDir, this.settings.extraPaths);
     for (const entry of additionalPaths) {
+      const normalizedEntry = path.normalize(entry);
+      const shouldWatchParentDir = isMarkdownMemoryWatchPath(normalizedEntry);
       try {
-        const stat = fsSync.lstatSync(entry);
+        const stat = fsSync.lstatSync(normalizedEntry);
         if (stat.isSymbolicLink()) {
           continue;
         }
         if (stat.isDirectory()) {
-          watchPaths.add(entry);
+          watchPaths.add(normalizedEntry);
           continue;
         }
-        if (stat.isFile() && entry.toLowerCase().endsWith(".md")) {
-          watchPaths.add(entry);
+        if (stat.isFile() && shouldWatchParentDir) {
+          watchPaths.add(normalizedEntry);
         }
-      } catch {
-        // Skip missing/unreadable additional paths.
+      } catch (err) {
+        if (shouldWatchParentDir && isFileMissingError(err)) {
+          watchPaths.add(path.dirname(normalizedEntry));
+          continue;
+        }
+        // Skip unreadable/missing additional paths.
       }
     }
     this.watcher = chokidar.watch(Array.from(watchPaths), {

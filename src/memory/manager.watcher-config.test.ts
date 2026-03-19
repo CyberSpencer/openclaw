@@ -38,6 +38,8 @@ describe("memory watcher config", () => {
   let workspaceDir = "";
   let extraDir = "";
   let extraFile = "";
+  let pendingDir = "";
+  let pendingFile = "";
 
   afterEach(async () => {
     watchMock.mockClear();
@@ -50,6 +52,8 @@ describe("memory watcher config", () => {
       workspaceDir = "";
       extraDir = "";
       extraFile = "";
+      pendingDir = "";
+      pendingFile = "";
     }
   });
 
@@ -57,8 +61,11 @@ describe("memory watcher config", () => {
     workspaceDir = await fs.mkdtemp(path.join(os.tmpdir(), "openclaw-memory-watch-"));
     extraDir = path.join(workspaceDir, "extra");
     extraFile = path.join(workspaceDir, "standalone.md");
+    pendingDir = path.join(workspaceDir, "pending");
+    pendingFile = path.join(pendingDir, "later.md");
     await fs.mkdir(path.join(workspaceDir, "memory"), { recursive: true });
     await fs.mkdir(extraDir, { recursive: true });
+    await fs.mkdir(pendingDir, { recursive: true });
     await fs.writeFile(path.join(extraDir, "notes.md"), "hello");
     await fs.writeFile(extraFile, "standalone");
 
@@ -72,7 +79,7 @@ describe("memory watcher config", () => {
             store: { path: path.join(workspaceDir, "index.sqlite"), vector: { enabled: false } },
             sync: { watch: true, watchDebounceMs: 25, onSessionStart: false, onSearch: false },
             query: { minScore: 0, hybrid: { enabled: false } },
-            extraPaths: [extraDir, extraFile],
+            extraPaths: [extraDir, extraFile, pendingFile],
           },
         },
         list: [{ id: "main", default: true }],
@@ -98,6 +105,7 @@ describe("memory watcher config", () => {
         path.join(workspaceDir, "memory"),
         extraDir,
         extraFile,
+        pendingDir,
       ]),
     );
     expect(options.ignoreInitial).toBe(true);

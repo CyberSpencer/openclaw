@@ -40,8 +40,11 @@ describe("memory watcher runtime", () => {
     workspaceDir = await fs.mkdtemp(path.join(os.tmpdir(), "openclaw-memory-watch-runtime-"));
     const memoryDir = path.join(workspaceDir, "memory");
     const extraDir = path.join(workspaceDir, "extra");
+    const pendingDir = path.join(workspaceDir, "pending");
+    const pendingFile = path.join(pendingDir, "later.md");
     await fs.mkdir(memoryDir, { recursive: true });
     await fs.mkdir(extraDir, { recursive: true });
+    await fs.mkdir(pendingDir, { recursive: true });
     await fs.writeFile(path.join(memoryDir, "initial.md"), "# initial\n");
 
     const cfg = {
@@ -54,7 +57,7 @@ describe("memory watcher runtime", () => {
             store: { path: path.join(workspaceDir, "index.sqlite"), vector: { enabled: false } },
             sync: { watch: true, watchDebounceMs: 25, onSessionStart: false, onSearch: false },
             query: { minScore: 0, hybrid: { enabled: false } },
-            extraPaths: [extraDir],
+            extraPaths: [extraDir, pendingFile],
           },
         },
         list: [{ id: "main", default: true }],
@@ -78,10 +81,13 @@ describe("memory watcher runtime", () => {
     await fs.writeFile(path.join(extraDir, "extra.md"), "# extra\n");
     await waitFor(async () => manager?.status().files === 3);
 
+    await fs.writeFile(pendingFile, "# pending\n");
+    await waitFor(async () => manager?.status().files === 4);
+
     await fs.mkdir(path.join(memoryDir, "node_modules", "pkg"), { recursive: true });
     await fs.writeFile(path.join(memoryDir, "node_modules", "pkg", "ignored.md"), "# ignore\n");
     await sleep(400);
-    expect(manager.status().files).toBe(3);
+    expect(manager.status().files).toBe(4);
   });
 });
 
