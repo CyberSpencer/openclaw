@@ -203,6 +203,12 @@ export class MemoryIndexManager {
   private recoveryProbeSuccessStreak = 0;
   private lastRecoveryProbeAt = 0;
   private lastRecoveryError?: string;
+  private readonlyRecovery = {
+    attempts: 0,
+    successes: 0,
+    failures: 0,
+    lastError: undefined as string | undefined,
+  };
 
   static async get(params: {
     cfg: OpenClawConfig;
@@ -668,10 +674,84 @@ export class MemoryIndexManager {
     if (this.syncing) {
       return this.syncing;
     }
-    this.syncing = this.runSync(params).finally(() => {
-      this.syncing = null;
-    });
+    this.syncing = (async () => {
+      try {
+        await this.runSync(params);
+      } catch (err) {
+        if (!this.isReadonlySqliteError(err)) {
+          throw err;
+        }
+        await this.retrySyncAfterReadonly(params, err);
+      } finally {
+        this.syncing = null;
+      }
+    })();
     return this.syncing;
+  }
+
+  private isReadonlySqliteError(error: unknown): boolean {
+    const codeValue =
+      typeof error === "object" && error !== null && "code" in error
+        ? (error as { code?: unknown }).code
+        : undefined;
+    const code =
+      typeof codeValue === "string"
+        ? codeValue
+        : typeof codeValue === "number"
+          ? `${codeValue}`
+          : "";
+    const message = this.errorMessage(error);
+    return /SQLITE_READONLY/i.test(code) || /readonly/i.test(message);
+  }
+
+  private errorMessage(error: unknown): string {
+    if (error instanceof Error) {
+      return error.message;
+    }
+    if (typeof error === "string") {
+      return error;
+    }
+    if (typeof error === "object" && error !== null && "message" in error) {
+      const message = (error as { message?: unknown }).message;
+      if (typeof message === "string") {
+        return message;
+      }
+    }
+    return String(error);
+  }
+
+  private async retrySyncAfterReadonly(
+    params:
+      | {
+          reason?: string;
+          force?: boolean;
+          progress?: (update: MemorySyncProgressUpdate) => void;
+        }
+      | undefined,
+    error: unknown,
+  ): Promise<void> {
+    const message = this.errorMessage(error);
+    this.readonlyRecovery.attempts += 1;
+    this.readonlyRecovery.lastError = message;
+
+    try {
+      try {
+        this.db.close();
+      } catch {}
+      this.db = this.openDatabase();
+      this.vectorReady = null;
+      this.vector.available = null;
+      this.vector.loadError = undefined;
+      this.fts.available = false;
+      this.fts.loadError = undefined;
+      this.ensureSchema();
+      await this.runSync(params);
+      this.readonlyRecovery.successes += 1;
+    } catch (retryErr) {
+      this.readonlyRecovery.failures += 1;
+      this.readonlyRecovery.lastError = this.errorMessage(retryErr);
+      throw retryErr;
+    }
   }
 
   async readFile(params: {
@@ -815,6 +895,10 @@ export class MemoryIndexManager {
       lastRecoveryProbeAt:
         this.lastRecoveryProbeAt > 0 ? new Date(this.lastRecoveryProbeAt).toISOString() : undefined,
       lastRecoveryError: this.lastRecoveryError,
+      readonlyRecovery:
+        this.readonlyRecovery.attempts > 0 || this.readonlyRecovery.lastError
+          ? { ...this.readonlyRecovery }
+          : undefined,
       rerankEnabled: this.settings.rerank.enabled,
       rerankEndpoint: this.rerankLastEndpoint ?? this.reranker?.activeEndpoint,
       rerankLastError: this.rerankLastError ?? this.reranker?.lastError,
