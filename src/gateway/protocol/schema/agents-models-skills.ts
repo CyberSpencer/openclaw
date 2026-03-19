@@ -173,6 +173,59 @@ export const ModelsListResultSchema = Type.Object(
   { additionalProperties: false },
 );
 
+const ModelsAuthStatusStateSchema = Type.Union([
+  Type.Literal("ready"),
+  Type.Literal("cooldown"),
+  Type.Literal("disabled"),
+  Type.Literal("expired"),
+  Type.Literal("missing"),
+]);
+
+const ModelsAuthStatusSourceSchema = Type.Union([
+  Type.Literal("profiles"),
+  Type.Literal("env"),
+  Type.Literal("missing"),
+]);
+
+const ModelsAuthStatusReasonSchema = Type.Union([
+  Type.Literal("auth"),
+  Type.Literal("auth_permanent"),
+  Type.Literal("format"),
+  Type.Literal("overloaded"),
+  Type.Literal("rate_limit"),
+  Type.Literal("billing"),
+  Type.Literal("timeout"),
+  Type.Literal("model_not_found"),
+  Type.Literal("session_expired"),
+  Type.Literal("unknown"),
+]);
+
+export const ModelsAuthStatusParamsSchema = Type.Object(
+  {
+    provider: NonEmptyString,
+  },
+  { additionalProperties: false },
+);
+
+export const ModelsAuthStatusResultSchema = Type.Object(
+  {
+    checkedAt: Type.Integer({ minimum: 0 }),
+    provider: NonEmptyString,
+    status: ModelsAuthStatusStateSchema,
+    source: ModelsAuthStatusSourceSchema,
+    profileCount: Type.Integer({ minimum: 0 }),
+    readyProfileCount: Type.Integer({ minimum: 0 }),
+    blockedProfileCount: Type.Integer({ minimum: 0 }),
+    expiredProfileCount: Type.Integer({ minimum: 0 }),
+    missingProfileCount: Type.Integer({ minimum: 0 }),
+    nextRetryAt: Type.Optional(Type.Integer({ minimum: 0 })),
+    nextRetryInMs: Type.Optional(Type.Integer({ minimum: 0 })),
+    nextRetryKind: Type.Optional(Type.Union([Type.Literal("cooldown"), Type.Literal("disabled")])),
+    nextRetryReason: Type.Optional(ModelsAuthStatusReasonSchema),
+  },
+  { additionalProperties: false },
+);
+
 export const SkillsStatusParamsSchema = Type.Object(
   {
     agentId: Type.Optional(NonEmptyString),
