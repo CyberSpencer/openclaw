@@ -9,6 +9,7 @@ import "./test-runtime-mocks.js";
 const hoisted = vi.hoisted(() => ({
   providerCreateCalls: 0,
   providerDelayMs: 0,
+  providerFailuresRemaining: 0,
 }));
 
 vi.mock("./embeddings.js", () => ({
@@ -16,6 +17,10 @@ vi.mock("./embeddings.js", () => ({
     hoisted.providerCreateCalls += 1;
     if (hoisted.providerDelayMs > 0) {
       await new Promise((resolve) => setTimeout(resolve, hoisted.providerDelayMs));
+    }
+    if (hoisted.providerFailuresRemaining > 0) {
+      hoisted.providerFailuresRemaining -= 1;
+      throw new Error("provider bootstrap failed");
     }
     return {
       requestedProvider: "openai",
@@ -39,6 +44,7 @@ describe("memory manager cache hydration", () => {
     await fs.writeFile(path.join(workspaceDir, "MEMORY.md"), "Hello memory.");
     hoisted.providerCreateCalls = 0;
     hoisted.providerDelayMs = 50;
+    hoisted.providerFailuresRemaining = 0;
   });
 
   afterEach(async () => {
@@ -77,5 +83,41 @@ describe("memory manager cache hydration", () => {
     expect(hoisted.providerCreateCalls).toBe(1);
 
     await managers[0].close();
+  });
+
+  it("clears the pending hydration slot after a failed concurrent bootstrap", async () => {
+    const indexPath = path.join(workspaceDir, "index.sqlite");
+    const cfg = {
+      agents: {
+        defaults: {
+          workspace: workspaceDir,
+          memorySearch: {
+            provider: "openai",
+            model: "mock-embed",
+            store: { path: indexPath, vector: { enabled: false } },
+            sync: { watch: false, onSessionStart: false, onSearch: false },
+          },
+        },
+        list: [{ id: "main", default: true }],
+      },
+    } as OpenClawConfig;
+
+    hoisted.providerFailuresRemaining = 1;
+
+    const failed = await Promise.all([
+      getMemorySearchManager({ cfg, agentId: "main" }),
+      getMemorySearchManager({ cfg, agentId: "main" }),
+    ]);
+    expect(failed).toEqual([
+      { manager: null, error: "provider bootstrap failed" },
+      { manager: null, error: "provider bootstrap failed" },
+    ]);
+    expect(hoisted.providerCreateCalls).toBe(1);
+
+    const retried = await getMemorySearchManager({ cfg, agentId: "main" });
+    expect(retried.manager).not.toBeNull();
+    expect(hoisted.providerCreateCalls).toBe(2);
+
+    await retried.manager?.close?.();
   });
 });
