@@ -488,9 +488,10 @@ export async function runAgentTurnWithFallback(params: {
       const isRetryableProviderServerError =
         !isTransientHttp &&
         failoverInfo.reason === "timeout" &&
-        /\bserver_error\b|the server had an error processing your request|an error occurred while processing your request/i.test(
-          classifiedMessage,
-        );
+        (failoverInfo.code === "server_error" ||
+          /\bserver_error\b|the server had an error processing your request|an error occurred while processing your request/i.test(
+            classifiedMessage,
+          ));
 
       if (
         isCompactionFailure &&
