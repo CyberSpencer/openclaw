@@ -37,6 +37,7 @@ describe("memory watcher config", () => {
   let manager: MemoryIndexManager | null = null;
   let workspaceDir = "";
   let extraDir = "";
+  let extraFile = "";
 
   afterEach(async () => {
     watchMock.mockClear();
@@ -48,15 +49,18 @@ describe("memory watcher config", () => {
       await fs.rm(workspaceDir, { recursive: true, force: true });
       workspaceDir = "";
       extraDir = "";
+      extraFile = "";
     }
   });
 
   it("watches markdown globs and ignores dependency directories", async () => {
     workspaceDir = await fs.mkdtemp(path.join(os.tmpdir(), "openclaw-memory-watch-"));
     extraDir = path.join(workspaceDir, "extra");
+    extraFile = path.join(workspaceDir, "standalone.md");
     await fs.mkdir(path.join(workspaceDir, "memory"), { recursive: true });
     await fs.mkdir(extraDir, { recursive: true });
     await fs.writeFile(path.join(extraDir, "notes.md"), "hello");
+    await fs.writeFile(extraFile, "standalone");
 
     const cfg = {
       agents: {
@@ -68,7 +72,7 @@ describe("memory watcher config", () => {
             store: { path: path.join(workspaceDir, "index.sqlite"), vector: { enabled: false } },
             sync: { watch: true, watchDebounceMs: 25, onSessionStart: false, onSearch: false },
             query: { minScore: 0, hybrid: { enabled: false } },
-            extraPaths: [extraDir],
+            extraPaths: [extraDir, extraFile],
           },
         },
         list: [{ id: "main", default: true }],
@@ -93,6 +97,7 @@ describe("memory watcher config", () => {
         path.join(workspaceDir, "memory.md"),
         path.join(workspaceDir, "memory", "**", "*.md"),
         path.join(extraDir, "**", "*.md"),
+        extraFile,
       ]),
     );
     expect(options.ignoreInitial).toBe(true);
