@@ -53,7 +53,7 @@ describe("memory watcher config", () => {
     }
   });
 
-  it("watches markdown globs and ignores dependency directories", async () => {
+  it("watches markdown directories and files without chokidar globs", async () => {
     workspaceDir = await fs.mkdtemp(path.join(os.tmpdir(), "openclaw-memory-watch-"));
     extraDir = path.join(workspaceDir, "extra");
     extraFile = path.join(workspaceDir, "standalone.md");
@@ -95,8 +95,8 @@ describe("memory watcher config", () => {
       expect.arrayContaining([
         path.join(workspaceDir, "MEMORY.md"),
         path.join(workspaceDir, "memory.md"),
-        path.join(workspaceDir, "memory", "**", "*.md"),
-        path.join(extraDir, "**", "*.md"),
+        path.join(workspaceDir, "memory"),
+        extraDir,
         extraFile,
       ]),
     );
@@ -109,6 +109,7 @@ describe("memory watcher config", () => {
       true,
     );
     expect(ignored?.(path.join(workspaceDir, "memory", ".venv", "lib", "python.md"))).toBe(true);
+    expect(ignored?.(path.join(workspaceDir, "memory", "project", "notes.txt"))).toBe(true);
     expect(ignored?.(path.join(workspaceDir, "memory", "project", "notes.md"))).toBe(false);
   });
 });

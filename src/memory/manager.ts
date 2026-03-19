@@ -86,6 +86,11 @@ type SessionFileEntry = {
 
 type MemorySearchCandidate = MemorySearchResult & { id: string };
 
+type MemoryWatchStats = {
+  isFile?: (() => boolean) | undefined;
+  isDirectory?: (() => boolean) | undefined;
+};
+
 type MemorySyncProgressState = {
   completed: number;
   total: number;
@@ -127,10 +132,33 @@ const IGNORED_MEMORY_WATCH_DIR_NAMES = new Set([
   "__pycache__",
 ]);
 
-function shouldIgnoreMemoryWatchPath(watchPath: string): boolean {
+function isMarkdownMemoryWatchPath(watchPath: string): boolean {
+  const lowerPath = path.normalize(watchPath).toLowerCase();
+  const baseName = path.basename(lowerPath);
+  return baseName === "memory.md" || lowerPath.endsWith(".md");
+}
+
+function shouldIgnoreMemoryWatchPath(watchPath: string, stats?: MemoryWatchStats): boolean {
   const normalized = path.normalize(watchPath);
   const parts = normalized.split(path.sep).map((segment) => segment.trim().toLowerCase());
-  return parts.some((segment) => IGNORED_MEMORY_WATCH_DIR_NAMES.has(segment));
+  if (parts.some((segment) => IGNORED_MEMORY_WATCH_DIR_NAMES.has(segment))) {
+    return true;
+  }
+  if (stats?.isDirectory?.()) {
+    return false;
+  }
+  if (stats?.isFile?.()) {
+    return !isMarkdownMemoryWatchPath(normalized);
+  }
+  const lowerPath = normalized.toLowerCase();
+  if (lowerPath.endsWith(".md")) {
+    return false;
+  }
+  return path.extname(lowerPath).length > 0;
+}
+
+function shouldHandleMemoryWatchEvent(watchPath: string): boolean {
+  return !shouldIgnoreMemoryWatchPath(watchPath) && isMarkdownMemoryWatchPath(watchPath);
 }
 
 const INDEX_CACHE = new Map<string, MemoryIndexManager>();
@@ -1627,7 +1655,7 @@ export class MemoryIndexManager {
     const watchPaths = new Set<string>([
       path.join(this.workspaceDir, "MEMORY.md"),
       path.join(this.workspaceDir, "memory.md"),
-      path.join(this.workspaceDir, "memory", "**", "*.md"),
+      path.join(this.workspaceDir, "memory"),
     ]);
     const additionalPaths = normalizeExtraMemoryPaths(this.workspaceDir, this.settings.extraPaths);
     for (const entry of additionalPaths) {
@@ -1637,7 +1665,7 @@ export class MemoryIndexManager {
           continue;
         }
         if (stat.isDirectory()) {
-          watchPaths.add(path.join(entry, "**", "*.md"));
+          watchPaths.add(entry);
           continue;
         }
         if (stat.isFile() && entry.toLowerCase().endsWith(".md")) {
@@ -1649,13 +1677,17 @@ export class MemoryIndexManager {
     }
     this.watcher = chokidar.watch(Array.from(watchPaths), {
       ignoreInitial: true,
-      ignored: (watchPath) => shouldIgnoreMemoryWatchPath(String(watchPath)),
+      ignored: (watchPath, stats) =>
+        shouldIgnoreMemoryWatchPath(String(watchPath), stats as MemoryWatchStats),
       awaitWriteFinish: {
         stabilityThreshold: this.settings.sync.watchDebounceMs,
         pollInterval: 100,
       },
     });
-    const markDirty = () => {
+    const markDirty = (watchPath?: string) => {
+      if (watchPath && !shouldHandleMemoryWatchEvent(String(watchPath))) {
+        return;
+      }
       this.dirty = true;
       this.scheduleWatchSync();
     };
