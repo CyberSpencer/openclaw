@@ -160,6 +160,7 @@ describe("chat orchestration status reconciliation", () => {
         task: 'codex exec --full-auto "fix it"',
         updatedAt: 1_500,
         runStatus: "running",
+        source: "background-exec",
         openable: false,
       },
     ];
@@ -190,7 +191,9 @@ describe("chat orchestration status reconciliation", () => {
 
     const assignedButton = container.querySelector(".agent-task__assigned");
     expect(assignedButton?.disabled).toBe(true);
-    expect(assignedButton?.getAttribute("title")).toBe("Assigned agent is not openable");
+    expect(assignedButton?.getAttribute("title")).toBe(
+      "Assigned agent is a background coding agent",
+    );
     expect(container.textContent).not.toContain("(pruned)");
   });
 });

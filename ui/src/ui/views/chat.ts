@@ -1020,7 +1020,9 @@ function renderOrchestrationCard(props: ChatProps) {
                               ? "Assigned subagent was pruned"
                               : canOpenAssigned
                                 ? "Open assigned subagent"
-                                : "Assigned agent is not openable";
+                                : assigned?.source === "background-exec"
+                                  ? "Assigned agent is a background coding agent"
+                                  : "Assigned agent is not openable";
                             const updatedAt =
                               typeof assigned?.updatedAt === "number" ? assigned.updatedAt : null;
                             return html`

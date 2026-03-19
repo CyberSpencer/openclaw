@@ -88,20 +88,28 @@ function detectBackgroundCodingAgent(command: string): { label: string } | null 
     return null;
   }
   const lower = normalized.toLowerCase();
+  // Codex CLI background runs, for example `codex exec --full-auto ...`.
   if (/\bcodex\b/.test(lower)) {
     return { label: "Codex background agent" };
   }
   const firstToken = normalized.match(/^\S+/)?.[0]?.toLowerCase() ?? "";
+  // Cursor background runs arrive either via run_cursor.py / cursor-agent, or
+  // via the local `agent` executable path used by the Cursor skill wrappers.
   const isCursorAgentExecutable = /^(?:\.\/|.*\/)?agent$/.test(firstToken);
   if (/run_cursor\.py|\bcursor-agent\b/.test(lower) || isCursorAgentExecutable) {
     return { label: "Cursor background agent" };
   }
+  // Claude Code background runs are only treated as such when the actual Claude
+  // CLI is present with its non-interactive print / permission flags.
   if (/\bclaude\b/.test(lower) && /--print|--permission-mode/.test(lower)) {
     return { label: "Claude Code background agent" };
   }
+  // OpenCode background runs use the opencode CLI directly.
   if (/\bopencode\b/.test(lower)) {
     return { label: "OpenCode background agent" };
   }
+  // Pi background runs should only match explicit Pi executables, not substrings
+  // like `api` or unrelated file names.
   if (/(^|[\s"'`/])(?:pi|pi-cli|pi\.exe)(?=$|[\s"'`/])/.test(lower)) {
     return { label: "Pi background agent" };
   }
