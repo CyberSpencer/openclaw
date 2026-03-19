@@ -125,7 +125,7 @@ export async function runAgentTurnWithFallback(params: {
   let fallbackModel = params.followupRun.run.model;
   let fallbackAttempts: RuntimeFallbackAttempt[] = [];
   let didResetAfterCompactionFailure = false;
-  let didRetryTransientHttpError = false;
+  let didRetryTransientProviderError = false;
 
   while (true) {
     try {
@@ -563,8 +563,8 @@ export async function runAgentTurnWithFallback(params: {
         };
       }
 
-      if ((isTransientHttp || isRetryableProviderServerError) && !didRetryTransientHttpError) {
-        didRetryTransientHttpError = true;
+      if ((isTransientHttp || isRetryableProviderServerError) && !didRetryTransientProviderError) {
+        didRetryTransientProviderError = true;
         // Retry the full runWithModelFallback() cycle for transient provider failures.
         // This covers both raw HTTP edge failures (502/521/etc.) and JSON-wrapped
         // provider `server_error` payloads from Codex/OpenAI that bubble up as
