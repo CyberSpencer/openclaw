@@ -3,7 +3,7 @@ import { ensureAuthProfileStore, resolveApiKeyForProfile } from "../../agents/au
 import type { AuthProfileFailureReason } from "../../agents/auth-profiles.js";
 import { DEFAULT_PROVIDER } from "../../agents/defaults.js";
 import { resolveEnvApiKey } from "../../agents/model-auth.js";
-import { buildAllowedModelSet } from "../../agents/model-selection.js";
+import { buildAllowedModelSet, normalizeProviderId } from "../../agents/model-selection.js";
 import { loadConfig } from "../../config/config.js";
 import {
   ErrorCodes,
@@ -15,6 +15,19 @@ import {
 import type { GatewayRequestHandlers } from "./types.js";
 
 const LIVE_PROBE_PROVIDERS = new Set(["openai-codex"]);
+
+function hasEnvBackedProviderAuth(
+  provider: string,
+  envKey: ReturnType<typeof resolveEnvApiKey>,
+): boolean {
+  if (!envKey?.apiKey) {
+    return false;
+  }
+  if (normalizeProviderId(provider) === "google-vertex") {
+    return true;
+  }
+  return envKey.source.includes("OAUTH_TOKEN") || envKey.source.toLowerCase().includes("oauth");
+}
 
 function looksLikePermanentAuthFailure(message: string): boolean {
   const normalized = message.trim().toLowerCase();
@@ -85,19 +98,16 @@ export const modelsHandlers: GatewayRequestHandlers = {
       const cfg = loadConfig();
       const store = ensureAuthProfileStore(undefined, { allowKeychainPrompt: false });
       const envKey = resolveEnvApiKey(provider);
-      const hasEnvOAuth = Boolean(
-        envKey &&
-        (envKey.source.includes("OAUTH_TOKEN") || envKey.source.toLowerCase().includes("oauth")),
-      );
+      const hasEnvAuth = hasEnvBackedProviderAuth(provider, envKey);
       const status = buildAuthProviderRecovery({
         provider,
         cfg,
         store,
         warnAfterMs: DEFAULT_OAUTH_WARN_MS,
-        hasEnvOAuth,
+        hasEnvOAuth: hasEnvAuth,
       });
       if (
-        !hasEnvOAuth &&
+        !hasEnvAuth &&
         status.status === "ready" &&
         status.source === "profiles" &&
         LIVE_PROBE_PROVIDERS.has(provider)

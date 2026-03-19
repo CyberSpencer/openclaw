@@ -340,6 +340,54 @@ describe("models.authStatus handler", () => {
     );
   });
 
+  it("treats google-vertex ADC as env-backed auth", async () => {
+    const now = 1_700_000_000_000;
+    vi.spyOn(Date, "now").mockReturnValue(now);
+    ensureAuthProfileStoreMock.mockReturnValue({
+      version: 1,
+      profiles: {},
+    });
+    resolveEnvApiKeyMock.mockReturnValue({
+      apiKey: "adc-token",
+      source: "gcloud adc",
+    });
+    buildAuthProviderRecoveryMock.mockImplementation(({ provider, hasEnvOAuth }) => ({
+      checkedAt: now,
+      provider,
+      status: hasEnvOAuth ? "ready" : "missing",
+      source: hasEnvOAuth ? "env" : "missing",
+      profileCount: 0,
+      readyProfileCount: hasEnvOAuth ? 1 : 0,
+      blockedProfileCount: 0,
+      expiredProfileCount: 0,
+      missingProfileCount: 0,
+    }));
+
+    const respond = vi.fn<GatewayResponder>();
+    const { modelsHandlers } = await import("./models.js");
+    await modelsHandlers["models.authStatus"]?.(
+      makeInvocation(respond, { provider: "google-vertex" }),
+    );
+
+    expect(buildAuthProviderRecoveryMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        provider: "google-vertex",
+        hasEnvOAuth: true,
+      }),
+    );
+    expect(resolveApiKeyForProfileMock).not.toHaveBeenCalled();
+    expect(respond).toHaveBeenCalledWith(
+      true,
+      expect.objectContaining({
+        provider: "google-vertex",
+        status: "ready",
+        source: "env",
+        readyProfileCount: 1,
+      }),
+      undefined,
+    );
+  });
+
   it("rejects unknown params", async () => {
     const respond = vi.fn<GatewayResponder>();
     const { modelsHandlers } = await import("./models.js");
