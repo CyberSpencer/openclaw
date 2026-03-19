@@ -117,6 +117,52 @@ describe("memory manager readonly recovery", () => {
     });
   });
 
+  it("records a failed readonly recovery and stops after one retry", async () => {
+    const cfg = {
+      agents: {
+        defaults: {
+          workspace: workspaceDir,
+          memorySearch: {
+            provider: "openai",
+            model: "mock-embed",
+            store: { path: indexPath },
+            sync: { watch: false, onSessionStart: false, onSearch: false },
+          },
+        },
+        list: [{ id: "main", default: true }],
+      },
+    } as OpenClawConfig;
+
+    manager = await getRequiredMemoryIndexManager({ cfg, agentId: "main" });
+
+    const runSyncSpy = vi.spyOn(
+      manager as unknown as {
+        runSync: (params?: { reason?: string; force?: boolean }) => Promise<void>;
+      },
+      "runSync",
+    );
+    runSyncSpy
+      .mockRejectedValueOnce(new Error("attempt to write a readonly database"))
+      .mockRejectedValueOnce(new Error("attempt to write a readonly database"));
+    const openDatabaseSpy = vi.spyOn(
+      manager as unknown as { openDatabase: () => DatabaseSync },
+      "openDatabase",
+    );
+
+    await expect(manager.sync({ reason: "test" })).rejects.toThrow(
+      "attempt to write a readonly database",
+    );
+
+    expect(runSyncSpy).toHaveBeenCalledTimes(2);
+    expect(openDatabaseSpy).toHaveBeenCalledTimes(1);
+    expect(manager.status().custom?.readonlyRecovery).toEqual({
+      attempts: 1,
+      successes: 0,
+      failures: 1,
+      lastError: "attempt to write a readonly database",
+    });
+  });
+
   it("does not retry non-readonly sync errors", async () => {
     const cfg = {
       agents: {
