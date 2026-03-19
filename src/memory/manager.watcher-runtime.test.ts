@@ -9,6 +9,11 @@ vi.mock("./sqlite-vec.js", () => ({
   loadSqliteVecExtension: async () => ({ ok: false, error: "sqlite-vec disabled in tests" }),
 }));
 
+vi.mock("@mariozechner/pi-ai", () => ({
+  getOAuthApiKey: () => undefined,
+  getOAuthProviders: () => [],
+}));
+
 vi.mock("./embeddings.js", () => ({
   createEmbeddingProvider: async () => ({
     requestedProvider: "openai",
@@ -42,6 +47,7 @@ describe("memory watcher runtime", () => {
     const extraDir = path.join(workspaceDir, "extra");
     const pendingDir = path.join(workspaceDir, "pending");
     const pendingFile = path.join(pendingDir, "later.md");
+    const missingDottedDir = path.join(workspaceDir, "docs.v2");
     await fs.mkdir(memoryDir, { recursive: true });
     await fs.mkdir(extraDir, { recursive: true });
     await fs.mkdir(pendingDir, { recursive: true });
@@ -57,7 +63,7 @@ describe("memory watcher runtime", () => {
             store: { path: path.join(workspaceDir, "index.sqlite"), vector: { enabled: false } },
             sync: { watch: true, watchDebounceMs: 25, onSessionStart: false, onSearch: false },
             query: { minScore: 0, hybrid: { enabled: false } },
-            extraPaths: [extraDir, pendingFile],
+            extraPaths: [extraDir, pendingFile, missingDottedDir],
           },
         },
         list: [{ id: "main", default: true }],
@@ -84,10 +90,14 @@ describe("memory watcher runtime", () => {
     await fs.writeFile(pendingFile, "# pending\n");
     await waitFor(async () => manager?.status().files === 4);
 
+    await fs.mkdir(missingDottedDir, { recursive: true });
+    await fs.writeFile(path.join(missingDottedDir, "late.md"), "# dotted\n");
+    await waitFor(async () => manager?.status().files === 5);
+
     await fs.mkdir(path.join(memoryDir, "node_modules", "pkg"), { recursive: true });
     await fs.writeFile(path.join(memoryDir, "node_modules", "pkg", "ignored.md"), "# ignore\n");
     await sleep(400);
-    expect(manager.status().files).toBe(4);
+    expect(manager.status().files).toBe(5);
   });
 });
 

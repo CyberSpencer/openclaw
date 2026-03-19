@@ -21,6 +21,11 @@ vi.mock("./sqlite-vec.js", () => ({
   loadSqliteVecExtension: async () => ({ ok: false, error: "sqlite-vec disabled in tests" }),
 }));
 
+vi.mock("@mariozechner/pi-ai", () => ({
+  getOAuthApiKey: () => undefined,
+  getOAuthProviders: () => [],
+}));
+
 vi.mock("./embeddings.js", () => ({
   createEmbeddingProvider: async () => ({
     requestedProvider: "openai",
@@ -40,6 +45,7 @@ describe("memory watcher config", () => {
   let extraFile = "";
   let pendingDir = "";
   let pendingFile = "";
+  let missingDottedDir = "";
 
   afterEach(async () => {
     watchMock.mockClear();
@@ -54,6 +60,7 @@ describe("memory watcher config", () => {
       extraFile = "";
       pendingDir = "";
       pendingFile = "";
+      missingDottedDir = "";
     }
   });
 
@@ -63,6 +70,7 @@ describe("memory watcher config", () => {
     extraFile = path.join(workspaceDir, "standalone.md");
     pendingDir = path.join(workspaceDir, "pending");
     pendingFile = path.join(pendingDir, "later.md");
+    missingDottedDir = path.join(workspaceDir, "docs.v2");
     await fs.mkdir(path.join(workspaceDir, "memory"), { recursive: true });
     await fs.mkdir(extraDir, { recursive: true });
     await fs.mkdir(pendingDir, { recursive: true });
@@ -79,7 +87,7 @@ describe("memory watcher config", () => {
             store: { path: path.join(workspaceDir, "index.sqlite"), vector: { enabled: false } },
             sync: { watch: true, watchDebounceMs: 25, onSessionStart: false, onSearch: false },
             query: { minScore: 0, hybrid: { enabled: false } },
-            extraPaths: [extraDir, extraFile, pendingFile],
+            extraPaths: [extraDir, extraFile, pendingFile, missingDottedDir],
           },
         },
         list: [{ id: "main", default: true }],
@@ -106,18 +114,30 @@ describe("memory watcher config", () => {
         extraDir,
         extraFile,
         pendingDir,
+        missingDottedDir,
       ]),
     );
     expect(options.ignoreInitial).toBe(true);
     expect(options.awaitWriteFinish).toEqual({ stabilityThreshold: 25, pollInterval: 100 });
 
-    const ignored = options.ignored as ((watchPath: string) => boolean) | undefined;
+    const ignored = options.ignored as
+      | ((
+          watchPath: string,
+          stats?: { isFile?: () => boolean; isDirectory?: () => boolean },
+        ) => boolean)
+      | undefined;
     expect(ignored).toBeTypeOf("function");
     expect(ignored?.(path.join(workspaceDir, "memory", "node_modules", "pkg", "index.md"))).toBe(
       true,
     );
     expect(ignored?.(path.join(workspaceDir, "memory", ".venv", "lib", "python.md"))).toBe(true);
-    expect(ignored?.(path.join(workspaceDir, "memory", "project", "notes.txt"))).toBe(true);
+    expect(
+      ignored?.(path.join(workspaceDir, "memory", "project", "notes.txt"), {
+        isFile: () => true,
+        isDirectory: () => false,
+      }),
+    ).toBe(true);
     expect(ignored?.(path.join(workspaceDir, "memory", "project", "notes.md"))).toBe(false);
+    expect(ignored?.(path.join(workspaceDir, "memory", "project.v1"))).toBe(false);
   });
 });

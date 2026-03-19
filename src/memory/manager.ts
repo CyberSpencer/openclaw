@@ -155,7 +155,7 @@ function shouldIgnoreMemoryWatchPath(watchPath: string, stats?: MemoryWatchStats
   if (lowerPath.endsWith(".md")) {
     return false;
   }
-  return path.extname(lowerPath).length > 0;
+  return false;
 }
 
 function shouldHandleMemoryWatchEvent(watchPath: string): boolean {
@@ -1675,11 +1675,11 @@ export class MemoryIndexManager {
           watchPaths.add(normalizedEntry);
         }
       } catch (err) {
-        if (shouldWatchParentDir && isFileMissingError(err)) {
-          watchPaths.add(path.dirname(normalizedEntry));
+        if (isFileMissingError(err)) {
+          watchPaths.add(shouldWatchParentDir ? path.dirname(normalizedEntry) : normalizedEntry);
           continue;
         }
-        // Skip unreadable/missing additional paths.
+        // Skip unreadable additional paths.
       }
     }
     this.watcher = chokidar.watch(Array.from(watchPaths), {
