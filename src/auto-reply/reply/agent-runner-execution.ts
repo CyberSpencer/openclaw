@@ -474,9 +474,8 @@ export async function runAgentTurnWithFallback(params: {
 
       break;
     } catch (err) {
-      const message = err instanceof Error ? err.message : String(err);
       const failoverInfo = describeFailoverError(err);
-      const classifiedMessage = failoverInfo.message || message;
+      const classifiedMessage = failoverInfo.message;
       const isContextOverflow = isLikelyContextOverflowError(classifiedMessage);
       const isCompactionFailure = isCompactionFailureError(classifiedMessage);
       const isSessionCorruption = /function call turn comes immediately after/i.test(
@@ -488,7 +487,7 @@ export async function runAgentTurnWithFallback(params: {
       const isTransientHttp = isTransientHttpError(classifiedMessage);
       const isRetryableProviderServerError =
         !isTransientHttp &&
-        failoverInfo?.reason === "timeout" &&
+        failoverInfo.reason === "timeout" &&
         /\bserver_error\b|the server had an error processing your request|an error occurred while processing your request/i.test(
           classifiedMessage,
         );
