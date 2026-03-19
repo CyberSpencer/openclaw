@@ -61,12 +61,29 @@ describe("memory embedding batches", () => {
     expect(last?.completed).toBe(last?.total);
   });
 
+  it("packs embedding batches by utf8 bytes for multibyte content", async () => {
+    const memoryDir = fx.getMemoryDir();
+    const managerLarge = fx.getManagerLarge();
+    const content = "😀".repeat(4000);
+    await fs.writeFile(path.join(memoryDir, "2026-01-04.md"), content);
+    await managerLarge.sync({ reason: "test" });
+
+    expect(embedBatch.mock.calls.length).toBeGreaterThan(1);
+    const batchBytes = embedBatch.mock.calls.map((call: unknown[]) =>
+      ((call[0] as string[] | undefined) ?? []).reduce(
+        (sum, text) => sum + Buffer.byteLength(text, "utf8"),
+        0,
+      ),
+    );
+    expect(batchBytes.every((bytes) => bytes <= 8000)).toBe(true);
+  });
+
   it("keeps small files in a single embedding batch", async () => {
     const memoryDir = fx.getMemoryDir();
     const managerSmall = fx.getManagerSmall();
     const line = "b".repeat(120);
     const content = Array.from({ length: 4 }, () => line).join("\n");
-    await fs.writeFile(path.join(memoryDir, "2026-01-04.md"), content);
+    await fs.writeFile(path.join(memoryDir, "2026-01-05.md"), content);
     await managerSmall.sync({ reason: "test" });
 
     expect(embedBatch.mock.calls.length).toBe(1);
