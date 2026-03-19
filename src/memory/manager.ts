@@ -118,6 +118,7 @@ const SQLITE_FALLBACK_DEPRECATION_LABEL = "March 2, 2026";
 const log = createSubsystemLogger("memory");
 
 const INDEX_CACHE = new Map<string, MemoryIndexManager>();
+const INDEX_CACHE_PENDING = new Map<string, Promise<MemoryIndexManager | null>>();
 
 const RERANK_MAX_QUERY_CHARS = 4096;
 const RERANK_MAX_DOC_CHARS = 2048;
@@ -223,32 +224,46 @@ export class MemoryIndexManager {
     if (existing) {
       return existing;
     }
-    const providerResult = await createEmbeddingProvider({
-      config: cfg,
-      agentDir: resolveAgentDir(cfg, agentId),
-      provider: resolvedSettings.provider,
-      remote: resolvedSettings.remote,
-      model: resolvedSettings.model,
-      fallback: resolvedSettings.fallback,
-      local: resolvedSettings.local,
-    });
-    if (!providerResult.provider) {
-      log.warn("memory search unavailable: no embedding provider could be created", {
-        agentId,
-        reason: providerResult.providerUnavailableReason,
-      });
-      return null;
+    const pending = INDEX_CACHE_PENDING.get(key);
+    if (pending) {
+      return await pending;
     }
-    const manager = new MemoryIndexManager({
-      cacheKey: key,
-      cfg,
-      agentId,
-      workspaceDir,
-      settings: resolvedSettings,
-      providerResult,
-    });
-    INDEX_CACHE.set(key, manager);
-    return manager;
+    const createManager = (async () => {
+      const providerResult = await createEmbeddingProvider({
+        config: cfg,
+        agentDir: resolveAgentDir(cfg, agentId),
+        provider: resolvedSettings.provider,
+        remote: resolvedSettings.remote,
+        model: resolvedSettings.model,
+        fallback: resolvedSettings.fallback,
+        local: resolvedSettings.local,
+      });
+      if (!providerResult.provider) {
+        log.warn("memory search unavailable: no embedding provider could be created", {
+          agentId,
+          reason: providerResult.providerUnavailableReason,
+        });
+        return null;
+      }
+      const manager = new MemoryIndexManager({
+        cacheKey: key,
+        cfg,
+        agentId,
+        workspaceDir,
+        settings: resolvedSettings,
+        providerResult,
+      });
+      INDEX_CACHE.set(key, manager);
+      return manager;
+    })();
+    INDEX_CACHE_PENDING.set(key, createManager);
+    try {
+      return await createManager;
+    } finally {
+      if (INDEX_CACHE_PENDING.get(key) === createManager) {
+        INDEX_CACHE_PENDING.delete(key);
+      }
+    }
   }
 
   private constructor(params: {
