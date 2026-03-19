@@ -198,6 +198,57 @@ describe("models.authStatus handler", () => {
     );
   });
 
+  it("reports transient refresh failures as auth, not auth_permanent", async () => {
+    const now = 1_700_000_000_000;
+    vi.spyOn(Date, "now").mockReturnValue(now);
+    ensureAuthProfileStoreMock.mockReturnValue({
+      version: 1,
+      profiles: {
+        "openai-codex:default": {
+          type: "oauth",
+          provider: "openai-codex",
+          access: "access",
+          refresh: "refresh",
+          expires: now + 86_400_000,
+        },
+      },
+    });
+    buildAuthProviderRecoveryMock.mockReturnValue({
+      checkedAt: now,
+      provider: "openai-codex",
+      status: "ready",
+      source: "profiles",
+      profileCount: 1,
+      readyProfileCount: 1,
+      blockedProfileCount: 0,
+      expiredProfileCount: 0,
+      missingProfileCount: 0,
+    });
+    resolveApiKeyForProfileMock.mockRejectedValue(
+      new Error(
+        "OAuth token refresh failed for openai-codex: upstream provider unavailable. Please try again or re-authenticate.",
+      ),
+    );
+
+    const respond = vi.fn<GatewayResponder>();
+    const { modelsHandlers } = await import("./models.js");
+    await modelsHandlers["models.authStatus"]?.(
+      makeInvocation(respond, { provider: "openai-codex" }),
+    );
+
+    expect(respond).toHaveBeenCalledWith(
+      true,
+      expect.objectContaining({
+        provider: "openai-codex",
+        status: "disabled",
+        nextRetryReason: "auth",
+        readyProfileCount: 0,
+        blockedProfileCount: 1,
+      }),
+      undefined,
+    );
+  });
+
   it("rejects unknown params", async () => {
     const respond = vi.fn<GatewayResponder>();
     const { modelsHandlers } = await import("./models.js");

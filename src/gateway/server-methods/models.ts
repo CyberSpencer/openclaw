@@ -19,8 +19,7 @@ function looksLikePermanentAuthFailure(message: string): boolean {
   return (
     normalized.includes("refresh_token_reused") ||
     normalized.includes("signing in again") ||
-    normalized.includes("sign in again") ||
-    normalized.includes("re-authenticate")
+    normalized.includes("sign in again")
   );
 }
 
