@@ -185,6 +185,32 @@ describe("buildAuthProviderRecovery", () => {
     expect(summary.source).toBe("env");
   });
 
+  it("uses explicit now for classification boundaries", () => {
+    vi.spyOn(Date, "now").mockReturnValue(now + 60_000);
+    const store = {
+      version: 1,
+      profiles: {
+        "openai-codex:expiring": {
+          type: "token" as const,
+          provider: "openai-codex",
+          token: "token",
+          expires: now + 1,
+        },
+      },
+    };
+
+    const summary = buildAuthProviderRecovery({
+      provider: "openai-codex",
+      store,
+      now,
+    });
+
+    expect(summary.checkedAt).toBe(now);
+    expect(summary.status).toBe("ready");
+    expect(summary.readyProfileCount).toBe(1);
+    expect(summary.expiredProfileCount).toBe(0);
+  });
+
   it("reports expired when no usable retryable OAuth credentials remain", () => {
     vi.spyOn(Date, "now").mockReturnValue(now);
     const store = {

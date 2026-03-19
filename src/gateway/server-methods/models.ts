@@ -14,6 +14,8 @@ import {
 } from "../protocol/index.js";
 import type { GatewayRequestHandlers } from "./types.js";
 
+const LIVE_PROBE_PROVIDERS = new Set(["openai-codex"]);
+
 function looksLikePermanentAuthFailure(message: string): boolean {
   const normalized = message.trim().toLowerCase();
   return (
@@ -94,7 +96,12 @@ export const modelsHandlers: GatewayRequestHandlers = {
         warnAfterMs: DEFAULT_OAUTH_WARN_MS,
         hasEnvOAuth,
       });
-      if (!hasEnvOAuth && status.status === "ready" && status.source === "profiles") {
+      if (
+        !hasEnvOAuth &&
+        status.status === "ready" &&
+        status.source === "profiles" &&
+        LIVE_PROBE_PROVIDERS.has(provider)
+      ) {
         const liveFailureReason = await resolveLiveProviderAuthFailure({
           provider,
           cfg,
@@ -107,7 +114,10 @@ export const modelsHandlers: GatewayRequestHandlers = {
               ...status,
               status: "disabled",
               readyProfileCount: 0,
-              blockedProfileCount: Math.max(status.blockedProfileCount, status.profileCount),
+              blockedProfileCount: Math.min(
+                status.profileCount,
+                status.blockedProfileCount + status.readyProfileCount,
+              ),
               nextRetryAt: undefined,
               nextRetryInMs: undefined,
               nextRetryKind: undefined,

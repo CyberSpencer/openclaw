@@ -189,8 +189,9 @@ export function buildAuthHealthSummary(params: {
   cfg?: OpenClawConfig;
   warnAfterMs?: number;
   providers?: string[];
+  now?: number;
 }): AuthHealthSummary {
-  const now = Date.now();
+  const now = params.now ?? Date.now();
   const warnAfterMs = params.warnAfterMs ?? DEFAULT_OAUTH_WARN_MS;
   const providerFilter = params.providers
     ? new Set(params.providers.map((p) => p.trim()).filter(Boolean))
@@ -296,6 +297,7 @@ export function buildAuthProviderRecovery(params: {
     cfg: params.cfg,
     warnAfterMs: params.warnAfterMs,
     providers: [params.provider],
+    now,
   });
   const profiles = authHealth.profiles.filter(
     (profile) =>
