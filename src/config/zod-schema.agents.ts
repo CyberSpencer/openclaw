@@ -1,6 +1,6 @@
 import { z } from "zod";
 import { AgentDefaultsSchema } from "./zod-schema.agent-defaults.js";
-import { AgentEntrySchema } from "./zod-schema.agent-runtime.js";
+import { AgentEntrySchema, validateSandboxNetworkMode } from "./zod-schema.agent-runtime.js";
 import { TranscribeAudioSchema } from "./zod-schema.core.js";
 
 export const AgentsSchema = z
@@ -9,6 +9,42 @@ export const AgentsSchema = z
     list: z.array(AgentEntrySchema).optional(),
   })
   .strict()
+  .superRefine((value, ctx) => {
+    const inheritedAllowContainerNamespaceJoin =
+      value.defaults?.sandbox?.docker?.dangerouslyAllowContainerNamespaceJoin === true;
+
+    for (const [index, agent] of (value.list ?? []).entries()) {
+      const allowContainerNamespaceJoin =
+        agent.sandbox?.docker?.dangerouslyAllowContainerNamespaceJoin ??
+        inheritedAllowContainerNamespaceJoin;
+
+      const dockerNetworkIssue = validateSandboxNetworkMode(
+        agent.sandbox?.docker?.network,
+
+        allowContainerNamespaceJoin,
+      );
+      if (dockerNetworkIssue) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ["list", index, "sandbox", "docker", "network"],
+          message: dockerNetworkIssue,
+        });
+      }
+
+      const browserNetworkIssue = validateSandboxNetworkMode(
+        agent.sandbox?.browser?.network,
+
+        allowContainerNamespaceJoin,
+      );
+      if (browserNetworkIssue) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ["list", index, "sandbox", "browser", "network"],
+          message: browserNetworkIssue,
+        });
+      }
+    }
+  })
   .optional();
 
 export const BindingsSchema = z

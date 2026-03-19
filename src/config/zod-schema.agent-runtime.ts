@@ -88,7 +88,7 @@ export const HeartbeatSchema = z
   })
   .optional();
 
-function validateSandboxNetworkMode(
+export function validateSandboxNetworkMode(
   network: string | undefined,
   allowContainerNamespaceJoin: boolean,
 ): string | null {
@@ -322,7 +322,7 @@ export const ElevatedAllowFromSchema = z
   .record(z.string(), z.array(z.union([z.string(), z.number()])))
   .optional();
 
-export const AgentSandboxSchema = z
+const AgentSandboxSchemaBase = z
   .object({
     mode: z.union([z.literal("off"), z.literal("non-main"), z.literal("all")]).optional(),
     workspaceAccess: z.union([z.literal("none"), z.literal("ro"), z.literal("rw")]).optional(),
@@ -334,11 +334,24 @@ export const AgentSandboxSchema = z
     browser: SandboxBrowserSchema,
     prune: SandboxPruneSchema,
   })
-  .strict()
-  .superRefine((value, ctx) => {
+  .strict();
+
+function addSandboxSecurityIssues(
+  value: z.infer<typeof AgentSandboxSchemaBase>,
+  ctx: z.RefinementCtx,
+  opts: {
+    validateContainerNetwork: boolean;
+    allowContainerNamespaceJoin?: boolean;
+  },
+): void {
+  const allowContainerNamespaceJoin =
+    opts.allowContainerNamespaceJoin ??
+    value.docker?.dangerouslyAllowContainerNamespaceJoin === true;
+
+  if (opts.validateContainerNetwork) {
     const dockerNetworkIssue = validateSandboxNetworkMode(
       value.docker?.network,
-      value.docker?.dangerouslyAllowContainerNamespaceJoin === true,
+      allowContainerNamespaceJoin,
     );
     if (dockerNetworkIssue) {
       ctx.addIssue({
@@ -350,7 +363,7 @@ export const AgentSandboxSchema = z
 
     const browserNetworkIssue = validateSandboxNetworkMode(
       value.browser?.network,
-      value.docker?.dangerouslyAllowContainerNamespaceJoin === true,
+      allowContainerNamespaceJoin,
     );
     if (browserNetworkIssue) {
       ctx.addIssue({
@@ -359,26 +372,34 @@ export const AgentSandboxSchema = z
         message: browserNetworkIssue,
       });
     }
+  }
 
-    const seccompIssue = validateSandboxProfile(value.docker?.seccompProfile, "seccomp");
-    if (seccompIssue) {
-      ctx.addIssue({
-        code: z.ZodIssueCode.custom,
-        path: ["docker", "seccompProfile"],
-        message: seccompIssue,
-      });
-    }
+  const seccompIssue = validateSandboxProfile(value.docker?.seccompProfile, "seccomp");
+  if (seccompIssue) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ["docker", "seccompProfile"],
+      message: seccompIssue,
+    });
+  }
 
-    const apparmorIssue = validateSandboxProfile(value.docker?.apparmorProfile, "apparmor");
-    if (apparmorIssue) {
-      ctx.addIssue({
-        code: z.ZodIssueCode.custom,
-        path: ["docker", "apparmorProfile"],
-        message: apparmorIssue,
-      });
-    }
-  })
-  .optional();
+  const apparmorIssue = validateSandboxProfile(value.docker?.apparmorProfile, "apparmor");
+  if (apparmorIssue) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ["docker", "apparmorProfile"],
+      message: apparmorIssue,
+    });
+  }
+}
+
+export const AgentSandboxSchema = AgentSandboxSchemaBase.superRefine((value, ctx) => {
+  addSandboxSecurityIssues(value, ctx, { validateContainerNetwork: true });
+}).optional();
+
+export const AgentSandboxOverrideSchema = AgentSandboxSchemaBase.superRefine((value, ctx) => {
+  addSandboxSecurityIssues(value, ctx, { validateContainerNetwork: false });
+}).optional();
 
 export const AgentToolsSchema = z
   .object({
@@ -715,7 +736,7 @@ export const AgentEntrySchema = z
       })
       .strict()
       .optional(),
-    sandbox: AgentSandboxSchema,
+    sandbox: AgentSandboxOverrideSchema,
     tools: AgentToolsSchema,
   })
   .strict();
