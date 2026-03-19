@@ -1,4 +1,3 @@
-import { parseHTML } from "linkedom";
 import { render } from "lit";
 import { afterEach, describe, expect, it } from "vitest";
 import type { SessionsListResult } from "../types.ts";
@@ -19,48 +18,14 @@ function createSessions(): SessionsListResult {
   };
 }
 
-const GLOBAL_KEYS = [
-  "window",
-  "document",
-  "customElements",
-  "HTMLElement",
-  "Element",
-  "Node",
-  "DocumentFragment",
-  "ShadowRoot",
-] as const;
-
-const originalGlobals = new Map<string, unknown>();
-
 function createDomContainer(): HTMLElement {
-  const { document, window } = parseHTML("<!doctype html><html><body></body></html>");
-  for (const key of GLOBAL_KEYS) {
-    if (!originalGlobals.has(key)) {
-      originalGlobals.set(key, (globalThis as Record<string, unknown>)[key]);
-    }
-  }
-  Object.assign(globalThis, {
-    window,
-    document,
-    customElements: window.customElements,
-    HTMLElement: window.HTMLElement,
-    Element: window.Element,
-    Node: window.Node,
-    DocumentFragment: window.DocumentFragment,
-    ShadowRoot: window.ShadowRoot,
-  });
-  return document.createElement("div") as unknown as HTMLElement;
+  const container = document.createElement("div");
+  document.body.appendChild(container);
+  return container;
 }
 
 afterEach(() => {
-  for (const key of GLOBAL_KEYS) {
-    const value = originalGlobals.get(key);
-    if (value === undefined) {
-      delete (globalThis as Record<string, unknown>)[key];
-    } else {
-      (globalThis as Record<string, unknown>)[key] = value;
-    }
-  }
+  document.body.innerHTML = "";
 });
 
 function createProps(overrides: Partial<ChatProps> = {}): ChatProps {
