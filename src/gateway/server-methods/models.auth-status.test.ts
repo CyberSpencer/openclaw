@@ -199,7 +199,7 @@ describe("models.authStatus handler", () => {
     );
   });
 
-  it("reports transient refresh failures as auth, not auth_permanent", async () => {
+  it("keeps ready status when the live probe only hits a transient refresh failure", async () => {
     const now = 1_700_000_000_000;
     vi.spyOn(Date, "now").mockReturnValue(now);
     ensureAuthProfileStoreMock.mockReturnValue({
@@ -241,16 +241,16 @@ describe("models.authStatus handler", () => {
       true,
       expect.objectContaining({
         provider: "openai-codex",
-        status: "disabled",
-        nextRetryReason: "auth",
-        readyProfileCount: 0,
-        blockedProfileCount: 1,
+        status: "ready",
+        source: "profiles",
+        readyProfileCount: 1,
+        blockedProfileCount: 0,
       }),
       undefined,
     );
   });
 
-  it("keeps mixed-state profile counts partition-consistent when live probe downgrades readiness", async () => {
+  it("keeps mixed-state profile counts partition-consistent when a permanent live probe downgrades readiness", async () => {
     const now = 1_700_000_000_000;
     vi.spyOn(Date, "now").mockReturnValue(now);
     ensureAuthProfileStoreMock.mockReturnValue({
@@ -276,7 +276,9 @@ describe("models.authStatus handler", () => {
       expiredProfileCount: 1,
       missingProfileCount: 0,
     });
-    resolveApiKeyForProfileMock.mockRejectedValue(new Error("OAuth token refresh failed"));
+    resolveApiKeyForProfileMock.mockRejectedValue(
+      new Error("OAuth token refresh failed: refresh_token_reused. Please try signing in again."),
+    );
 
     const respond = vi.fn<GatewayResponder>();
     const { modelsHandlers } = await import("./models.js");

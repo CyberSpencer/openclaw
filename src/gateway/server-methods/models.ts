@@ -53,7 +53,6 @@ async function resolveLiveProviderAuthFailure(params: {
     return null;
   }
 
-  let sawAuthFailure = false;
   let sawPermanentAuthFailure = false;
   for (const profileId of profileIds) {
     try {
@@ -66,7 +65,6 @@ async function resolveLiveProviderAuthFailure(params: {
         return null;
       }
     } catch (error) {
-      sawAuthFailure = true;
       const message = error instanceof Error ? error.message : String(error);
       if (looksLikePermanentAuthFailure(message)) {
         sawPermanentAuthFailure = true;
@@ -74,10 +72,7 @@ async function resolveLiveProviderAuthFailure(params: {
     }
   }
 
-  if (sawPermanentAuthFailure) {
-    return "auth_permanent";
-  }
-  return sawAuthFailure ? "auth" : null;
+  return sawPermanentAuthFailure ? "auth_permanent" : null;
 }
 
 export const modelsHandlers: GatewayRequestHandlers = {
