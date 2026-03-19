@@ -189,7 +189,7 @@ describe("chat orchestration status reconciliation", () => {
       container,
     );
 
-    const assignedButton = container.querySelector(".agent-task__assigned");
+    const assignedButton = container.querySelector<HTMLButtonElement>(".agent-task__assigned");
     expect(assignedButton?.disabled).toBe(true);
     expect(assignedButton?.getAttribute("title")).toBe(
       "Assigned agent is a background coding agent",

@@ -92,10 +92,14 @@ function detectBackgroundCodingAgent(command: string): { label: string } | null 
   if (/\bcodex\b/.test(lower)) {
     return { label: "Codex background agent" };
   }
-  const firstToken = normalized.match(/^\S+/)?.[0]?.toLowerCase() ?? "";
+  const firstToken =
+    normalized
+      .match(/^(?:"[^"]+"|'[^']+'|\S+)/)?.[0]
+      ?.replace(/^['"]|['"]$/g, "")
+      .toLowerCase() ?? "";
   // Cursor background runs arrive either via run_cursor.py / cursor-agent, or
   // via the local `agent` executable path used by the Cursor skill wrappers.
-  const isCursorAgentExecutable = /^(?:\.\/|.*\/)?agent$/.test(firstToken);
+  const isCursorAgentExecutable = /^(?:\.?[\\/]|.*[\\/])?agent(?:\.exe)?$/.test(firstToken);
   if (/run_cursor\.py|\bcursor-agent\b/.test(lower) || isCursorAgentExecutable) {
     return { label: "Cursor background agent" };
   }
@@ -110,7 +114,7 @@ function detectBackgroundCodingAgent(command: string): { label: string } | null 
   }
   // Pi background runs should only match explicit Pi executables, not substrings
   // like `api` or unrelated file names.
-  if (/(^|[\s"'`/])(?:pi|pi-cli|pi\.exe)(?=$|[\s"'`/])/.test(lower)) {
+  if (/(^|[\s"'`/\\])(?:pi(?:-cli)?(?:\.exe)?)(?=$|[\s"'`/\\])/.test(lower)) {
     return { label: "Pi background agent" };
   }
   return null;
@@ -171,7 +175,7 @@ function listBackgroundCodingRowsForRequester(
         cleanup: "keep",
         outcome:
           status === "error"
-            ? { status: "error", error: task }
+            ? { status: "error" }
             : status === "done"
               ? { status: "ok" }
               : undefined,

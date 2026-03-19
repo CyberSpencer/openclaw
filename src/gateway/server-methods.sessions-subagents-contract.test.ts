@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import {
   addSession,
   markBackgrounded,
+  markExited,
   resetProcessRegistryForTests,
 } from "../agents/bash-process-registry.js";
 import {
@@ -207,6 +208,65 @@ describe("gateway sessions.subagents contract", () => {
     );
   });
 
+  it("includes Windows agent executables in background coding rows", async () => {
+    const session = {
+      id: "proc-win-agent",
+      command:
+        '"C:\\tools\\agent.exe" --print --permission-mode bypassPermissions "review this PR"',
+      sessionKey: "agent:main:main",
+      startedAt: 550,
+      cwd: "C:\\tmp\\openclaw",
+      maxOutputChars: 10_000,
+      totalOutputChars: 0,
+      pendingStdout: [],
+      pendingStderr: [],
+      pendingStdoutChars: 0,
+      pendingStderrChars: 0,
+      aggregated: "",
+      tail: "",
+      exited: false,
+      truncated: false,
+      backgrounded: false,
+    };
+    addSession(session);
+    markBackgrounded(session);
+
+    const respond = vi.fn();
+    await handleGatewayRequest({
+      req: {
+        type: "req",
+        id: "3b",
+        method: "sessions.subagents",
+        params: {
+          requesterSessionKey: "agent:main:main",
+          includeCompleted: true,
+          limit: 20,
+        },
+      },
+      respond,
+      client: {
+        connect: { role: "operator", scopes: ["operator.read"] },
+      } as never,
+      isWebchatConnect: false,
+      context: {} as never,
+    });
+
+    expect(respond).toHaveBeenCalledWith(
+      true,
+      expect.objectContaining({
+        count: 1,
+        tasks: [
+          expect.objectContaining({
+            runId: "proc-win-agent",
+            label: "Cursor background agent",
+            source: "background-exec",
+          }),
+        ],
+      }),
+      undefined,
+    );
+  });
+
   it("does not misclassify api strings as Pi background agents", async () => {
     const session = {
       id: "proc-api",
@@ -254,6 +314,66 @@ describe("gateway sessions.subagents contract", () => {
       expect.objectContaining({
         count: 0,
         tasks: [],
+      }),
+      undefined,
+    );
+  });
+
+  it("omits synthetic command text from failed background outcomes", async () => {
+    const session = {
+      id: "proc-failed",
+      command: 'codex exec --full-auto "break the build"',
+      sessionKey: "agent:main:main",
+      scopeKey: "agent:main:main",
+      startedAt: 625,
+      cwd: "/tmp/openclaw",
+      maxOutputChars: 10_000,
+      totalOutputChars: 0,
+      pendingStdout: [],
+      pendingStderr: [],
+      pendingStdoutChars: 0,
+      pendingStderrChars: 0,
+      aggregated: "",
+      tail: "",
+      exited: false,
+      truncated: false,
+      backgrounded: false,
+    };
+    addSession(session);
+    markBackgrounded(session);
+    markExited(session, 1, null, "failed");
+
+    const respond = vi.fn();
+    await handleGatewayRequest({
+      req: {
+        type: "req",
+        id: "4b",
+        method: "sessions.subagents",
+        params: {
+          requesterSessionKey: "agent:main:main",
+          includeCompleted: true,
+          limit: 20,
+        },
+      },
+      respond,
+      client: {
+        connect: { role: "operator", scopes: ["operator.read"] },
+      } as never,
+      isWebchatConnect: false,
+      context: {} as never,
+    });
+
+    expect(respond).toHaveBeenCalledWith(
+      true,
+      expect.objectContaining({
+        count: 1,
+        tasks: [
+          expect.objectContaining({
+            runId: "proc-failed",
+            status: "error",
+            outcome: { status: "error" },
+          }),
+        ],
       }),
       undefined,
     );
