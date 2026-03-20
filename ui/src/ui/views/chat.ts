@@ -2,6 +2,8 @@ import { html, nothing, type TemplateResult } from "lit";
 import { ref } from "lit/directives/ref.js";
 import { repeat } from "lit/directives/repeat.js";
 import { unsafeHTML } from "lit/directives/unsafe-html.js";
+import { formatDurationCompact } from "../../../../src/infra/format-time/format-duration.js";
+import { formatRelativeTimestamp } from "../../../../src/infra/format-time/format-relative.js";
 import type { ModelSelectionInfo } from "../app-tool-stream.ts";
 import { extractTextCached } from "../chat/message-extract.ts";
 import { normalizeMessage, normalizeRoleForGrouping } from "../chat/message-normalizer.ts";
@@ -9,7 +11,13 @@ import { icons } from "../icons.ts";
 import { toSanitizedMarkdownHtml } from "../markdown.ts";
 import { openExternalUrlSafe } from "../open-external-url.ts";
 import type { SessionsListResult } from "../types.ts";
-import type { ChatAttachment, ChatQueueItem, TaskPlan, TaskPlanStatus } from "../ui-types.ts";
+import type {
+  ChatAttachment,
+  ChatQueueItem,
+  TaskPlan,
+  TaskPlanStatus,
+  TaskPlanTask,
+} from "../ui-types.ts";
 import { renderMarkdownSidebar } from "./markdown-sidebar.ts";
 import "../components/resizable-divider.ts";
 
@@ -114,15 +122,42 @@ function normalizeTaskStatus(raw: unknown): TaskPlanStatus {
   return "todo";
 }
 
-function computeTaskProgress(plan: TaskPlan | null | undefined): TaskProgress {
+function computeTaskProgress(
+  plan: TaskPlan | null | undefined,
+  subagentByKey: Map<string, { runStatus?: string }>,
+): TaskProgress {
   const tasks = plan?.tasks ?? [];
   const total = tasks.length;
   const done = tasks.filter((t) => {
-    const status = normalizeTaskStatus(t.status);
+    const status = resolveDisplayedTaskStatus(t, subagentByKey);
     return status === "done" || status === "skipped";
   }).length;
   const pct = total > 0 ? Math.max(0, Math.min(100, Math.round((done / total) * 100))) : 0;
   return { done, total, pct };
+}
+
+function resolveDisplayedTaskStatus(
+  task: TaskPlanTask,
+  subagentByKey: Map<string, { runStatus?: string }>,
+): TaskPlanStatus {
+  const fallback = normalizeTaskStatus(task.status);
+  const assignedKey = (task.assignedSessionKey ?? "").trim();
+  if (!assignedKey) {
+    return fallback;
+  }
+  const assigned = subagentByKey.get(assignedKey);
+  const runStatus =
+    typeof assigned?.runStatus === "string" ? assigned.runStatus.trim().toLowerCase() : "";
+  if (runStatus === "running") {
+    return "running";
+  }
+  if (runStatus === "done") {
+    return "done";
+  }
+  if (runStatus === "error") {
+    return "blocked";
+  }
+  return fallback;
 }
 
 function taskStatusLabel(status: TaskPlanStatus): string {
@@ -200,30 +235,6 @@ function formatClock(ts: number | null) {
     minute: "2-digit",
     second: "2-digit",
   });
-}
-
-function formatAge(ts: number | null): string {
-  if (!ts) {
-    return "";
-  }
-  const deltaMs = Date.now() - ts;
-  if (deltaMs < 0) {
-    return "0s";
-  }
-  const sec = Math.floor(deltaMs / 1000);
-  if (sec < 60) {
-    return `${Math.max(1, sec)}s`;
-  }
-  const min = Math.floor(sec / 60);
-  if (min < 60) {
-    return `${min}m`;
-  }
-  const hr = Math.floor(min / 60);
-  if (hr < 24) {
-    return `${hr}h`;
-  }
-  const day = Math.floor(hr / 24);
-  return `${day}d`;
 }
 
 function truncate(text: string, maxChars: number) {
@@ -848,8 +859,8 @@ function renderOrchestrationCard(props: ChatProps) {
 
   const plan = props.taskPlan ?? null;
   const tasks = plan?.tasks ?? [];
-  const progress = computeTaskProgress(plan);
   const subagentByKey = new Map(subagents.map((s) => [s.key, s]));
+  const progress = computeTaskProgress(plan, subagentByKey);
   const subagentStatusByKey = (() => {
     const priority: Record<TaskPlanStatus, number> = {
       running: 5,
@@ -990,18 +1001,28 @@ function renderOrchestrationCard(props: ChatProps) {
                     ? html`
                         <div class="agent-plan__list" role="list">
                           ${tasks.map((task) => {
-                            const status = normalizeTaskStatus(task.status);
+                            const status = resolveDisplayedTaskStatus(task, subagentByKey);
                             const assignedKey = (task.assignedSessionKey ?? "").trim();
                             const assigned = assignedKey
                               ? subagentByKey.get(assignedKey)
                               : undefined;
-                            const canOpenAssigned = Boolean(assigned);
+                            const canOpenAssigned = Boolean(
+                              assigned && assigned.openable !== false,
+                            );
+                            const assignedMissing = Boolean(assignedKey) && !assigned;
                             const assignedLabel =
                               assigned?.label?.trim() ||
                               assigned?.derivedTitle?.trim() ||
                               assigned?.displayName?.trim() ||
                               assigned?.key ||
                               assignedKey;
+                            const assignedTitle = assignedMissing
+                              ? "Assigned subagent was pruned"
+                              : canOpenAssigned
+                                ? "Open assigned subagent"
+                                : assigned?.source === "background-exec"
+                                  ? "Assigned agent is a background coding agent"
+                                  : "Assigned agent is not openable";
                             const updatedAt =
                               typeof assigned?.updatedAt === "number" ? assigned.updatedAt : null;
                             return html`
@@ -1029,20 +1050,16 @@ function renderOrchestrationCard(props: ChatProps) {
                                               }
                                               props.onSessionKeyChange(assignedKey);
                                             }}
-                                            title=${
-                                              canOpenAssigned
-                                                ? "Open assigned subagent"
-                                                : "Assigned subagent was pruned"
-                                            }
+                                            title=${assignedTitle}
                                           >
                                             <span class="mono agent-task__assignedKey">
                                               ${assignedLabel}
                                             </span>
                                             <span class="agent-task__assignedAge mono">
-                                              ${formatAge(updatedAt)}
+                                              ${formatRelativeTimestamp(updatedAt, { fallback: "" })}
                                             </span>
                                             ${
-                                              !canOpenAssigned
+                                              assignedMissing
                                                 ? html`
                                                     <span class="muted agent-task__assignedMissing">(pruned)</span>
                                                   `
@@ -1112,7 +1129,7 @@ function renderOrchestrationCard(props: ChatProps) {
           ${
             subagents.length > 0
               ? html`
-                  <div class="agent-subagents__hint muted">spawned by this thread</div>
+                  <div class="agent-subagents__hint muted">spawned by this thread, plus background coding agents</div>
                 `
               : nothing
           }
@@ -1140,9 +1157,16 @@ function renderOrchestrationCard(props: ChatProps) {
                           s.displayName?.trim() ||
                           s.key;
                         const updatedAt = typeof s.updatedAt === "number" ? s.updatedAt : null;
-                        const preview = (s.lastMessagePreview ?? "").trim();
-                        const hasPreview = Boolean(preview);
-                        const status = subagentStatusByKey.get(s.key);
+                        const isOpenable = s.openable !== false;
+                        const st = s.runStatus || subagentStatusByKey.get(s.key);
+                        const status =
+                          st === "running"
+                            ? "running"
+                            : st === "error"
+                              ? "blocked"
+                              : st === "done"
+                                ? "done"
+                                : subagentStatusByKey.get(s.key);
                         const dotStatus =
                           status === "running"
                             ? "running"
@@ -1153,12 +1177,40 @@ function renderOrchestrationCard(props: ChatProps) {
                                 : status === "todo"
                                   ? "todo"
                                   : "neutral";
+                        const taskStr = (s.task ?? s.derivedTitle ?? "").trim();
+                        const outcomeErr = s.outcome?.error?.trim();
+                        const preview =
+                          (s.lastMessagePreview ?? "").trim() ||
+                          (status === "blocked"
+                            ? `Failed: ${outcomeErr || taskStr || "subagent task"}`
+                            : taskStr);
+                        const hasPreview = Boolean(preview);
+                        const metaParts: string[] = [];
+                        if (typeof s.runtimeMs === "number" && s.runtimeMs > 0) {
+                          const runtimeLabel = formatDurationCompact(s.runtimeMs, { spaced: true });
+                          if (runtimeLabel) {
+                            metaParts.push(runtimeLabel);
+                          }
+                        }
+                        const age = formatRelativeTimestamp(updatedAt, { fallback: "" });
+                        if (age) {
+                          metaParts.push(age);
+                        }
+                        const title = isOpenable
+                          ? "Open subagent session"
+                          : "Background coding agent";
                         return html`
                           <button
-                            class="agent-subagent"
+                            class="agent-subagent agent-subagent--${dotStatus} ${isOpenable ? "" : "agent-subagent--static"}"
                             type="button"
-                            @click=${() => props.onSessionKeyChange(s.key)}
-                            title="Open subagent session"
+                            ?disabled=${!isOpenable}
+                            @click=${() => {
+                              if (!isOpenable) {
+                                return;
+                              }
+                              props.onSessionKeyChange(s.key);
+                            }}
+                            title=${title}
                           >
                             <div class="agent-subagent__main">
                               <div class="agent-subagent__title">
@@ -1178,7 +1230,7 @@ function renderOrchestrationCard(props: ChatProps) {
                             </div>
                             <div class="agent-subagent__meta">
                               <div class="agent-subagent__time mono">
-                                ${formatAge(updatedAt)}
+                                ${metaParts.join(" • ")}
                               </div>
                             </div>
                           </button>

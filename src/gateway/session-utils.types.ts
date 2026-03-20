@@ -84,11 +84,14 @@ export type SubagentTaskStatus = "running" | "done" | "error";
 
 export type SubagentTaskRow = {
   taskId: string;
+  title?: string;
   runId: string;
   assignedRunId: string;
   childSessionKey: string;
   assignedSessionKey: string;
   requesterSessionKey: string;
+  source?: "subagent" | "background-exec";
+  openable?: boolean;
   label?: string;
   task: string;
   status: SubagentTaskStatus;

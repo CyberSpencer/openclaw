@@ -13,6 +13,13 @@ type SessionsSubagentsResponse = {
     startedAt?: number;
     endedAt?: number;
     model?: string;
+    modelApplied?: boolean;
+    routing?: string;
+    complexity?: string;
+    outcome?: { status?: string; error?: string };
+    runtimeMs?: number;
+    source?: "subagent" | "background-exec";
+    openable?: boolean;
   }>;
 };
 
@@ -60,7 +67,10 @@ export async function loadSubagentMonitor(
     const tasks = Array.isArray(res?.tasks) ? res.tasks : [];
     const sessions = tasks
       .map((task) => {
-        const key = typeof task.childSessionKey === "string" ? task.childSessionKey.trim() : "";
+        const source = task.source === "background-exec" ? "background-exec" : "subagent";
+        const rawKey = typeof task.childSessionKey === "string" ? task.childSessionKey.trim() : "";
+        const runId = typeof task.runId === "string" ? task.runId.trim() : "";
+        const key = rawKey || (source === "background-exec" && runId ? `process:${runId}` : "");
         if (!key) {
           return null;
         }
@@ -73,25 +83,30 @@ export async function loadSubagentMonitor(
                 ? task.createdAt
                 : null;
         const status = typeof task.status === "string" ? task.status : "running";
-        const preview =
-          status === "error"
-            ? `Failed: ${(typeof task.task === "string" ? task.task : "subagent task").trim()}`
-            : typeof task.task === "string"
-              ? task.task.trim()
-              : "";
+        const taskStr = typeof task.task === "string" ? task.task.trim() : "";
+        const preview = status === "error" ? `Failed: ${taskStr || "subagent task"}` : taskStr;
         return {
           key,
           kind: "direct" as const,
           label: typeof task.label === "string" ? task.label : undefined,
-          derivedTitle: typeof task.task === "string" ? task.task : undefined,
+          derivedTitle: taskStr || undefined,
           displayName: typeof task.label === "string" ? task.label : undefined,
           lastMessagePreview: preview || undefined,
           updatedAt,
-          sessionId: typeof task.runId === "string" ? task.runId : undefined,
+          sessionId: runId || undefined,
           model: typeof task.model === "string" ? task.model : undefined,
           inputTokens: 0,
           outputTokens: 0,
           totalTokens: 0,
+          runStatus: status,
+          runtimeMs: typeof task.runtimeMs === "number" ? task.runtimeMs : undefined,
+          modelApplied: task.modelApplied === true,
+          routing: typeof task.routing === "string" ? task.routing : undefined,
+          complexity: typeof task.complexity === "string" ? task.complexity : undefined,
+          outcome: task.outcome && typeof task.outcome === "object" ? task.outcome : undefined,
+          task: taskStr || undefined,
+          source,
+          openable: task.openable !== false,
         };
       })
       .filter((row): row is NonNullable<typeof row> => Boolean(row));
@@ -100,6 +115,11 @@ export async function loadSubagentMonitor(
       ts: typeof res?.ts === "number" ? res.ts : Date.now(),
       path: "(subagents)",
       count: sessions.length,
+      total: sessions.length,
+      limit: sessions.length,
+      offset: 0,
+      hasMore: false,
+      nextOffset: null,
       defaults: {
         model: null,
         contextTokens: null,

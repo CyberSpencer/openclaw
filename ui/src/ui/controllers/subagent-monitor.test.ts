@@ -52,6 +52,72 @@ describe("loadSubagentMonitor", () => {
     ]);
   });
 
+  it("maps background coding rows into non-openable monitor entries", async () => {
+    const request = vi.fn().mockResolvedValue({
+      ts: 124,
+      tasks: [
+        {
+          runId: "proc-codex",
+          childSessionKey: "process:proc-codex",
+          source: "background-exec",
+          openable: false,
+          label: "Codex background agent",
+          task: 'codex exec --full-auto "fix it"',
+          status: "running",
+          createdAt: 100,
+          startedAt: 110,
+        },
+      ],
+    });
+    const state = createState({
+      client: { request } as unknown as SubagentMonitorState["client"],
+      sessionKey: "agent:main:main",
+    });
+
+    await loadSubagentMonitor(state, { limit: 10 });
+
+    expect(state.subagentMonitorResult?.sessions).toEqual([
+      expect.objectContaining({
+        key: "process:proc-codex",
+        label: "Codex background agent",
+        sessionId: "proc-codex",
+        source: "background-exec",
+        openable: false,
+      }),
+    ]);
+  });
+
+  it("normalizes modelApplied to a boolean when loading subagent rows", async () => {
+    const request = vi.fn().mockResolvedValue({
+      ts: 125,
+      tasks: [
+        {
+          runId: "run-model",
+          childSessionKey: "agent:main:subagent:model",
+          label: "Task model",
+          task: "Check model",
+          status: "running",
+          createdAt: 100,
+          startedAt: 110,
+          modelApplied: true,
+        },
+      ],
+    });
+    const state = createState({
+      client: { request } as unknown as SubagentMonitorState["client"],
+      sessionKey: "agent:main:main",
+    });
+
+    await loadSubagentMonitor(state, { limit: 10 });
+
+    expect(state.subagentMonitorResult?.sessions).toEqual([
+      expect.objectContaining({
+        key: "agent:main:subagent:model",
+        modelApplied: true,
+      }),
+    ]);
+  });
+
   it("falls back to sessions.list when sessions.subagents fails", async () => {
     const request = vi
       .fn()
@@ -60,6 +126,11 @@ describe("loadSubagentMonitor", () => {
         ts: 456,
         path: "(legacy)",
         count: 1,
+        total: 1,
+        limit: 5,
+        offset: 0,
+        hasMore: false,
+        nextOffset: null,
         defaults: { modelProvider: null, model: null, contextTokens: null },
         sessions: [{ key: "agent:main:subagent:legacy", kind: "direct", updatedAt: 200 }],
       });

@@ -92,6 +92,16 @@ function isCardRunning(card: OrchestrationCard): boolean {
   return status === "accepted" || status === "running";
 }
 
+function runStatusDotClass(status: string | undefined): string {
+  if (status === "accepted" || status === "running") {
+    return "active";
+  }
+  if (status === "done") {
+    return "ok";
+  }
+  return "";
+}
+
 function cardPreviewText(card: OrchestrationCard): string {
   const last = card.run?.lastText?.trim();
   if (last) {
@@ -316,9 +326,7 @@ function renderCard(state: OrchestratorHost, card: OrchestrationCard) {
   const running = isCardRunning(card);
   const preview = truncateText(cardPreviewText(card), 160).text;
   const status = cardStatusLabel(card);
-  const statusDotOk = card.run?.status === "done";
-  const statusDotWarn = card.run?.status === "error";
-  const dotClass = statusDotOk ? "ok" : statusDotWarn ? "" : running ? "ok" : "";
+  const dotClass = runStatusDotClass(card.run?.status);
   return html`
     <div
       class="orch-card ${running ? "orch-card--running" : ""}"
@@ -343,7 +351,7 @@ function renderCard(state: OrchestratorHost, card: OrchestrationCard) {
       <div class="orch-card-sub">${preview || "No task yet. Select to write the prompt."}</div>
       <div class="orch-card-meta">
         <span class="orch-badge" title="Agent id">
-          <span class="statusDot ${running ? "ok" : ""}"></span>
+          <span class="statusDot ${running ? "active" : ""}"></span>
           <span class="mono">${card.agentId || "main"}</span>
         </span>
         <span class="orch-badge" title="Run status">
@@ -858,7 +866,7 @@ function renderInspector(
                 <div class="stack" style="margin-top: 10px;">
                   <div class="filters">
                     <span class="pill ${run.status === "error" ? "danger" : ""}">
-                      <span class="statusDot ${run.status === "done" || run.status === "running" ? "ok" : ""}"></span>
+                      <span class="statusDot ${runStatusDotClass(run.status)}"></span>
                       <span>${status}</span>
                     </span>
                     ${
