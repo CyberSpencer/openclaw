@@ -31,6 +31,39 @@ describe("subagent-announce-queue", () => {
     resetAnnounceQueuesForTests();
   });
 
+  it("dedupes repeated announce ids before draining", async () => {
+    const send = vi.fn(async () => {});
+
+    enqueueAnnounce({
+      key: "announce:test:dedupe",
+      item: {
+        announceId: "v1:agent:main:subagent:test:run-1",
+        prompt: "subagent completed",
+        enqueuedAt: 1,
+        sessionKey: "agent:main:telegram:dm:u1",
+      },
+      settings: { mode: "followup", debounceMs: 0 },
+      send,
+    });
+    enqueueAnnounce({
+      key: "announce:test:dedupe",
+      item: {
+        announceId: "v1:agent:main:subagent:test:run-1",
+        prompt: "subagent completed again",
+        enqueuedAt: 2,
+        sessionKey: "agent:main:telegram:dm:u1",
+      },
+      settings: { mode: "followup", debounceMs: 0 },
+      send,
+    });
+
+    await vi.waitFor(() => expect(send).toHaveBeenCalledTimes(1));
+    expect(send.mock.calls[0]?.[0]).toMatchObject({
+      announceId: "v1:agent:main:subagent:test:run-1",
+      prompt: "subagent completed",
+    });
+  });
+
   it("retries failed sends without dropping queued announce items", async () => {
     const sender = createRetryingSend();
 
@@ -51,71 +84,95 @@ describe("subagent-announce-queue", () => {
   });
 
   it("preserves queue summary state across failed summary delivery retries", async () => {
+    vi.useFakeTimers();
+    const previousFast = process.env.OPENCLAW_TEST_FAST;
+    delete process.env.OPENCLAW_TEST_FAST;
     const sender = createRetryingSend();
 
-    enqueueAnnounce({
-      key: "announce:test:summary-retry",
-      item: {
-        prompt: "first result",
-        summaryLine: "first result",
-        enqueuedAt: Date.now(),
-        sessionKey: "agent:main:telegram:dm:u1",
-      },
-      settings: { mode: "followup", debounceMs: 0, cap: 1, dropPolicy: "summarize" },
-      send: sender.send,
-    });
-    enqueueAnnounce({
-      key: "announce:test:summary-retry",
-      item: {
-        prompt: "second result",
-        summaryLine: "second result",
-        enqueuedAt: Date.now(),
-        sessionKey: "agent:main:telegram:dm:u1",
-      },
-      settings: { mode: "followup", debounceMs: 0, cap: 1, dropPolicy: "summarize" },
-      send: sender.send,
-    });
+    try {
+      enqueueAnnounce({
+        key: "announce:test:summary-retry",
+        item: {
+          prompt: "first result",
+          summaryLine: "first result",
+          enqueuedAt: Date.now(),
+          sessionKey: "agent:main:telegram:dm:u1",
+        },
+        settings: { mode: "followup", debounceMs: 10, cap: 1, dropPolicy: "summarize" },
+        send: sender.send,
+      });
+      enqueueAnnounce({
+        key: "announce:test:summary-retry",
+        item: {
+          prompt: "second result",
+          summaryLine: "second result",
+          enqueuedAt: Date.now(),
+          sessionKey: "agent:main:telegram:dm:u1",
+        },
+        settings: { mode: "followup", debounceMs: 10, cap: 1, dropPolicy: "summarize" },
+        send: sender.send,
+      });
 
-    await sender.waitForSecondAttempt;
-    expect(sender.send).toHaveBeenCalledTimes(2);
-    expect(sender.prompts[0]).toContain("[Queue overflow]");
-    expect(sender.prompts[1]).toContain("[Queue overflow]");
+      await vi.advanceTimersByTimeAsync(2_010);
+      await sender.waitForSecondAttempt;
+      expect(sender.send).toHaveBeenCalledTimes(2);
+      expect(sender.prompts[0]).toContain("[Queue overflow]");
+      expect(sender.prompts[1]).toContain("[Queue overflow]");
+    } finally {
+      if (previousFast === undefined) {
+        delete process.env.OPENCLAW_TEST_FAST;
+      } else {
+        process.env.OPENCLAW_TEST_FAST = previousFast;
+      }
+    }
   });
 
   it("retries collect-mode batches without losing queued items", async () => {
+    vi.useFakeTimers();
+    const previousFast = process.env.OPENCLAW_TEST_FAST;
+    delete process.env.OPENCLAW_TEST_FAST;
     const sender = createRetryingSend();
 
-    enqueueAnnounce({
-      key: "announce:test:collect-retry",
-      item: {
-        prompt: "queued item one",
-        enqueuedAt: Date.now(),
-        sessionKey: "agent:main:telegram:dm:u1",
-      },
-      settings: { mode: "collect", debounceMs: 0 },
-      send: sender.send,
-    });
-    enqueueAnnounce({
-      key: "announce:test:collect-retry",
-      item: {
-        prompt: "queued item two",
-        enqueuedAt: Date.now(),
-        sessionKey: "agent:main:telegram:dm:u1",
-      },
-      settings: { mode: "collect", debounceMs: 0 },
-      send: sender.send,
-    });
+    try {
+      enqueueAnnounce({
+        key: "announce:test:collect-retry",
+        item: {
+          prompt: "queued item one",
+          enqueuedAt: Date.now(),
+          sessionKey: "agent:main:telegram:dm:u1",
+        },
+        settings: { mode: "collect", debounceMs: 10 },
+        send: sender.send,
+      });
+      enqueueAnnounce({
+        key: "announce:test:collect-retry",
+        item: {
+          prompt: "queued item two",
+          enqueuedAt: Date.now(),
+          sessionKey: "agent:main:telegram:dm:u1",
+        },
+        settings: { mode: "collect", debounceMs: 10 },
+        send: sender.send,
+      });
 
-    await sender.waitForSecondAttempt;
-    expect(sender.send).toHaveBeenCalledTimes(2);
-    expect(sender.prompts[0]).toContain("Queued #1");
-    expect(sender.prompts[0]).toContain("queued item one");
-    expect(sender.prompts[0]).toContain("Queued #2");
-    expect(sender.prompts[0]).toContain("queued item two");
-    expect(sender.prompts[1]).toContain("Queued #1");
-    expect(sender.prompts[1]).toContain("queued item one");
-    expect(sender.prompts[1]).toContain("Queued #2");
-    expect(sender.prompts[1]).toContain("queued item two");
+      await vi.advanceTimersByTimeAsync(2_010);
+      await sender.waitForSecondAttempt;
+      expect(sender.send).toHaveBeenCalledTimes(2);
+      expect(sender.prompts[0]).toContain("Queued #1");
+      expect(sender.prompts[0]).toContain("queued item one");
+      expect(sender.prompts[0]).toContain("Queued #2");
+      expect(sender.prompts[0]).toContain("queued item two");
+      expect(sender.prompts[1]).toContain("Queued #1");
+      expect(sender.prompts[1]).toContain("queued item one");
+      expect(sender.prompts[1]).toContain("Queued #2");
+      expect(sender.prompts[1]).toContain("queued item two");
+    } finally {
+      if (previousFast === undefined) {
+        delete process.env.OPENCLAW_TEST_FAST;
+      } else {
+        process.env.OPENCLAW_TEST_FAST = previousFast;
+      }
+    }
   });
 
   it("drops a second enqueue with the same announceId (dedup)", async () => {

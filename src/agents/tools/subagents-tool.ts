@@ -34,6 +34,7 @@ import {
   listSubagentRunsForRequester,
   markSubagentRunTerminated,
   markSubagentRunForSteerRestart,
+  resolveSubagentRunStatus,
   replaceSubagentRunAfterSteer,
   type SubagentRunRecord,
 } from "../subagent-registry.js";
@@ -71,11 +72,8 @@ type ResolvedRequesterKey = {
 };
 
 function resolveRunStatus(entry: SubagentRunRecord) {
-  if (!entry.endedAt) {
-    return "running";
-  }
-  const status = entry.outcome?.status ?? "done";
-  if (status === "ok") {
+  const status = resolveSubagentRunStatus(entry);
+  if (status === "done") {
     return "done";
   }
   if (status === "error") {

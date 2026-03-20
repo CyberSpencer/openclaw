@@ -782,6 +782,14 @@
   color: var(--warning, #b07800);
 }
 
+.agent-subagent__runtime {
+  font-size: 10px;
+  color: var(--muted);
+  max-width: 220px;
+  white-space: normal;
+  text-align: right;
+}
+
 /* =============================================
    Terminal Card
    ============================================= */

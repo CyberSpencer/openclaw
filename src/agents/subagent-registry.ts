@@ -65,6 +65,12 @@ const MAX_ANNOUNCE_RETRY_COUNT = 3;
  * succeeded. Guards against stale registry entries surviving gateway restarts.
  */
 const ANNOUNCE_EXPIRY_MS = 5 * 60_000; // 5 minutes
+/**
+ * A run is considered stale if it has no heartbeat for this long.
+ * This lets dead or disconnected subagents show as "stale" instead of silently
+ * staying "running" forever.
+ */
+const SUBAGENT_STATUS_STALE_LEASE_MS = 2 * 60_000;
 type SubagentRunOrphanReason = "missing-session-entry" | "missing-session-id";
 /**
  * Embedded runs can emit transient lifecycle `error` events while provider/model
@@ -72,6 +78,21 @@ type SubagentRunOrphanReason = "missing-session-entry" | "missing-session-id";
  * subsequent lifecycle `start` / `end` can cancel premature failure announces.
  */
 const LIFECYCLE_ERROR_RETRY_GRACE_MS = 15_000;
+
+export function isSubagentRunStale(entry: SubagentRunRecord, now = Date.now()) {
+  if (typeof entry.lastHeartbeatAt !== "number" || typeof entry.endedAt === "number") {
+    return false;
+  }
+  return now - entry.lastHeartbeatAt > SUBAGENT_STATUS_STALE_LEASE_MS;
+}
+
+export function resolveSubagentRunStatus(entry: SubagentRunRecord, now = Date.now()) {
+  if (typeof entry.endedAt === "number") {
+    const status = entry.outcome?.status ?? "ok";
+    return status === "ok" ? "done" : "error";
+  }
+  return isSubagentRunStale(entry, now) ? "stale" : "running";
+}
 
 function resolveAnnounceRetryDelayMs(retryCount: number) {
   const boundedRetryCount = Math.max(0, Math.min(retryCount, 10));
@@ -590,11 +611,17 @@ function ensureListener() {
   listenerStarted = true;
   listenerStop = onAgentEvent((evt) => {
     void (async () => {
-      if (!evt || evt.stream !== "lifecycle") {
+      if (!evt) {
         return;
       }
       const entry = subagentRuns.get(evt.runId);
       if (!entry) {
+        return;
+      }
+      if (typeof evt.ts === "number" && typeof entry.endedAt !== "number") {
+        entry.lastHeartbeatAt = evt.ts;
+      }
+      if (evt.stream !== "lifecycle") {
         return;
       }
       const phase = evt.data?.phase;
@@ -603,6 +630,9 @@ function ensureListener() {
         const startedAt = typeof evt.data?.startedAt === "number" ? evt.data.startedAt : undefined;
         if (startedAt) {
           entry.startedAt = startedAt;
+          if (entry.lastHeartbeatAt == null || entry.lastHeartbeatAt < startedAt) {
+            entry.lastHeartbeatAt = startedAt;
+          }
           persistSubagentRuns();
         }
         return;
@@ -611,7 +641,7 @@ function ensureListener() {
         return;
       }
       const endedAt = typeof evt.data?.endedAt === "number" ? evt.data.endedAt : Date.now();
-      const error = typeof evt.data?.error === "string" ? evt.data.error : undefined;
+      const error = typeof evt.data?.error === "string" ? evt.data?.error : undefined;
       if (phase === "error") {
         schedulePendingLifecycleError({
           runId: evt.runId,
@@ -938,6 +968,7 @@ export function registerSubagentRun(params: {
     runTimeoutSeconds,
     createdAt: now,
     startedAt: now,
+    lastHeartbeatAt: now,
     archiveAtMs,
     cleanupHandled: false,
   });
@@ -977,6 +1008,9 @@ async function waitForSubagentCompletion(runId: string, waitTimeoutMs: number) {
     let mutated = false;
     if (typeof wait.startedAt === "number") {
       entry.startedAt = wait.startedAt;
+      if (typeof entry.lastHeartbeatAt !== "number" || entry.lastHeartbeatAt < wait.startedAt) {
+        entry.lastHeartbeatAt = wait.startedAt;
+      }
       mutated = true;
     }
     if (typeof wait.endedAt === "number") {

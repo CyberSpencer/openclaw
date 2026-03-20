@@ -80,7 +80,7 @@ export type SessionsListResult = {
   sessions: GatewaySessionRow[];
 };
 
-export type SubagentTaskStatus = "running" | "done" | "error";
+export type SubagentTaskStatus = "running" | "stale" | "done" | "error";
 
 export type SubagentTaskRow = {
   taskId: string;

@@ -1,4 +1,15 @@
 import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
+
+vi.mock("@mariozechner/pi-ai", () => ({
+  getOAuthProviders: vi.fn(() => []),
+  getOAuthApiKey: vi.fn(async () => ({
+    access: "test-token",
+    expires: 0,
+    provider: "",
+    refresh: "",
+  })),
+}));
+
 import "./subagent-registry.mocks.shared.js";
 
 vi.mock("../config/config.js", () => ({
@@ -161,5 +172,31 @@ describe("subagent registry nested agent tracking", () => {
 
     expect(countActiveDescendantRuns("agent:main:main")).toBe(1);
     expect(countActiveDescendantRuns("agent:main:subagent:orch-ended")).toBe(1);
+  });
+
+  it("flags stale runs when heartbeat lease expires", () => {
+    const { addSubagentRunForTests, listSubagentRunsForRequester, resolveSubagentRunStatus } =
+      subagentRegistry;
+    const now = Date.now();
+    addSubagentRunForTests({
+      runId: "run-stale",
+      childSessionKey: "agent:main:subagent:stale",
+      requesterSessionKey: "agent:main:main",
+      requesterDisplayKey: "main",
+      task: "stalled",
+      cleanup: "keep",
+      createdAt: now - 10_000,
+      startedAt: now - 10_000,
+      lastHeartbeatAt: now - 10_000,
+      cleanupHandled: false,
+    });
+    const run = listSubagentRunsForRequester("agent:main:main").find(
+      (entry) => entry.runId === "run-stale",
+    );
+    expect(run).toBeDefined();
+    if (!run) {
+      throw new Error("missing run");
+    }
+    expect(resolveSubagentRunStatus(run, now + 200_000)).toBe("stale");
   });
 });

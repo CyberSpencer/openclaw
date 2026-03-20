@@ -1,6 +1,18 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
+
+vi.mock("@mariozechner/pi-ai", () => ({
+  getOAuthProviders: vi.fn(() => []),
+  getOAuthApiKey: vi.fn(async () => ({
+    access: "test-token",
+    expires: 0,
+    provider: "",
+    refresh: "",
+  })),
+}));
+
 import type { SubagentRunRecord } from "../../agents/subagent-registry.js";
 import {
+  formatRunStatus,
   resolveSubagentLabel,
   resolveSubagentTargetFromRuns,
   sortSubagentRuns,
@@ -58,6 +70,23 @@ describe("subagents utils", () => {
       makeRun({ runId: "c", startedAt: 12, createdAt: 20 }),
     ]);
     expect(sorted.map((entry) => entry.runId)).toEqual(["b", "c", "a"]);
+  });
+
+  it("maps stale heartbeat status to display", () => {
+    vi.spyOn(Date, "now").mockReturnValue(NOW_MS);
+    const stale = makeRun({
+      runId: "stale-run",
+      lastHeartbeatAt: NOW_MS - 10_000_000,
+      startedAt: NOW_MS - 10_000_000,
+    });
+    expect(formatRunStatus(stale)).toBe("stale");
+
+    const active = makeRun({
+      runId: "active-run",
+      lastHeartbeatAt: NOW_MS,
+      startedAt: NOW_MS,
+    });
+    expect(formatRunStatus(active)).toBe("running");
   });
 
   it("selects last from sorted runs", () => {

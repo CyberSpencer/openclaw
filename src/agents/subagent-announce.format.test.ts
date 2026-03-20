@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const agentSpy = vi.fn(async () => ({ runId: "run-main", status: "ok" }));
+const sendSpy = vi.fn(async () => ({}));
 const sessionsDeleteSpy = vi.fn();
 const readLatestAssistantReplyMock = vi.fn(async () => "raw subagent reply");
 const embeddedRunMock = {
@@ -10,7 +11,7 @@ const embeddedRunMock = {
   waitForEmbeddedPiRunEnd: vi.fn(async () => true),
 };
 let sessionStore: Record<string, Record<string, unknown>> = {};
-let configOverride: ReturnType<(typeof import("../config/config.js"))["loadConfig"]> = {
+let configOverride: Record<string, unknown> = {
   session: {
     mainKey: "main",
     scope: "per-sender",
@@ -25,6 +26,9 @@ vi.mock("../gateway/call.js", () => ({
     }
     if (typed.method === "agent.wait") {
       return { status: "error", startedAt: 10, endedAt: 20, error: "boom" };
+    }
+    if (typed.method === "send") {
+      return await sendSpy(typed);
     }
     if (typed.method === "sessions.patch") {
       return {};
@@ -41,6 +45,13 @@ vi.mock("./tools/agent-step.js", () => ({
   readLatestAssistantReply: readLatestAssistantReplyMock,
 }));
 
+vi.mock("../runtime.js", () => ({
+  defaultRuntime: {
+    error: vi.fn(),
+    warn: vi.fn(),
+  },
+}));
+
 vi.mock("../config/sessions.js", () => ({
   loadSessionStore: vi.fn(() => sessionStore),
   resolveAgentIdFromSessionKey: () => "main",
@@ -52,17 +63,17 @@ vi.mock("../config/sessions.js", () => ({
 
 vi.mock("./pi-embedded.js", () => embeddedRunMock);
 
-vi.mock("../config/config.js", async (importOriginal) => {
-  const actual = await importOriginal<typeof import("../config/config.js")>();
-  return {
-    ...actual,
-    loadConfig: () => configOverride,
-  };
-});
+vi.mock("../config/config.js", () => ({
+  STATE_DIR: "/tmp/openclaw-test",
+  resolveStateDir: () => "/tmp/openclaw-test",
+  resolveConfigPath: () => "/tmp/openclaw-test/openclaw.json",
+  loadConfig: () => configOverride,
+}));
 
 describe("subagent announce formatting", () => {
   beforeEach(() => {
     agentSpy.mockClear();
+    sendSpy.mockClear();
     sessionsDeleteSpy.mockClear();
     embeddedRunMock.isEmbeddedPiRunActive.mockReset().mockReturnValue(false);
     embeddedRunMock.isEmbeddedPiRunStreaming.mockReset().mockReturnValue(false);
@@ -95,9 +106,15 @@ describe("subagent announce formatting", () => {
 
     expect(agentSpy).toHaveBeenCalled();
     const call = agentSpy.mock.calls[0]?.[0] as {
-      params?: { message?: string; sessionKey?: string };
+      params?: {
+        message?: string;
+        sessionKey?: string;
+        internalEvents?: Array<Record<string, unknown>>;
+        idempotencyKey?: string;
+      };
     };
     const msg = call?.params?.message as string;
+    const event = call?.params?.internalEvents?.[0];
     expect(call?.params?.sessionKey).toBe("agent:main:main");
     expect(msg).toContain("subagent task");
     expect(msg).toContain("failed");
@@ -105,6 +122,18 @@ describe("subagent announce formatting", () => {
     expect(msg).toContain("Findings:");
     expect(msg).toContain("raw subagent reply");
     expect(msg).toContain("Stats:");
+    expect(event).toMatchObject({
+      type: "task_completion",
+      source: "subagent",
+      childSessionKey: "agent:main:subagent:test",
+      taskLabel: "do thing",
+      status: "error",
+      statusLabel: "failed: boom",
+      result: "raw subagent reply",
+    });
+    expect(String(call?.params?.idempotencyKey)).toBe(
+      "announce:v1:agent:main:subagent:test:run-123",
+    );
   });
 
   it("includes success status when outcome is ok", async () => {
@@ -197,10 +226,23 @@ describe("subagent announce formatting", () => {
     expect(didAnnounce).toBe(true);
     await expect.poll(() => agentSpy.mock.calls.length).toBe(1);
 
-    const call = agentSpy.mock.calls[0]?.[0] as { params?: Record<string, unknown> };
+    const call = agentSpy.mock.calls[0]?.[0] as {
+      params?: Record<string, unknown> & { internalEvents?: Array<Record<string, unknown>> };
+    };
     expect(call?.params?.channel).toBe("whatsapp");
     expect(call?.params?.to).toBe("+1555");
     expect(call?.params?.accountId).toBe("kev");
+    expect(String(call?.params?.message)).not.toContain("Findings:");
+    expect(String(call?.params?.message)).toContain(
+      "Use the internal task completion event data above",
+    );
+    expect(call?.params?.internalEvents?.[0]).toMatchObject({
+      type: "task_completion",
+      taskLabel: "do thing",
+      status: "ok",
+      result: "raw subagent reply",
+    });
+    expect(call?.params?.idempotencyKey).toBe("announce:v1:agent:main:subagent:test:run-999");
   });
 
   it("includes threadId when origin has an active topic/thread", async () => {
@@ -359,6 +401,42 @@ describe("subagent announce formatting", () => {
     const call = agentSpy.mock.calls[0]?.[0] as { params?: Record<string, unknown> };
     expect(call?.params?.channel).toBe("whatsapp");
     expect(call?.params?.accountId).toBe("acct-123");
+  });
+
+  it("sends completion-mode direct delivery as final reply text with stable idempotency", async () => {
+    const { runSubagentAnnounceFlow } = await import("./subagent-announce.js");
+    embeddedRunMock.isEmbeddedPiRunActive.mockReturnValue(false);
+    embeddedRunMock.isEmbeddedPiRunStreaming.mockReturnValue(false);
+
+    const didAnnounce = await runSubagentAnnounceFlow({
+      childSessionKey: "agent:main:subagent:cron-test",
+      childRunId: "run-cron-direct",
+      requesterSessionKey: "agent:main:main",
+      requesterOrigin: { channel: "telegram", to: "chat-1", threadId: 77 },
+      requesterDisplayKey: "main",
+      task: "nightly report",
+      timeoutMs: 1000,
+      cleanup: "keep",
+      waitForCompletion: false,
+      startedAt: 10,
+      endedAt: 20,
+      outcome: { status: "ok" },
+      announceType: "cron job",
+      expectsCompletionMessage: true,
+      roundOneReply: "Nightly report complete.",
+    });
+
+    expect(didAnnounce).toBe(true);
+    expect(sendSpy).toHaveBeenCalledTimes(1);
+    const call = sendSpy.mock.calls[0]?.[0] as { params?: Record<string, unknown> };
+    expect(call?.params).toMatchObject({
+      channel: "telegram",
+      to: "chat-1",
+      threadId: "77",
+      message: "Nightly report complete.",
+      idempotencyKey: "announce:v1:agent:main:subagent:cron-test:run-cron-direct",
+    });
+    expect(agentSpy).not.toHaveBeenCalled();
   });
 
   it("retries reading subagent output when early lifecycle completion had no text", async () => {
