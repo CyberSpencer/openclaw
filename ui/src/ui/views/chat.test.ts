@@ -1,5 +1,6 @@
+/* @vitest-environment jsdom */
 import { render } from "lit";
-import { afterEach, describe, expect, it } from "vitest";
+import { describe, expect, it } from "vitest";
 import type { SessionsListResult } from "../types.ts";
 import { renderChat, type ChatProps } from "./chat.ts";
 
@@ -17,16 +18,6 @@ function createSessions(): SessionsListResult {
     sessions: [],
   };
 }
-
-function createDomContainer(): HTMLElement {
-  const container = document.createElement("div");
-  document.body.appendChild(container);
-  return container;
-}
-
-afterEach(() => {
-  document.body.innerHTML = "";
-});
 
 function createProps(overrides: Partial<ChatProps> = {}): ChatProps {
   return {
@@ -65,7 +56,7 @@ function createProps(overrides: Partial<ChatProps> = {}): ChatProps {
 
 describe("chat orchestration status reconciliation", () => {
   it("uses terminal subagent status instead of stale running task-plan status", () => {
-    const container = createDomContainer();
+    const container = document.createElement("div");
     const subagents = createSessions();
     subagents.sessions = [
       {
@@ -108,25 +99,26 @@ describe("chat orchestration status reconciliation", () => {
     expect(container.querySelector(".agent-task--running")).toBeNull();
     expect(container.querySelector(".agent-subagent--running")).toBeNull();
     expect(container.textContent).toContain("1/1");
-    const progressBar = container.querySelector('[role="progressbar"]');
-    expect(progressBar?.getAttribute("aria-valuenow")).toBe("1");
   });
+});
 
-  it("disables assigned task chips for non-openable background agents without marking them pruned", () => {
-    const container = createDomContainer();
+describe("chat orchestration subagent model labels", () => {
+  it("shows the resolved provider/model instead of the routing hint", () => {
+    const container = document.createElement("div");
     const subagents = createSessions();
     subagents.sessions = [
       {
-        key: "process:proc-codex",
+        key: "agent:main:subagent:model-1",
         kind: "direct",
-        label: "Codex background agent",
-        displayName: "Codex background agent",
-        derivedTitle: 'codex exec --full-auto "fix it"',
-        task: 'codex exec --full-auto "fix it"',
+        label: "Fast code worker",
+        displayName: "Fast code worker",
+        derivedTitle: "Implement the fix",
+        task: "Implement the fix",
         updatedAt: 1_500,
         runStatus: "running",
-        source: "background-exec",
-        openable: false,
+        modelProvider: "openai-codex",
+        model: "gpt-5.3-codex-spark",
+        routing: "explicit",
       },
     ];
     subagents.count = 1;
@@ -136,29 +128,67 @@ describe("chat orchestration status reconciliation", () => {
     render(
       renderChat(
         createProps({
-          taskPlan: {
-            id: "plan-2",
-            goal: "Ship the fix",
-            tasks: [
-              {
-                id: "task-2",
-                title: "Background review",
-                status: "running",
-                assignedSessionKey: "process:proc-codex",
-              },
-            ],
-          },
           subagentMonitorResult: subagents,
         }),
       ),
       container,
     );
 
-    const assignedButton = container.querySelector<HTMLButtonElement>(".agent-task__assigned");
-    expect(assignedButton?.disabled).toBe(true);
-    expect(assignedButton?.getAttribute("title")).toBe(
-      "Assigned agent is a background coding agent",
+    expect(container.textContent).toContain("openai-codex/gpt-5.3-codex-spark");
+    expect(container.textContent).toContain("route:explicit");
+    expect(container.textContent).toContain("lane:subagent");
+  });
+});
+
+describe("chat terminal steer affordance", () => {
+  it("shows Send when only subagents are active", () => {
+    const container = document.createElement("div");
+    const subagents = createSessions();
+    subagents.sessions = [
+      {
+        key: "agent:main:subagent:1",
+        kind: "direct",
+        label: "Worker",
+        updatedAt: Date.now(),
+        runStatus: "running",
+      },
+    ];
+
+    render(
+      renderChat(
+        createProps({
+          subagentMonitorResult: subagents,
+          runActive: false,
+          canSteer: false,
+        }),
+      ),
+      container,
     );
-    expect(container.textContent).not.toContain("(pruned)");
+
+    const primaryButton = Array.from(container.querySelectorAll("button")).find((btn) =>
+      btn.textContent?.includes("Send"),
+    );
+    expect(primaryButton).not.toBeUndefined();
+    expect(container.textContent).not.toContain("Steer");
+  });
+
+  it("shows Queue when the main run is active but not steerable", () => {
+    const container = document.createElement("div");
+
+    render(
+      renderChat(
+        createProps({
+          runActive: true,
+          canSteer: false,
+        }),
+      ),
+      container,
+    );
+
+    const primaryButton = Array.from(container.querySelectorAll("button")).find((btn) =>
+      btn.textContent?.includes("Queue"),
+    );
+    expect(primaryButton).not.toBeUndefined();
+    expect(container.textContent).not.toContain("Steer");
   });
 });

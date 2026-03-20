@@ -1,18 +1,8 @@
 import { render } from "lit";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import type { AppViewState } from "../app-view-state.ts";
 import { createDefaultBoard } from "../orchestrator-store.ts";
 import { renderOrchestrator } from "./orchestrator.ts";
-
-function createDomContainer(): HTMLElement {
-  const container = document.createElement("div");
-  document.body.appendChild(container);
-  return container;
-}
-
-afterEach(() => {
-  document.body.innerHTML = "";
-});
 
 function createState(selectedCardId: string): AppViewState {
   const now = Date.now();
@@ -103,7 +93,7 @@ function findCard(container: HTMLElement, title: string): HTMLElement {
 
 describe("orchestrator view", () => {
   it("uses distinct status dots for active and completed runs", async () => {
-    const container = createDomContainer();
+    const container = document.createElement("div");
     render(renderOrchestrator(createState("card-running")), container);
     await Promise.resolve();
 

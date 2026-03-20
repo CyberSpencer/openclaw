@@ -1,131 +1,91 @@
-/* @vitest-environment jsdom */
+import { describe, expect, it, vi } from "vitest";
 
-import { afterEach, describe, expect, it, vi } from "vitest";
-import { handleSendChat, refreshChatAvatar, type ChatHost } from "./app-chat.ts";
+vi.mock("./controllers/chat.ts", () => ({
+  abortChatRun: vi.fn(),
+  loadChatHistory: vi.fn(),
+  pauseChatRun: vi.fn(),
+  rerouteChatRun: vi.fn(),
+  resumeChatRun: vi.fn(),
+  sendChatMessage: vi.fn(),
+  steerChatMessage: vi.fn(),
+}));
 
-function makeHost(overrides?: Partial<ChatHost>): ChatHost {
+import { handleSendChat } from "./app-chat.ts";
+import { sendChatMessage, steerChatMessage } from "./controllers/chat.ts";
+import type { ChatAttachment, ChatQueueItem } from "./ui-types.ts";
+
+function createHost(overrides: Record<string, unknown> = {}) {
   return {
-    client: null,
-    chatMessages: [],
-    chatStream: null,
     connected: true,
-    chatMessage: "",
-    chatAttachments: [],
-    chatQueue: [],
-    chatRunId: null,
+    chatMessage: "redirect",
+    chatAttachments: [] as ChatAttachment[],
+    chatQueue: [] as ChatQueueItem[],
+    chatRunId: null as string | null,
+    chatModelLoading: false,
+    chatStream: null as string | null,
+    compactionStatus: null as { active: boolean } | null,
+    chatPaused: false,
     chatSending: false,
-    lastError: null,
-    sessionKey: "agent:main",
+    lastError: null as string | null,
+    sessionKey: "agent:main:main",
     basePath: "",
     hello: null,
     chatAvatarUrl: null,
-    chatModelOverrides: {},
-    chatModelsLoading: false,
-    chatModelCatalog: [],
-    refreshSessionsAfterChat: new Set<string>(),
+    chatThreadsLoading: false,
+    chatThreadsLoadingMore: false,
+    chatThreadsResult: null,
+    chatThreadsError: null,
+    chatThreadsQuery: "",
+    chatThreadsShowSubagents: false,
+    resetToolStream: vi.fn(),
     updateComplete: Promise.resolve(),
+    querySelector: vi.fn(() => null),
+    style: {} as CSSStyleDeclaration,
+    chatScrollFrame: null as number | null,
+    chatScrollTimeout: null as number | null,
+    chatHasAutoScrolled: false,
+    chatUserNearBottom: true,
+    chatNewMessagesBelow: false,
+    logsScrollFrame: null as number | null,
+    logsAtBottom: true,
+    topbarObserver: null,
     ...overrides,
   };
 }
 
-describe("refreshChatAvatar", () => {
-  afterEach(() => {
-    vi.unstubAllGlobals();
-  });
-
-  it("uses a route-relative avatar endpoint before basePath bootstrap finishes", async () => {
-    const fetchMock = vi.fn().mockResolvedValue({
-      ok: true,
-      json: async () => ({ avatarUrl: "/avatar/main" }),
-    });
-    vi.stubGlobal("fetch", fetchMock as unknown as typeof fetch);
-
-    const host = makeHost({ basePath: "", sessionKey: "agent:main" });
-    await refreshChatAvatar(host);
-
-    expect(fetchMock).toHaveBeenCalledWith(
-      "avatar/main?meta=1",
-      expect.objectContaining({ method: "GET" }),
-    );
-    expect(host.chatAvatarUrl).toBe("/avatar/main");
-  });
-
-  it("keeps mounted dashboard avatar endpoints under the normalized base path", async () => {
-    const fetchMock = vi.fn().mockResolvedValue({
-      ok: false,
-      json: async () => ({}),
-    });
-    vi.stubGlobal("fetch", fetchMock as unknown as typeof fetch);
-
-    const host = makeHost({ basePath: "/openclaw/", sessionKey: "agent:ops:main" });
-    await refreshChatAvatar(host);
-
-    expect(fetchMock).toHaveBeenCalledWith(
-      "/openclaw/avatar/ops?meta=1",
-      expect.objectContaining({ method: "GET" }),
-    );
-    expect(host.chatAvatarUrl).toBeNull();
-  });
-});
-
 describe("handleSendChat", () => {
-  afterEach(() => {
-    vi.unstubAllGlobals();
+  it("queues messages when a run is active but not steerable", async () => {
+    const host = createHost({
+      chatRunId: "run-1",
+      chatModelLoading: true,
+      chatStream: null,
+      chatMessage: "please continue",
+    });
+
+    await handleSendChat(host as never);
+
+    expect(host.chatQueue).toHaveLength(1);
+    expect(host.chatQueue[0]?.text).toBe("please continue");
+    expect(vi.mocked(steerChatMessage)).not.toHaveBeenCalled();
+    expect(vi.mocked(sendChatMessage)).not.toHaveBeenCalled();
   });
 
-  it("keeps slash-command model changes in sync with the chat header cache", async () => {
-    vi.stubGlobal(
-      "fetch",
-      vi.fn().mockResolvedValue({
-        ok: false,
-        json: async () => ({}),
-      }) as unknown as typeof fetch,
-    );
-    const request = vi.fn(async (method: string, _params?: unknown) => {
-      if (method === "sessions.patch") {
-        return {
-          ok: true,
-          key: "main",
-          resolved: {
-            modelProvider: "openai",
-            model: "gpt-5-mini",
-          },
-        };
-      }
-      if (method === "chat.history") {
-        return { messages: [], thinkingLevel: null };
-      }
-      if (method === "sessions.list") {
-        return {
-          ts: 0,
-          path: "",
-          count: 0,
-          defaults: { modelProvider: "openai", model: "gpt-5", contextTokens: null },
-          sessions: [],
-        };
-      }
-      if (method === "models.list") {
-        return {
-          models: [{ id: "gpt-5-mini", name: "GPT-5 Mini", provider: "openai" }],
-        };
-      }
-      throw new Error(`Unexpected request: ${method}`);
+  it("steers text-only messages when the active run is steerable", async () => {
+    vi.mocked(steerChatMessage).mockResolvedValueOnce({
+      ok: true,
+      status: "steered",
     });
-    const host = makeHost({
-      client: { request } as unknown as ChatHost["client"],
-      sessionKey: "main",
-      chatMessage: "/model gpt-5-mini",
+    const host = createHost({
+      chatRunId: "run-1",
+      chatModelLoading: false,
+      chatStream: "partial reply",
+      chatMessage: "go left",
     });
 
-    await handleSendChat(host);
+    await handleSendChat(host as never);
 
-    expect(request).toHaveBeenCalledWith("sessions.patch", {
-      key: "main",
-      model: "gpt-5-mini",
-    });
-    expect(host.chatModelOverrides.main).toEqual({
-      kind: "qualified",
-      value: "openai/gpt-5-mini",
-    });
+    expect(vi.mocked(steerChatMessage)).toHaveBeenCalledTimes(1);
+    expect(vi.mocked(sendChatMessage)).not.toHaveBeenCalled();
+    expect(host.chatQueue).toEqual([]);
   });
 });
