@@ -1,15 +1,143 @@
+import { buildAuthProviderRecovery, DEFAULT_OAUTH_WARN_MS } from "../../agents/auth-health.js";
+import { ensureAuthProfileStore, resolveApiKeyForProfile } from "../../agents/auth-profiles.js";
+import type { AuthProfileFailureReason } from "../../agents/auth-profiles.js";
 import { DEFAULT_PROVIDER } from "../../agents/defaults.js";
-import { buildAllowedModelSet } from "../../agents/model-selection.js";
+import { resolveEnvApiKey } from "../../agents/model-auth.js";
+import { buildAllowedModelSet, normalizeProviderId } from "../../agents/model-selection.js";
 import { loadConfig } from "../../config/config.js";
 import {
   ErrorCodes,
   errorShape,
   formatValidationErrors,
+  validateModelsAuthStatusParams,
   validateModelsListParams,
 } from "../protocol/index.js";
 import type { GatewayRequestHandlers } from "./types.js";
 
+const LIVE_PROBE_PROVIDERS = new Set(["openai-codex"]);
+
+function hasEnvBackedProviderAuth(
+  provider: string,
+  envKey: ReturnType<typeof resolveEnvApiKey>,
+): boolean {
+  if (!envKey?.apiKey) {
+    return false;
+  }
+  if (normalizeProviderId(provider) === "google-vertex") {
+    return true;
+  }
+  return envKey.authMode === "oauth" || envKey.authMode === "token";
+}
+
+function looksLikePermanentAuthFailure(message: string): boolean {
+  const normalized = message.trim().toLowerCase();
+  return (
+    normalized.includes("refresh_token_reused") ||
+    normalized.includes("signing in again") ||
+    normalized.includes("sign in again")
+  );
+}
+
+async function resolveLiveProviderAuthFailure(params: {
+  provider: string;
+  cfg: ReturnType<typeof loadConfig>;
+  store: ReturnType<typeof ensureAuthProfileStore>;
+}): Promise<AuthProfileFailureReason | null> {
+  const profileIds = Object.entries(params.store.profiles)
+    .filter(
+      ([_, credential]) => credential.provider === params.provider && credential.type === "oauth",
+    )
+    .map(([profileId]) => profileId);
+
+  if (profileIds.length === 0) {
+    return null;
+  }
+
+  let sawPermanentAuthFailure = false;
+  for (const profileId of profileIds) {
+    try {
+      const resolved = await resolveApiKeyForProfile({
+        cfg: params.cfg,
+        store: params.store,
+        profileId,
+      });
+      if (resolved?.apiKey) {
+        return null;
+      }
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      if (looksLikePermanentAuthFailure(message)) {
+        sawPermanentAuthFailure = true;
+      }
+    }
+  }
+
+  return sawPermanentAuthFailure ? "auth_permanent" : null;
+}
+
 export const modelsHandlers: GatewayRequestHandlers = {
+  "models.authStatus": async ({ params, respond }) => {
+    if (!validateModelsAuthStatusParams(params)) {
+      respond(
+        false,
+        undefined,
+        errorShape(
+          ErrorCodes.INVALID_REQUEST,
+          `invalid models.authStatus params: ${formatValidationErrors(validateModelsAuthStatusParams.errors)}`,
+        ),
+      );
+      return;
+    }
+    try {
+      const provider = params.provider.trim();
+      const cfg = loadConfig();
+      const store = ensureAuthProfileStore(undefined, { allowKeychainPrompt: false });
+      const envKey = resolveEnvApiKey(provider);
+      const hasEnvAuth = hasEnvBackedProviderAuth(provider, envKey);
+      const status = buildAuthProviderRecovery({
+        provider,
+        cfg,
+        store,
+        warnAfterMs: DEFAULT_OAUTH_WARN_MS,
+        hasEnvOAuth: hasEnvAuth,
+      });
+      if (
+        !hasEnvAuth &&
+        status.status === "ready" &&
+        status.source === "profiles" &&
+        LIVE_PROBE_PROVIDERS.has(provider)
+      ) {
+        const liveFailureReason = await resolveLiveProviderAuthFailure({
+          provider,
+          cfg,
+          store,
+        });
+        if (liveFailureReason) {
+          respond(
+            true,
+            {
+              ...status,
+              status: "disabled",
+              readyProfileCount: 0,
+              blockedProfileCount: Math.min(
+                status.profileCount,
+                status.blockedProfileCount + status.readyProfileCount,
+              ),
+              nextRetryAt: undefined,
+              nextRetryInMs: undefined,
+              nextRetryKind: undefined,
+              nextRetryReason: liveFailureReason,
+            },
+            undefined,
+          );
+          return;
+        }
+      }
+      respond(true, status, undefined);
+    } catch (err) {
+      respond(false, undefined, errorShape(ErrorCodes.UNAVAILABLE, String(err)));
+    }
+  },
   "models.list": async ({ params, respond, context }) => {
     if (!validateModelsListParams(params)) {
       respond(

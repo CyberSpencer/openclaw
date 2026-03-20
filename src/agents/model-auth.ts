@@ -223,7 +223,7 @@ export async function resolveApiKeyForProvider(params: {
     return {
       apiKey: envResolved.apiKey,
       source: envResolved.source,
-      mode: envResolved.source.includes("OAUTH_TOKEN") ? "oauth" : "api-key",
+      mode: envResolved.authMode,
     };
   }
 
@@ -267,31 +267,43 @@ export async function resolveApiKeyForProvider(params: {
   );
 }
 
-export type EnvApiKeyResult = { apiKey: string; source: string };
+export type EnvApiKeyAuthMode = "api-key" | "oauth" | "token";
+export type EnvApiKeyResult = {
+  apiKey: string;
+  source: string;
+  authMode: EnvApiKeyAuthMode;
+};
 export type ModelAuthMode = "api-key" | "oauth" | "token" | "mixed" | "aws-sdk" | "unknown";
 
 export function resolveEnvApiKey(provider: string): EnvApiKeyResult | null {
   const normalized = normalizeProviderId(provider);
   const applied = new Set(getShellEnvAppliedKeys());
-  const pick = (envVar: string): EnvApiKeyResult | null => {
+  const pick = (
+    envVar: string,
+    authMode: EnvApiKeyAuthMode = "api-key",
+  ): EnvApiKeyResult | null => {
     const value = normalizeOptionalSecretInput(process.env[envVar]);
     if (!value) {
       return null;
     }
     const source = applied.has(envVar) ? `shell env: ${envVar}` : `env: ${envVar}`;
-    return { apiKey: value, source };
+    return { apiKey: value, source, authMode };
   };
 
   if (normalized === "github-copilot") {
-    return pick("COPILOT_GITHUB_TOKEN") ?? pick("GH_TOKEN") ?? pick("GITHUB_TOKEN");
+    return (
+      pick("COPILOT_GITHUB_TOKEN", "token") ??
+      pick("GH_TOKEN", "token") ??
+      pick("GITHUB_TOKEN", "token")
+    );
   }
 
   if (normalized === "anthropic") {
-    return pick("ANTHROPIC_OAUTH_TOKEN") ?? pick("ANTHROPIC_API_KEY");
+    return pick("ANTHROPIC_OAUTH_TOKEN", "oauth") ?? pick("ANTHROPIC_API_KEY");
   }
 
   if (normalized === "chutes") {
-    return pick("CHUTES_OAUTH_TOKEN") ?? pick("CHUTES_API_KEY");
+    return pick("CHUTES_OAUTH_TOKEN", "oauth") ?? pick("CHUTES_API_KEY");
   }
 
   if (normalized === "zai") {
@@ -303,7 +315,7 @@ export function resolveEnvApiKey(provider: string): EnvApiKeyResult | null {
     if (!envKey) {
       return null;
     }
-    return { apiKey: envKey, source: "gcloud adc" };
+    return { apiKey: envKey, source: "gcloud adc", authMode: "oauth" };
   }
 
   if (normalized === "opencode") {
@@ -311,7 +323,7 @@ export function resolveEnvApiKey(provider: string): EnvApiKeyResult | null {
   }
 
   if (normalized === "qwen-portal") {
-    return pick("QWEN_OAUTH_TOKEN") ?? pick("QWEN_PORTAL_API_KEY");
+    return pick("QWEN_OAUTH_TOKEN", "oauth") ?? pick("QWEN_PORTAL_API_KEY");
   }
 
   if (normalized === "volcengine" || normalized === "volcengine-plan") {
@@ -322,7 +334,7 @@ export function resolveEnvApiKey(provider: string): EnvApiKeyResult | null {
     return pick("BYTEPLUS_API_KEY");
   }
   if (normalized === "minimax-portal") {
-    return pick("MINIMAX_OAUTH_TOKEN") ?? pick("MINIMAX_API_KEY");
+    return pick("MINIMAX_OAUTH_TOKEN", "oauth") ?? pick("MINIMAX_API_KEY");
   }
 
   if (normalized === "kimi-coding") {
@@ -330,7 +342,7 @@ export function resolveEnvApiKey(provider: string): EnvApiKeyResult | null {
   }
 
   if (normalized === "huggingface") {
-    return pick("HUGGINGFACE_HUB_TOKEN") ?? pick("HF_TOKEN");
+    return pick("HUGGINGFACE_HUB_TOKEN", "token") ?? pick("HF_TOKEN", "token");
   }
 
   const envMap: Record<string, string> = {
@@ -412,7 +424,7 @@ export function resolveModelAuthMode(
 
   const envKey = resolveEnvApiKey(resolved);
   if (envKey?.apiKey) {
-    return envKey.source.includes("OAUTH_TOKEN") ? "oauth" : "api-key";
+    return envKey.authMode;
   }
 
   if (getCustomProviderApiKey(cfg, resolved)) {

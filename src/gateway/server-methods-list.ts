@@ -38,6 +38,7 @@ const BASE_METHODS = [
   "wizard.cancel",
   "wizard.status",
   "talk.mode",
+  "models.authStatus",
   "models.list",
   "agents.list",
   "orchestrator.get",

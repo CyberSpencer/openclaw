@@ -162,10 +162,7 @@ export const resolveAuthLabel = async (
 
   const envKey = resolveEnvApiKey(provider);
   if (envKey) {
-    const isOAuthEnv =
-      envKey.source.includes("ANTHROPIC_OAUTH_TOKEN") ||
-      envKey.source.toLowerCase().includes("oauth");
-    const label = isOAuthEnv ? "OAuth (env)" : maskApiKey(envKey.apiKey);
+    const label = envKey.authMode === "oauth" ? "OAuth (env)" : maskApiKey(envKey.apiKey);
     return { label, source: mode === "verbose" ? envKey.source : "" };
   }
   const customKey = getCustomProviderApiKey(cfg, provider);

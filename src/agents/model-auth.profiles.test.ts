@@ -289,6 +289,7 @@ describe("getApiKeyForModel", () => {
       const resolved = resolveEnvApiKey("anthropic");
       expect(resolved?.apiKey).toBe("sk-ant-test-key");
       expect(resolved?.source).toContain("ANTHROPIC_API_KEY");
+      expect(resolved?.authMode).toBe("api-key");
     });
   });
 
@@ -302,6 +303,7 @@ describe("getApiKeyForModel", () => {
         const resolved = resolveEnvApiKey("huggingface");
         expect(resolved?.apiKey).toBe("hf_hub_xyz");
         expect(resolved?.source).toContain("HUGGINGFACE_HUB_TOKEN");
+        expect(resolved?.authMode).toBe("token");
       },
     );
   });
@@ -316,6 +318,7 @@ describe("getApiKeyForModel", () => {
         const resolved = resolveEnvApiKey("huggingface");
         expect(resolved?.apiKey).toBe("hf_hub_first");
         expect(resolved?.source).toContain("HUGGINGFACE_HUB_TOKEN");
+        expect(resolved?.authMode).toBe("token");
       },
     );
   });
@@ -330,6 +333,7 @@ describe("getApiKeyForModel", () => {
         const resolved = resolveEnvApiKey("huggingface");
         expect(resolved?.apiKey).toBe("hf_abc123");
         expect(resolved?.source).toContain("HF_TOKEN");
+        expect(resolved?.authMode).toBe("token");
       },
     );
   });

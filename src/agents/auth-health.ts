@@ -1,8 +1,10 @@
 import type { OpenClawConfig } from "../config/config.js";
 import {
   type AuthProfileCredential,
+  type AuthProfileFailureReason,
   type AuthProfileStore,
   resolveAuthProfileDisplayLabel,
+  resolveProfileUnusableUntilForDisplay,
 } from "./auth-profiles.js";
 
 export type AuthProfileSource = "store";
@@ -35,6 +37,26 @@ export type AuthHealthSummary = {
   warnAfterMs: number;
   profiles: AuthProfileHealth[];
   providers: AuthProviderHealth[];
+};
+
+export type AuthProviderRecoveryStatus = "ready" | "cooldown" | "disabled" | "expired" | "missing";
+
+export type AuthProviderRecoverySource = "profiles" | "env" | "missing";
+
+export type AuthProviderRecovery = {
+  checkedAt: number;
+  provider: string;
+  status: AuthProviderRecoveryStatus;
+  source: AuthProviderRecoverySource;
+  profileCount: number;
+  readyProfileCount: number;
+  blockedProfileCount: number;
+  expiredProfileCount: number;
+  missingProfileCount: number;
+  nextRetryAt?: number;
+  nextRetryInMs?: number;
+  nextRetryKind?: "cooldown" | "disabled";
+  nextRetryReason?: AuthProfileFailureReason;
 };
 
 export const DEFAULT_OAUTH_WARN_MS = 24 * 60 * 60 * 1000;
@@ -167,8 +189,9 @@ export function buildAuthHealthSummary(params: {
   cfg?: OpenClawConfig;
   warnAfterMs?: number;
   providers?: string[];
+  now?: number;
 }): AuthHealthSummary {
-  const now = Date.now();
+  const now = params.now ?? Date.now();
   const warnAfterMs = params.warnAfterMs ?? DEFAULT_OAUTH_WARN_MS;
   const providerFilter = params.providers
     ? new Set(params.providers.map((p) => p.trim()).filter(Boolean))
@@ -258,4 +281,101 @@ export function buildAuthHealthSummary(params: {
   );
 
   return { now, warnAfterMs, profiles, providers };
+}
+
+export function buildAuthProviderRecovery(params: {
+  provider: string;
+  store: AuthProfileStore;
+  cfg?: OpenClawConfig;
+  warnAfterMs?: number;
+  now?: number;
+  hasEnvOAuth?: boolean;
+}): AuthProviderRecovery {
+  const now = params.now ?? Date.now();
+  const authHealth = buildAuthHealthSummary({
+    store: params.store,
+    cfg: params.cfg,
+    warnAfterMs: params.warnAfterMs,
+    providers: [params.provider],
+    now,
+  });
+  const profiles = authHealth.profiles.filter(
+    (profile) =>
+      profile.provider === params.provider &&
+      (profile.type === "oauth" || profile.type === "token"),
+  );
+
+  let readyProfileCount = 0;
+  let blockedProfileCount = 0;
+  let expiredProfileCount = 0;
+  let missingProfileCount = 0;
+  let nextRetryAt: number | undefined;
+  let nextRetryKind: "cooldown" | "disabled" | undefined;
+  let nextRetryReason: AuthProfileFailureReason | undefined;
+
+  for (const profile of profiles) {
+    const unusableUntil = resolveProfileUnusableUntilForDisplay(params.store, profile.profileId);
+    const usageStats = params.store.usageStats?.[profile.profileId];
+    const isBlocked =
+      typeof unusableUntil === "number" &&
+      Number.isFinite(unusableUntil) &&
+      now < unusableUntil &&
+      profile.status !== "expired" &&
+      profile.status !== "missing";
+    if (isBlocked) {
+      blockedProfileCount += 1;
+      if (nextRetryAt === undefined || unusableUntil < nextRetryAt) {
+        nextRetryAt = unusableUntil;
+        nextRetryKind =
+          typeof usageStats?.disabledUntil === "number" && now < usageStats.disabledUntil
+            ? "disabled"
+            : "cooldown";
+        nextRetryReason = usageStats?.disabledReason;
+      }
+      continue;
+    }
+    if (profile.status === "expired") {
+      expiredProfileCount += 1;
+      continue;
+    }
+    if (profile.status === "missing") {
+      missingProfileCount += 1;
+      continue;
+    }
+    readyProfileCount += 1;
+  }
+
+  const source: AuthProviderRecoverySource = params.hasEnvOAuth
+    ? "env"
+    : profiles.length > 0
+      ? "profiles"
+      : "missing";
+  const status: AuthProviderRecoveryStatus =
+    params.hasEnvOAuth || readyProfileCount > 0
+      ? "ready"
+      : nextRetryAt !== undefined
+        ? (nextRetryKind ?? "cooldown")
+        : expiredProfileCount > 0
+          ? "expired"
+          : "missing";
+
+  return {
+    checkedAt: now,
+    provider: params.provider,
+    status,
+    source,
+    profileCount: profiles.length,
+    readyProfileCount,
+    blockedProfileCount,
+    expiredProfileCount,
+    missingProfileCount,
+    ...(nextRetryAt !== undefined
+      ? {
+          nextRetryAt,
+          nextRetryInMs: Math.max(0, nextRetryAt - now),
+          nextRetryKind,
+          nextRetryReason,
+        }
+      : {}),
+  };
 }

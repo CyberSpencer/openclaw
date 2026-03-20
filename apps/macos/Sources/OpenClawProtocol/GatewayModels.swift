@@ -2302,6 +2302,82 @@ public struct ModelChoice: Codable, Sendable {
     }
 }
 
+public struct ModelsAuthStatusParams: Codable, Sendable {
+    public let provider: String
+
+    public init(
+        provider: String)
+    {
+        self.provider = provider
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case provider
+    }
+}
+
+public struct ModelsAuthStatusResult: Codable, Sendable {
+    public let checkedat: Int
+    public let provider: String
+    public let status: AnyCodable
+    public let source: AnyCodable
+    public let profilecount: Int
+    public let readyprofilecount: Int
+    public let blockedprofilecount: Int
+    public let expiredprofilecount: Int
+    public let missingprofilecount: Int
+    public let nextretryat: Int?
+    public let nextretryinms: Int?
+    public let nextretrykind: AnyCodable?
+    public let nextretryreason: AnyCodable?
+
+    public init(
+        checkedat: Int,
+        provider: String,
+        status: AnyCodable,
+        source: AnyCodable,
+        profilecount: Int,
+        readyprofilecount: Int,
+        blockedprofilecount: Int,
+        expiredprofilecount: Int,
+        missingprofilecount: Int,
+        nextretryat: Int?,
+        nextretryinms: Int?,
+        nextretrykind: AnyCodable?,
+        nextretryreason: AnyCodable?)
+    {
+        self.checkedat = checkedat
+        self.provider = provider
+        self.status = status
+        self.source = source
+        self.profilecount = profilecount
+        self.readyprofilecount = readyprofilecount
+        self.blockedprofilecount = blockedprofilecount
+        self.expiredprofilecount = expiredprofilecount
+        self.missingprofilecount = missingprofilecount
+        self.nextretryat = nextretryat
+        self.nextretryinms = nextretryinms
+        self.nextretrykind = nextretrykind
+        self.nextretryreason = nextretryreason
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case checkedat = "checkedAt"
+        case provider
+        case status
+        case source
+        case profilecount = "profileCount"
+        case readyprofilecount = "readyProfileCount"
+        case blockedprofilecount = "blockedProfileCount"
+        case expiredprofilecount = "expiredProfileCount"
+        case missingprofilecount = "missingProfileCount"
+        case nextretryat = "nextRetryAt"
+        case nextretryinms = "nextRetryInMs"
+        case nextretrykind = "nextRetryKind"
+        case nextretryreason = "nextRetryReason"
+    }
+}
+
 public struct ModelsListParams: Codable, Sendable {}
 
 public struct ModelsListResult: Codable, Sendable {
