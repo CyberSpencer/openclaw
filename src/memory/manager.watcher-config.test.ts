@@ -21,6 +21,11 @@ vi.mock("./sqlite-vec.js", () => ({
   loadSqliteVecExtension: async () => ({ ok: false, error: "sqlite-vec disabled in tests" }),
 }));
 
+vi.mock("@mariozechner/pi-ai", () => ({
+  getOAuthApiKey: () => undefined,
+  getOAuthProviders: () => [],
+}));
+
 vi.mock("./embeddings.js", () => ({
   createEmbeddingProvider: async () => ({
     requestedProvider: "openai",
@@ -37,6 +42,10 @@ describe("memory watcher config", () => {
   let manager: MemoryIndexManager | null = null;
   let workspaceDir = "";
   let extraDir = "";
+  let extraFile = "";
+  let pendingDir = "";
+  let pendingFile = "";
+  let missingDottedDir = "";
 
   afterEach(async () => {
     watchMock.mockClear();
@@ -48,15 +57,25 @@ describe("memory watcher config", () => {
       await fs.rm(workspaceDir, { recursive: true, force: true });
       workspaceDir = "";
       extraDir = "";
+      extraFile = "";
+      pendingDir = "";
+      pendingFile = "";
+      missingDottedDir = "";
     }
   });
 
-  it("watches markdown globs and ignores dependency directories", async () => {
+  it("watches markdown directories and files without chokidar globs", async () => {
     workspaceDir = await fs.mkdtemp(path.join(os.tmpdir(), "openclaw-memory-watch-"));
     extraDir = path.join(workspaceDir, "extra");
+    extraFile = path.join(workspaceDir, "standalone.md");
+    pendingDir = path.join(workspaceDir, "pending");
+    pendingFile = path.join(pendingDir, "later.md");
+    missingDottedDir = path.join(workspaceDir, "docs.v2");
     await fs.mkdir(path.join(workspaceDir, "memory"), { recursive: true });
     await fs.mkdir(extraDir, { recursive: true });
+    await fs.mkdir(pendingDir, { recursive: true });
     await fs.writeFile(path.join(extraDir, "notes.md"), "hello");
+    await fs.writeFile(extraFile, "standalone");
 
     const cfg = {
       agents: {
@@ -68,7 +87,7 @@ describe("memory watcher config", () => {
             store: { path: path.join(workspaceDir, "index.sqlite"), vector: { enabled: false } },
             sync: { watch: true, watchDebounceMs: 25, onSessionStart: false, onSearch: false },
             query: { minScore: 0, hybrid: { enabled: false } },
-            extraPaths: [extraDir],
+            extraPaths: [extraDir, extraFile, pendingFile, missingDottedDir],
           },
         },
         list: [{ id: "main", default: true }],
@@ -91,19 +110,34 @@ describe("memory watcher config", () => {
       expect.arrayContaining([
         path.join(workspaceDir, "MEMORY.md"),
         path.join(workspaceDir, "memory.md"),
-        path.join(workspaceDir, "memory", "**", "*.md"),
-        path.join(extraDir, "**", "*.md"),
+        path.join(workspaceDir, "memory"),
+        extraDir,
+        extraFile,
+        pendingDir,
+        missingDottedDir,
       ]),
     );
     expect(options.ignoreInitial).toBe(true);
     expect(options.awaitWriteFinish).toEqual({ stabilityThreshold: 25, pollInterval: 100 });
 
-    const ignored = options.ignored as ((watchPath: string) => boolean) | undefined;
+    const ignored = options.ignored as
+      | ((
+          watchPath: string,
+          stats?: { isFile?: () => boolean; isDirectory?: () => boolean },
+        ) => boolean)
+      | undefined;
     expect(ignored).toBeTypeOf("function");
     expect(ignored?.(path.join(workspaceDir, "memory", "node_modules", "pkg", "index.md"))).toBe(
       true,
     );
     expect(ignored?.(path.join(workspaceDir, "memory", ".venv", "lib", "python.md"))).toBe(true);
+    expect(
+      ignored?.(path.join(workspaceDir, "memory", "project", "notes.txt"), {
+        isFile: () => true,
+        isDirectory: () => false,
+      }),
+    ).toBe(true);
     expect(ignored?.(path.join(workspaceDir, "memory", "project", "notes.md"))).toBe(false);
+    expect(ignored?.(path.join(workspaceDir, "memory", "project.v1"))).toBe(false);
   });
 });

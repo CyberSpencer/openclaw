@@ -33,6 +33,7 @@ import {
   type OpenAiEmbeddingClient,
   type VoyageEmbeddingClient,
 } from "./embeddings.js";
+import { isFileMissingError } from "./fs-utils.js";
 import { bm25RankToScore, buildFtsQuery, mergeHybridResults } from "./hybrid.js";
 import {
   buildFileEntry,
@@ -88,6 +89,11 @@ type SessionFileEntry = {
 
 type MemorySearchCandidate = MemorySearchResult & { id: string };
 
+type MemoryWatchStats = {
+  isFile?: (() => boolean) | undefined;
+  isDirectory?: (() => boolean) | undefined;
+};
+
 type MemorySyncProgressState = {
   completed: number;
   total: number;
@@ -118,6 +124,45 @@ const SQLITE_FALLBACK_DEPRECATION_TS = Date.parse("2026-03-02T00:00:00Z");
 const SQLITE_FALLBACK_DEPRECATION_LABEL = "March 2, 2026";
 
 const log = createSubsystemLogger("memory");
+
+const IGNORED_MEMORY_WATCH_DIR_NAMES = new Set([
+  ".git",
+  "node_modules",
+  ".pnpm-store",
+  ".venv",
+  "venv",
+  ".tox",
+  "__pycache__",
+]);
+
+function isMarkdownMemoryWatchPath(watchPath: string): boolean {
+  const lowerPath = path.normalize(watchPath).toLowerCase();
+  const baseName = path.basename(lowerPath);
+  return baseName === "memory.md" || lowerPath.endsWith(".md");
+}
+
+function shouldIgnoreMemoryWatchPath(watchPath: string, stats?: MemoryWatchStats): boolean {
+  const normalized = path.normalize(watchPath);
+  const parts = normalized.split(path.sep).map((segment) => segment.trim().toLowerCase());
+  if (parts.some((segment) => IGNORED_MEMORY_WATCH_DIR_NAMES.has(segment))) {
+    return true;
+  }
+  if (stats?.isDirectory?.()) {
+    return false;
+  }
+  if (stats?.isFile?.()) {
+    return !isMarkdownMemoryWatchPath(normalized);
+  }
+  const lowerPath = normalized.toLowerCase();
+  if (lowerPath.endsWith(".md")) {
+    return false;
+  }
+  return false;
+}
+
+function shouldHandleMemoryWatchEvent(watchPath: string): boolean {
+  return !shouldIgnoreMemoryWatchPath(watchPath) && isMarkdownMemoryWatchPath(watchPath);
+}
 
 const INDEX_CACHE = new Map<string, MemoryIndexManager>();
 const INDEX_CACHE_PENDING = new Map<string, Promise<MemoryIndexManager | null>>();
@@ -1709,30 +1754,48 @@ export class MemoryIndexManager {
     if (!this.sources.has("memory") || !this.settings.sync.watch || this.watcher) {
       return;
     }
-    const additionalPaths = normalizeExtraMemoryPaths(this.workspaceDir, this.settings.extraPaths)
-      .map((entry) => {
-        try {
-          const stat = fsSync.lstatSync(entry);
-          return stat.isSymbolicLink() ? null : entry;
-        } catch {
-          return null;
-        }
-      })
-      .filter((entry): entry is string => Boolean(entry));
     const watchPaths = new Set<string>([
       path.join(this.workspaceDir, "MEMORY.md"),
       path.join(this.workspaceDir, "memory.md"),
       path.join(this.workspaceDir, "memory"),
-      ...additionalPaths,
     ]);
+    const additionalPaths = normalizeExtraMemoryPaths(this.workspaceDir, this.settings.extraPaths);
+    for (const entry of additionalPaths) {
+      const normalizedEntry = path.normalize(entry);
+      const shouldWatchParentDir = isMarkdownMemoryWatchPath(normalizedEntry);
+      try {
+        const stat = fsSync.lstatSync(normalizedEntry);
+        if (stat.isSymbolicLink()) {
+          continue;
+        }
+        if (stat.isDirectory()) {
+          watchPaths.add(normalizedEntry);
+          continue;
+        }
+        if (stat.isFile() && shouldWatchParentDir) {
+          watchPaths.add(normalizedEntry);
+        }
+      } catch (err) {
+        if (isFileMissingError(err)) {
+          watchPaths.add(shouldWatchParentDir ? path.dirname(normalizedEntry) : normalizedEntry);
+          continue;
+        }
+        // Skip unreadable additional paths.
+      }
+    }
     this.watcher = chokidar.watch(Array.from(watchPaths), {
       ignoreInitial: true,
+      ignored: (watchPath, stats) =>
+        shouldIgnoreMemoryWatchPath(String(watchPath), stats as MemoryWatchStats),
       awaitWriteFinish: {
         stabilityThreshold: this.settings.sync.watchDebounceMs,
         pollInterval: 100,
       },
     });
-    const markDirty = () => {
+    const markDirty = (watchPath?: string) => {
+      if (watchPath && !shouldHandleMemoryWatchEvent(String(watchPath))) {
+        return;
+      }
       this.dirty = true;
       this.scheduleWatchSync();
     };
