@@ -3,6 +3,7 @@ import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { FailoverError } from "../../agents/failover-error.js";
 import type { SessionEntry } from "../../config/sessions.js";
 import { loadSessionStore, saveSessionStore } from "../../config/sessions.js";
 import { onAgentEvent } from "../../infra/agent-events.js";
@@ -1415,26 +1416,8 @@ describe("runReplyAgent response usage footer", () => {
 });
 
 describe("runReplyAgent transient HTTP retry", () => {
-  it("retries once after transient 521 HTML failure and then succeeds", async () => {
-    vi.useFakeTimers();
-    runEmbeddedPiAgentMock
-      .mockRejectedValueOnce(
-        new Error(
-          `521 <!DOCTYPE html><html lang="en-US"><head><title>Web server is down</title></head><body>Cloudflare</body></html>`,
-        ),
-      )
-      .mockResolvedValueOnce({
-        payloads: [{ text: "Recovered response" }],
-        meta: {},
-      });
-
-    const typing = createMockTypingController();
-    const sessionCtx = {
-      Provider: "telegram",
-      MessageSid: "msg",
-    } as unknown as TemplateContext;
-    const resolvedQueue = { mode: "interrupt" } as unknown as QueueSettings;
-    const followupRun = {
+  function buildTransientRetryFollowupRun(): FollowupRun {
+    return {
       prompt: "hello",
       summaryLine: "hello",
       enqueuedAt: Date.now(),
@@ -1460,6 +1443,15 @@ describe("runReplyAgent transient HTTP retry", () => {
         blockReplyBreak: "message_end",
       },
     } as unknown as FollowupRun;
+  }
+
+  async function runTransientRetryTurn(followupRun: FollowupRun) {
+    const typing = createMockTypingController();
+    const sessionCtx = {
+      Provider: "telegram",
+      MessageSid: "msg",
+    } as unknown as TemplateContext;
+    const resolvedQueue = { mode: "interrupt" } as unknown as QueueSettings;
 
     const runPromise = runReplyAgent({
       commandBody: "hello",
@@ -1482,11 +1474,76 @@ describe("runReplyAgent transient HTTP retry", () => {
     });
 
     await vi.advanceTimersByTimeAsync(2_500);
-    const result = await runPromise;
+    return runPromise;
+  }
+
+  it("retries once after transient 521 HTML failure and then succeeds", async () => {
+    vi.useFakeTimers();
+    runEmbeddedPiAgentMock
+      .mockRejectedValueOnce(
+        new Error(
+          `521 <!DOCTYPE html><html lang="en-US"><head><title>Web server is down</title></head><body>Cloudflare</body></html>`,
+        ),
+      )
+      .mockResolvedValueOnce({
+        payloads: [{ text: "Recovered response" }],
+        meta: {},
+      });
+
+    const result = await runTransientRetryTurn(buildTransientRetryFollowupRun());
 
     expect(runEmbeddedPiAgentMock).toHaveBeenCalledTimes(2);
     expect(runtimeErrorMock).toHaveBeenCalledWith(
-      expect.stringContaining("Transient HTTP provider error before reply"),
+      expect.stringContaining("Transient provider error before reply"),
+    );
+
+    const payload = Array.isArray(result) ? result[0] : result;
+    expect(payload?.text).toContain("Recovered response");
+  });
+
+  it("retries once after a normalized Codex server_error failover and then succeeds", async () => {
+    vi.useFakeTimers();
+    runEmbeddedPiAgentMock
+      .mockRejectedValueOnce(
+        new FailoverError(
+          "LLM error server_error: An error occurred while processing your request. Please try again later.",
+          { reason: "timeout" },
+        ),
+      )
+      .mockResolvedValueOnce({
+        payloads: [{ text: "Recovered response" }],
+        meta: {},
+      });
+
+    const result = await runTransientRetryTurn(buildTransientRetryFollowupRun());
+
+    expect(runEmbeddedPiAgentMock).toHaveBeenCalledTimes(2);
+    expect(runtimeErrorMock).toHaveBeenCalledWith(
+      expect.stringContaining("Transient provider error before reply"),
+    );
+
+    const payload = Array.isArray(result) ? result[0] : result;
+    expect(payload?.text).toContain("Recovered response");
+  });
+
+  it("retries once after a raw normalized Codex server_error and then succeeds", async () => {
+    vi.useFakeTimers();
+    runEmbeddedPiAgentMock
+      .mockRejectedValueOnce(
+        new Error(
+          "LLM error server_error: An error occurred while processing your request. Please try again later.",
+        ),
+      )
+      .mockResolvedValueOnce({
+        payloads: [{ text: "Recovered response" }],
+        meta: {},
+      });
+
+    const result = await runTransientRetryTurn(buildTransientRetryFollowupRun());
+
+    expect(runEmbeddedPiAgentMock).toHaveBeenCalledTimes(2);
+    expect(runtimeErrorMock).toHaveBeenCalledWith(
+      expect.stringContaining("Transient provider error before reply"),
     );
 
     const payload = Array.isArray(result) ? result[0] : result;
