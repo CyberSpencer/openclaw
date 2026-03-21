@@ -1,5 +1,5 @@
 import { clampPercent } from "./provider-usage.shared.js";
-import type { ProviderUsageSnapshot, UsageSummary, UsageWindow } from "./provider-usage.types.js";
+import type { ProviderUsageSnapshot, UsageSummary } from "./provider-usage.types.js";
 
 function formatResetRemaining(targetMs?: number, now?: number): string | null {
   if (!targetMs) {
@@ -33,11 +33,15 @@ function formatResetRemaining(targetMs?: number, now?: number): string | null {
   }).format(new Date(targetMs));
 }
 
-function formatWindowShort(window: UsageWindow, now?: number): string {
-  const remaining = clampPercent(100 - window.usedPercent);
-  const reset = formatResetRemaining(window.resetAt, now);
-  const resetSuffix = reset ? ` ⏱${reset}` : "";
-  return `${remaining.toFixed(0)}% left (${window.label}${resetSuffix})`;
+function formatUsageNotes(snapshot: ProviderUsageSnapshot): string[] {
+  return (snapshot.notes ?? []).map((note) => note.trim()).filter(Boolean);
+}
+
+export function resolveUsageSummaryMaxWindows(snapshot: ProviderUsageSnapshot): number {
+  if (snapshot.provider === "anthropic") {
+    return Math.min(Math.max(snapshot.windows.length, 1), 4);
+  }
+  return 2;
 }
 
 export function formatUsageWindowSummary(
@@ -47,7 +51,7 @@ export function formatUsageWindowSummary(
   if (snapshot.error) {
     return null;
   }
-  if (snapshot.windows.length === 0) {
+  if (snapshot.windows.length === 0 && formatUsageNotes(snapshot).length === 0) {
     return null;
   }
   const now = opts?.now ?? Date.now();
@@ -63,6 +67,7 @@ export function formatUsageWindowSummary(
     const resetSuffix = reset ? ` ⏱${reset}` : "";
     return `${window.label} ${remaining.toFixed(0)}% left${resetSuffix}`;
   });
+  parts.push(...formatUsageNotes(snapshot));
   return parts.join(" · ");
 }
 
@@ -81,7 +86,14 @@ export function formatUsageSummaryLine(
     const window = entry.windows.reduce((best, next) =>
       next.usedPercent > best.usedPercent ? next : best,
     );
-    return `${entry.displayName} ${formatWindowShort(window, opts?.now)}`;
+    const notes = formatUsageNotes(entry);
+    const remaining = clampPercent(100 - window.usedPercent);
+    const reset = formatResetRemaining(window.resetAt, opts?.now);
+    const resetSuffix = reset ? ` ⏱${reset}` : "";
+    const note = notes[0];
+    const noteSuffix = note ? `, ${note}` : "";
+    const detail = `${remaining.toFixed(0)}% left (${window.label}${resetSuffix}${noteSuffix})`;
+    return `${entry.displayName} ${detail}`;
   });
   return `📊 Usage: ${parts.join(" · ")}`;
 }
@@ -99,7 +111,11 @@ export function formatUsageReportLines(summary: UsageSummary, opts?: { now?: num
       continue;
     }
     if (entry.windows.length === 0) {
-      lines.push(`  ${entry.displayName}${planSuffix}: no data`);
+      const notes = formatUsageNotes(entry);
+      lines.push(`  ${entry.displayName}${planSuffix}: ${notes[0] ?? "no data"}`);
+      for (const note of notes.slice(1)) {
+        lines.push(`    note: ${note}`);
+      }
       continue;
     }
     lines.push(`  ${entry.displayName}${planSuffix}`);
@@ -108,6 +124,9 @@ export function formatUsageReportLines(summary: UsageSummary, opts?: { now?: num
       const reset = formatResetRemaining(window.resetAt, opts?.now);
       const resetSuffix = reset ? ` · resets ${reset}` : "";
       lines.push(`    ${window.label}: ${remaining.toFixed(0)}% left${resetSuffix}`);
+    }
+    for (const note of formatUsageNotes(entry)) {
+      lines.push(`    note: ${note}`);
     }
   }
   return lines;

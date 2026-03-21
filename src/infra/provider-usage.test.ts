@@ -1,4 +1,5 @@
 import fs from "node:fs";
+import os from "node:os";
 import path from "node:path";
 import { describe, expect, it, vi } from "vitest";
 import { withTempHome } from "../../test/helpers/temp-home.js";
@@ -335,6 +336,47 @@ describe("provider usage loading", () => {
       const claude = expectSingleAnthropicProvider(summary);
       expect(claude?.windows.some((w) => w.label === "5h")).toBe(true);
       expect(claude?.windows.some((w) => w.label === "Week")).toBe(true);
+      expect(claude?.windows.some((w) => w.label === "Opus week")).toBe(true);
+      expect(claude?.notes).toEqual(["via claude.ai web session"]);
+    });
+  });
+
+  it("surfaces router suppression notes alongside Anthropic usage", async () => {
+    const runtimeDir = fs.mkdtempSync(
+      path.join(fs.realpathSync(os.tmpdir()), "openclaw-usage-runtime-"),
+    );
+    fs.mkdirSync(path.join(runtimeDir, "tmp"), { recursive: true });
+    fs.writeFileSync(
+      path.join(runtimeDir, "tmp", "router-anthropic-suppression.json"),
+      JSON.stringify({
+        blanket: null,
+        per_model: {
+          "anthropic/claude-sonnet-4-6": {
+            reason: "rate_limit",
+            suppressed_until: Math.floor(usageNow / 1000) + 45 * 60,
+          },
+        },
+      }),
+      "utf8",
+    );
+
+    const mockFetch = createProviderUsageFetch(async (url) => {
+      if (url.includes("api.anthropic.com/api/oauth/usage")) {
+        return makeResponse(200, {
+          five_hour: { utilization: 20, resets_at: "2026-01-07T01:00:00Z" },
+          seven_day_sonnet: { utilization: 50 },
+        });
+      }
+      return makeResponse(404, "not found");
+    });
+
+    await withEnvAsync({ OPENCLAW_RUNTIME_DIR: runtimeDir }, async () => {
+      const summary = await loadUsageWithAuth(
+        [{ provider: "anthropic", token: "token-1" }],
+        mockFetch,
+      );
+      const claude = expectSingleAnthropicProvider(summary);
+      expect(claude?.notes).toContain("Sonnet paused 45m (rate_limit)");
     });
   });
 

@@ -10,6 +10,7 @@ export type ProviderUsageSnapshot = {
   windows: UsageWindow[];
   plan?: string;
   error?: string;
+  notes?: string[];
 };
 
 export type UsageSummary = {
