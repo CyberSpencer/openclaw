@@ -73,6 +73,7 @@ describe("gateway sessions.subagents contract", () => {
             assignedSessionKey: "agent:main:subagent:1",
             status: "running",
             model: "openai-codex/gpt-5.3-codex",
+            modelProvider: "openai-codex",
             modelApplied: true,
             routing: "explicit",
             complexity: "complex",

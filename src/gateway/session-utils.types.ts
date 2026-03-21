@@ -97,6 +97,7 @@ export type SubagentTaskRow = {
   status: SubagentTaskStatus;
   cleanup: "delete" | "keep";
   model?: string;
+  modelProvider?: string;
   modelApplied?: boolean;
   routing?: "explicit" | "simple-kimi" | "configured-default";
   complexity?: "simple" | "complex";

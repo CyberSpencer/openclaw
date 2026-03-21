@@ -332,11 +332,13 @@ export async function spawnSubagentDirect(
   const childDepth = callerDepth + 1;
   const spawnedByKey = requesterInternalKey;
   const targetAgentConfig = resolveAgentConfig(cfg, targetAgentId);
-  const resolvedModel = resolveSubagentSpawnModelSelection({
+  const resolvedModelSelection = resolveSubagentSpawnModelSelection({
     cfg,
     agentId: targetAgentId,
     modelOverride,
   });
+  const resolvedModel = resolvedModelSelection.model;
+  const resolvedModelRoute = resolvedModelSelection.route;
 
   const resolvedThinkingDefaultRaw =
     readStringParam(targetAgentConfig?.subagents ?? {}, "thinking") ??
@@ -539,6 +541,8 @@ export async function spawnSubagentDirect(
     cleanup,
     label: label || undefined,
     model: resolvedModel,
+    modelApplied: modelApplied || false,
+    routing: resolvedModelRoute,
     runTimeoutSeconds,
     expectsCompletionMessage,
     spawnMode,

@@ -903,6 +903,9 @@ export function registerSubagentRun(params: {
   cleanup: "delete" | "keep";
   label?: string;
   model?: string;
+  modelApplied?: boolean;
+  routing?: string;
+  complexity?: string;
   runTimeoutSeconds?: number;
   expectsCompletionMessage?: boolean;
   spawnMode?: "run" | "session";
@@ -929,6 +932,9 @@ export function registerSubagentRun(params: {
     spawnMode,
     label: params.label,
     model: params.model,
+    modelApplied: params.modelApplied,
+    routing: params.routing,
+    complexity: params.complexity,
     runTimeoutSeconds,
     createdAt: now,
     startedAt: now,

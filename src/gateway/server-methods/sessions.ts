@@ -458,6 +458,8 @@ export const sessionsHandlers: GatewayRequestHandlers = {
           typeof entry.startedAt === "number"
             ? Math.max(0, (entry.endedAt ?? Date.now()) - entry.startedAt)
             : undefined;
+        const resolvedModel = typeof entry.model === "string" ? entry.model.trim() : "";
+        const slashIndex = resolvedModel.indexOf("/");
         return {
           taskId: entry.runId,
           title: entry.label || entry.task || "subagent task",
@@ -472,7 +474,9 @@ export const sessionsHandlers: GatewayRequestHandlers = {
           label: entry.label,
           task: entry.task,
           cleanup: entry.cleanup,
-          model: entry.model,
+          model: resolvedModel || undefined,
+          modelProvider:
+            slashIndex > 0 ? resolvedModel.slice(0, Math.max(0, slashIndex)) : undefined,
           modelApplied: entry.modelApplied,
           routing: entry.routing,
           complexity: entry.complexity,

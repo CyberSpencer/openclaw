@@ -1,3 +1,6 @@
+import { existsSync, readFileSync } from "node:fs";
+import { homedir } from "node:os";
+import { join } from "node:path";
 import type { OpenClawConfig } from "../config/config.js";
 import { resolveAgentModelPrimaryValue, toAgentModelListLike } from "../config/model-input.js";
 import { createSubsystemLogger } from "../logging/subsystem.js";
@@ -28,6 +31,93 @@ const ANTHROPIC_MODEL_ALIASES: Record<string, string> = {
   "sonnet-4.5": "claude-sonnet-4-5",
 };
 const OPENAI_CODEX_OAUTH_MODEL_PREFIXES = ["gpt-5.3-codex"] as const;
+
+// ---------------------------------------------------------------------------
+// Anthropic routing lanes
+// ---------------------------------------------------------------------------
+
+/**
+ * Model-level routing lanes for Anthropic provider.
+ *
+ * Sonnet  = standard/general purpose
+ * Haiku   = fast utility tasks (cheap, low-latency)
+ * Nemotron= private/local cheap default (DGX Spark / Ollama)
+ * Opus    = selective premium (complex reasoning tasks)
+ */
+export type AnthropicModelLane =
+  | "anthropic-sonnet"
+  | "anthropic-haiku"
+  | "anthropic-nemotron"
+  | "anthropic-opus";
+
+/**
+ * Fallback model used when Sonnet is rate-limited.
+ * Routes to the local Spark/Ollama Nemotron instance.
+ */
+export const ANTHROPIC_RATE_LIMIT_FALLBACK_MODEL = "ollama/nemotron-3-nano:30b";
+
+/** Classify an anthropic model string into a routing lane. */
+export function resolveAnthropicLane(modelRef: string): AnthropicModelLane | null {
+  const lower = modelRef.toLowerCase();
+  if (!lower.includes("claude") && !lower.includes("anthropic")) {
+    return null;
+  }
+  if (lower.includes("haiku")) {
+    return "anthropic-haiku";
+  }
+  if (lower.includes("opus")) {
+    return "anthropic-opus";
+  }
+  if (lower.includes("nemotron") || lower.includes("nano")) {
+    return "anthropic-nemotron";
+  }
+  if (lower.includes("sonnet") || lower.includes("claude")) {
+    return "anthropic-sonnet";
+  }
+  return null;
+}
+
+/**
+ * Check whether a specific Anthropic model ref is currently suppressed
+ * (rate-limited) by reading the router suppression state file.
+ *
+ * Returns `true` if the model has an active suppression entry.
+ * Fails silently — returns `false` on any IO/parse error.
+ */
+export function isAnthropicModelSuppressed(modelRef: string, now?: number): boolean {
+  const ts = now ?? Date.now();
+  try {
+    const runtimeRoot = process.env.OPENCLAW_RUNTIME_DIR?.trim() || join(homedir(), ".openclaw");
+    const suppressionPath = join(runtimeRoot, "tmp", "router-anthropic-suppression.json");
+    if (!existsSync(suppressionPath)) {
+      return false;
+    }
+    const payload = JSON.parse(readFileSync(suppressionPath, "utf8")) as {
+      blanket?: { suppressed_until?: number; reason?: string } | null;
+      per_model?: Record<string, { suppressed_until?: number; reason?: string }>;
+    };
+    // Check blanket suppression first
+    const blanket = payload?.blanket;
+    if (blanket && typeof blanket.suppressed_until === "number") {
+      if (blanket.suppressed_until * 1000 > ts) {
+        return true;
+      }
+    }
+    // Check per-model suppression
+    const perModel = payload?.per_model;
+    if (perModel && typeof perModel === "object") {
+      const entry = perModel[modelRef.trim()];
+      if (entry && typeof entry.suppressed_until === "number") {
+        if (entry.suppressed_until * 1000 > ts) {
+          return true;
+        }
+      }
+    }
+    return false;
+  } catch {
+    return false;
+  }
+}
 
 function normalizeAliasKey(value: string): string {
   return value.trim().toLowerCase();
@@ -354,6 +444,19 @@ export function resolveDefaultModelForAgent(params: {
   });
 }
 
+export type SubagentModelRoute =
+  | "explicit"
+  | "simple-kimi"
+  | "configured-default"
+  | AnthropicModelLane;
+
+export type SubagentSpawnModelSelection = {
+  model: string;
+  route: SubagentModelRoute;
+  /** Set to true when model was substituted due to rate-limit suppression. */
+  rateLimitFallback?: boolean;
+};
+
 export function resolveSubagentConfiguredModelSelection(params: {
   cfg: OpenClawConfig;
   agentId: string;
@@ -370,20 +473,68 @@ export function resolveSubagentSpawnModelSelection(params: {
   cfg: OpenClawConfig;
   agentId: string;
   modelOverride?: unknown;
-}): string {
+  now?: number;
+}): SubagentSpawnModelSelection {
+  const now = params.now ?? Date.now();
   const runtimeDefault = resolveDefaultModelForAgent({
     cfg: params.cfg,
     agentId: params.agentId,
   });
-  return (
-    normalizeModelSelection(params.modelOverride) ??
-    resolveSubagentConfiguredModelSelection({
-      cfg: params.cfg,
-      agentId: params.agentId,
-    }) ??
+  const resolvedOverride = normalizeModelSelection(params.modelOverride);
+  if (resolvedOverride) {
+    return {
+      model: resolvedOverride,
+      route: "explicit",
+    };
+  }
+
+  const configuredModel = resolveSubagentConfiguredModelSelection({
+    cfg: params.cfg,
+    agentId: params.agentId,
+  });
+
+  const candidateModel =
+    configuredModel ??
     normalizeModelSelection(resolveAgentModelPrimaryValue(params.cfg.agents?.defaults?.model)) ??
-    `${runtimeDefault.provider}/${runtimeDefault.model}`
-  );
+    `${runtimeDefault.provider}/${runtimeDefault.model}`;
+
+  return resolveAnthropicAwareSelection(candidateModel, "configured-default", now);
+}
+
+/**
+ * Resolve the final model + route for a given candidate model string.
+ *
+ * If the candidate is an Anthropic Sonnet model and it is currently
+ * rate-limited (suppressed), transparently substitutes the local
+ * Nemotron/Spark fallback model instead of hammering the Anthropic API.
+ *
+ * For all other Anthropic models, attaches the appropriate lane tag so
+ * telemetry and the UI can show which tier was used.
+ */
+function resolveAnthropicAwareSelection(
+  candidateModel: string,
+  baseRoute: SubagentModelRoute,
+  now: number,
+): SubagentSpawnModelSelection {
+  const anthropicLane = resolveAnthropicLane(candidateModel);
+  if (!anthropicLane) {
+    // Not an Anthropic model — return as-is with the base route.
+    return { model: candidateModel, route: baseRoute };
+  }
+
+  // Sonnet rate-limit cooldown routing: swap to local Nemotron/Spark when suppressed.
+  if (anthropicLane === "anthropic-sonnet" && isAnthropicModelSuppressed(candidateModel, now)) {
+    log.info(
+      `[routing] Anthropic Sonnet suppressed; routing subagent to ${ANTHROPIC_RATE_LIMIT_FALLBACK_MODEL}`,
+    );
+    return {
+      model: ANTHROPIC_RATE_LIMIT_FALLBACK_MODEL,
+      route: "anthropic-nemotron",
+      rateLimitFallback: true,
+    };
+  }
+
+  return { model: candidateModel, route: anthropicLane };
 }
 
 export function buildAllowedModelSet(params: {
