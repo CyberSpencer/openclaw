@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const agentSpy = vi.fn(async () => ({ runId: "run-main", status: "ok" }));
 const sessionsDeleteSpy = vi.fn();
+const sendSpy = vi.fn(async () => ({}));
 const readLatestAssistantReplyMock = vi.fn(async () => "raw subagent reply");
 const embeddedRunMock = {
   isEmbeddedPiRunActive: vi.fn(() => false),
@@ -22,6 +23,9 @@ vi.mock("../gateway/call.js", () => ({
     const typed = req as { method?: string; params?: { message?: string; sessionKey?: string } };
     if (typed.method === "agent") {
       return await agentSpy(typed);
+    }
+    if (typed.method === "send") {
+      return await sendSpy(typed);
     }
     if (typed.method === "agent.wait") {
       return { status: "error", startedAt: 10, endedAt: 20, error: "boom" };
@@ -64,6 +68,7 @@ describe("subagent announce formatting", () => {
   beforeEach(() => {
     agentSpy.mockClear();
     sessionsDeleteSpy.mockClear();
+    sendSpy.mockClear();
     embeddedRunMock.isEmbeddedPiRunActive.mockReset().mockReturnValue(false);
     embeddedRunMock.isEmbeddedPiRunStreaming.mockReset().mockReturnValue(false);
     embeddedRunMock.queueEmbeddedPiMessage.mockReset().mockReturnValue(false);
@@ -566,6 +571,190 @@ describe("subagent announce formatting", () => {
     expect(accountIds).toContain("acct-a");
     expect(accountIds).toContain("acct-b");
     expect(agentSpy).toHaveBeenCalledTimes(2);
+  });
+
+  it("uses a stable idempotency key derived from childSessionKey and childRunId", async () => {
+    const { runSubagentAnnounceFlow } = await import("./subagent-announce.js");
+    embeddedRunMock.isEmbeddedPiRunActive.mockReturnValue(false);
+
+    await runSubagentAnnounceFlow({
+      childSessionKey: "agent:main:subagent:stable-key-test",
+      childRunId: "run-stable-001",
+      requesterSessionKey: "agent:main:main",
+      requesterDisplayKey: "main",
+      task: "stable key check",
+      timeoutMs: 1000,
+      cleanup: "keep",
+      waitForCompletion: false,
+      startedAt: 10,
+      endedAt: 20,
+      outcome: { status: "ok" },
+    });
+
+    const call = agentSpy.mock.calls[0]?.[0] as { params?: Record<string, unknown> };
+    const idempotencyKey = call?.params?.idempotencyKey as string;
+    // Stable key must be deterministic: announce:v1:<sessionKey>:<runId>
+    expect(idempotencyKey).toBe("announce:v1:agent:main:subagent:stable-key-test:run-stable-001");
+  });
+
+  it("carries a task_completion internal event when queued in collect mode", async () => {
+    const { runSubagentAnnounceFlow } = await import("./subagent-announce.js");
+    const { resetAnnounceQueuesForTests } = await import("./subagent-announce-queue.js");
+    resetAnnounceQueuesForTests();
+
+    embeddedRunMock.isEmbeddedPiRunActive.mockReturnValue(true);
+    embeddedRunMock.isEmbeddedPiRunStreaming.mockReturnValue(false);
+    sessionStore = {
+      "agent:main:main": {
+        sessionId: "session-internal-event",
+        lastChannel: "telegram",
+        lastTo: "tg:123",
+        queueMode: "collect",
+        queueDebounceMs: 0,
+      },
+    };
+    readLatestAssistantReplyMock.mockResolvedValue("task output here");
+
+    await runSubagentAnnounceFlow({
+      childSessionKey: "agent:main:subagent:event-test",
+      childRunId: "run-event-001",
+      requesterSessionKey: "main",
+      requesterDisplayKey: "main",
+      task: "my important task",
+      label: "my important task",
+      timeoutMs: 1000,
+      cleanup: "keep",
+      waitForCompletion: false,
+      startedAt: 10,
+      endedAt: 20,
+      outcome: { status: "ok" },
+    });
+
+    await expect.poll(() => agentSpy.mock.calls.length).toBe(1);
+    const call = agentSpy.mock.calls[0]?.[0] as {
+      params?: { message?: string; idempotencyKey?: string };
+    };
+    const msg = call?.params?.message as string;
+
+    // Stable idempotency key on the queued item
+    expect(call?.params?.idempotencyKey).toBe(
+      "announce:v1:agent:main:subagent:event-test:run-event-001",
+    );
+    // Queued collect prompt is short — no raw Findings block
+    expect(msg).toContain("subagent task completion");
+    expect(msg).toContain("my important task");
+    // Should NOT embed the raw findings/stats wrapper in the queued prompt
+    expect(msg).not.toContain("Summarize this naturally for the user");
+  });
+
+  it("deduplicates a re-queued announce with the same stable announceId", async () => {
+    const { runSubagentAnnounceFlow } = await import("./subagent-announce.js");
+    const { resetAnnounceQueuesForTests } = await import("./subagent-announce-queue.js");
+    resetAnnounceQueuesForTests();
+
+    embeddedRunMock.isEmbeddedPiRunActive.mockReturnValue(true);
+    embeddedRunMock.isEmbeddedPiRunStreaming.mockReturnValue(false);
+    sessionStore = {
+      "agent:main:main": {
+        sessionId: "session-dedup",
+        lastChannel: "whatsapp",
+        lastTo: "+15555",
+        queueMode: "collect",
+        queueDebounceMs: 0,
+      },
+    };
+
+    // Block the first drain send so item 1 stays in queue.items while item 2 tries to enqueue.
+    // The splice that removes items from queue.items only happens AFTER the send resolves,
+    // so while agentSpy is blocked the dedup check will find item 1 and drop item 2.
+    let unblockSend: (() => void) | undefined;
+    const sendBlocked = new Promise<void>((r) => {
+      unblockSend = r;
+    });
+    agentSpy.mockImplementationOnce(async () => {
+      await sendBlocked;
+      return { runId: "run-main", status: "ok" };
+    });
+
+    // Start the first flow and let it reach enqueueAnnounce + drain start
+    const firstFlow = runSubagentAnnounceFlow({
+      childSessionKey: "agent:main:subagent:dedup-child",
+      childRunId: "run-dedup-999",
+      requesterSessionKey: "main",
+      requesterDisplayKey: "main",
+      task: "deduplicated task",
+      timeoutMs: 1000,
+      cleanup: "keep",
+      waitForCompletion: false,
+      startedAt: 10,
+      endedAt: 20,
+      outcome: { status: "ok" },
+    });
+
+    // Wait for the first flow to enqueue and for the drain to start (and block on agentSpy)
+    await new Promise((r) => setTimeout(r, 20));
+
+    // Second flow: same childSessionKey + childRunId → same announceId → dedup drops it
+    const secondFlow = runSubagentAnnounceFlow({
+      childSessionKey: "agent:main:subagent:dedup-child",
+      childRunId: "run-dedup-999",
+      requesterSessionKey: "main",
+      requesterDisplayKey: "main",
+      task: "deduplicated task",
+      timeoutMs: 1000,
+      cleanup: "keep",
+      waitForCompletion: false,
+      startedAt: 10,
+      endedAt: 20,
+      outcome: { status: "ok" },
+    });
+
+    // Wait for second flow to reach enqueueAnnounce
+    await new Promise((r) => setTimeout(r, 20));
+
+    // Unblock the drain
+    unblockSend?.();
+
+    await Promise.all([firstFlow, secondFlow]);
+    // Only 1 deliver despite 2 concurrent announce attempts with same id
+    expect(agentSpy).toHaveBeenCalledTimes(1);
+  });
+
+  it("sends replyText (not trigger wrapper) for completion-mode direct delivery", async () => {
+    const { runSubagentAnnounceFlow } = await import("./subagent-announce.js");
+    embeddedRunMock.isEmbeddedPiRunActive.mockReturnValue(false);
+    readLatestAssistantReplyMock.mockResolvedValue("the actual subagent result text");
+
+    const didAnnounce = await runSubagentAnnounceFlow({
+      childSessionKey: "agent:main:subagent:completion-direct",
+      childRunId: "run-comp-001",
+      requesterSessionKey: "agent:main:main",
+      requesterOrigin: { channel: "whatsapp", to: "+15551234567" },
+      requesterDisplayKey: "main",
+      task: "completion direct task",
+      timeoutMs: 1000,
+      cleanup: "keep",
+      waitForCompletion: false,
+      startedAt: 10,
+      endedAt: 20,
+      outcome: { status: "ok" },
+      expectsCompletionMessage: true,
+    });
+
+    expect(didAnnounce).toBe(true);
+    expect(sendSpy).toHaveBeenCalledTimes(1);
+    const sendCall = sendSpy.mock.calls[0]?.[0] as { params?: Record<string, unknown> };
+    // Must be the raw reply text, not the control-plane wrapper
+    expect(sendCall?.params?.message).toBe("the actual subagent result text");
+    // Must not contain the instructional wrapper language
+    expect(sendCall?.params?.message).not.toContain("Summarize this naturally");
+    expect(sendCall?.params?.message).not.toContain("Findings:");
+    // Stable idempotency key
+    expect(sendCall?.params?.idempotencyKey).toBe(
+      "announce:v1:agent:main:subagent:completion-direct:run-comp-001",
+    );
+    // Should use send method, not agent method
+    expect(agentSpy).not.toHaveBeenCalled();
   });
 
   it("warns when requester and child lineage do not match", async () => {

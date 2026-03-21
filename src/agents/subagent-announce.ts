@@ -19,6 +19,11 @@ import {
   normalizeDeliveryContext,
 } from "../utils/delivery-context.js";
 import {
+  buildAnnounceIdFromChildRun,
+  buildAnnounceIdempotencyKey,
+} from "./announce-idempotency.js";
+import type { AgentInternalEvent, AgentTaskCompletionInternalEvent } from "./internal-events.js";
+import {
   isEmbeddedPiRunActive,
   queueEmbeddedPiMessage,
   waitForEmbeddedPiRunEnd,
@@ -128,6 +133,11 @@ async function sendAnnounce(item: AnnounceQueueItem) {
   const timeoutMs = resolveAnnounceTimeoutMs(cfg);
   const threadId =
     origin?.threadId != null && origin.threadId !== "" ? String(origin.threadId) : undefined;
+  // Use a stable idempotency key derived from the announceId when available so
+  // retried/re-queued deliveries for the same completion are not sent twice.
+  const idempotencyKey = item.announceId
+    ? buildAnnounceIdempotencyKey(item.announceId)
+    : crypto.randomUUID();
   await callGateway({
     method: "agent",
     params: {
@@ -138,7 +148,7 @@ async function sendAnnounce(item: AnnounceQueueItem) {
       to: origin?.to,
       threadId,
       deliver: true,
-      idempotencyKey: crypto.randomUUID(),
+      idempotencyKey,
     },
     expectFinal: true,
     timeoutMs,
@@ -180,8 +190,11 @@ function loadRequesterSessionEntry(requesterSessionKey: string) {
 async function maybeQueueSubagentAnnounce(params: {
   requesterSessionKey: string;
   triggerMessage: string;
+  queuedPrompt?: string;
   summaryLine?: string;
   requesterOrigin?: DeliveryContext;
+  announceId?: string;
+  internalEvents?: AgentInternalEvent[];
 }): Promise<"steered" | "queued" | "none"> {
   const { cfg, entry } = loadRequesterSessionEntry(params.requesterSessionKey);
   const canonicalKey = resolveRequesterStoreKey(cfg, params.requesterSessionKey);
@@ -215,8 +228,10 @@ async function maybeQueueSubagentAnnounce(params: {
     enqueueAnnounce({
       key: canonicalKey,
       item: {
-        prompt: params.triggerMessage,
+        announceId: params.announceId,
+        prompt: params.queuedPrompt ?? params.triggerMessage,
         summaryLine: params.summaryLine,
+        internalEvents: params.internalEvents,
         enqueuedAt: Date.now(),
         sessionKey: canonicalKey,
         origin,
@@ -360,6 +375,45 @@ async function readLatestAssistantReplyWithRetry(params: {
     }
   }
   return reply;
+}
+
+function buildTaskCompletionInternalEvent(params: {
+  childSessionKey: string;
+  childSessionId?: string;
+  announceType: string;
+  taskLabel: string;
+  status: SubagentRunOutcome["status"];
+  statusLabel: string;
+  result: string;
+  statsLine?: string;
+}): AgentTaskCompletionInternalEvent {
+  const replyInstruction = [
+    `Summarize this ${params.announceType} completion naturally for the user.`,
+    "Keep it brief (1-2 sentences). Flow it into the conversation naturally.",
+    `Do not mention technical details like tokens, stats, or that this was a ${params.announceType}.`,
+    "You can respond with NO_REPLY if no announcement is needed (e.g., internal task with no user-facing result).",
+  ].join(" ");
+  return {
+    type: "task_completion",
+    source: "subagent",
+    childSessionKey: params.childSessionKey,
+    childSessionId: params.childSessionId,
+    announceType: params.announceType,
+    taskLabel: params.taskLabel,
+    status: params.status,
+    statusLabel: params.statusLabel,
+    result: params.result,
+    statsLine: params.statsLine,
+    replyInstruction,
+  };
+}
+
+function buildQueuedTaskCompletionPrompt(params: {
+  announceType: string;
+  taskLabel: string;
+  statusLabel: string;
+}): string {
+  return `[${params.announceType} completion: "${params.taskLabel}" ${params.statusLabel}] See internal event for details.`;
 }
 
 export function buildSubagentSystemPrompt(params: {
@@ -581,11 +635,22 @@ export async function runSubagentAnnounceFlow(params: {
     // Build instructional message for main agent
     const announceType = params.announceType ?? "subagent task";
     const taskLabel = params.label || params.task || "task";
+
+    // Stable announce id — used for dedup and idempotency across all delivery paths
+    const announceId = buildAnnounceIdFromChildRun({
+      childSessionKey: params.childSessionKey,
+      childRunId: params.childRunId,
+    });
+    const stableIdempotencyKey = buildAnnounceIdempotencyKey(announceId);
+
+    // The actual subagent output — used as-is for completion-mode direct send
+    const replyText = reply || "(no output)";
+
     const triggerMessage = [
       `A ${announceType} "${taskLabel}" just ${statusLabel}.`,
       "",
       "Findings:",
-      reply || "(no output)",
+      replyText,
       "",
       statsLine,
       "",
@@ -593,6 +658,25 @@ export async function runSubagentAnnounceFlow(params: {
       `Do not mention technical details like tokens, stats, or that this was a ${announceType}.`,
       "You can respond with NO_REPLY if no announcement is needed (e.g., internal task with no user-facing result).",
     ].join("\n");
+
+    // Structured internal event for collect-mode queued batches
+    const internalEvent = buildTaskCompletionInternalEvent({
+      childSessionKey: params.childSessionKey,
+      childSessionId,
+      announceType,
+      taskLabel,
+      status: outcome.status,
+      statusLabel,
+      result: replyText,
+      statsLine,
+    });
+
+    // Short prompt for queued items — avoids nesting repeated Findings/Stats/NO_REPLY blocks
+    const queuedAnnouncePrompt = buildQueuedTaskCompletionPrompt({
+      announceType,
+      taskLabel,
+      statusLabel,
+    });
 
     const announceCfg = loadConfig();
     const announceTimeoutMs = resolveAnnounceTimeoutMs(announceCfg);
@@ -613,8 +697,11 @@ export async function runSubagentAnnounceFlow(params: {
         await maybeQueueSubagentAnnounce({
           requesterSessionKey: canonicalRequesterSessionKey,
           triggerMessage,
+          queuedPrompt: queuedAnnouncePrompt,
           summaryLine: taskLabel,
           requesterOrigin,
+          announceId,
+          internalEvents: [internalEvent],
         }),
       direct: async (): Promise<SubagentAnnounceDeliveryResult> => {
         try {
@@ -631,12 +718,13 @@ export async function runSubagentAnnounceFlow(params: {
                 channel: directOrigin.channel,
                 to: directOrigin.to,
                 accountId: directOrigin.accountId,
-                message: triggerMessage,
+                // Send the actual reply text, not the control-plane trigger wrapper
+                message: replyText,
                 threadId:
                   directOrigin.threadId != null && directOrigin.threadId !== ""
                     ? String(directOrigin.threadId)
                     : undefined,
-                idempotencyKey: crypto.randomUUID(),
+                idempotencyKey: stableIdempotencyKey,
               },
               timeoutMs: announceTimeoutMs,
             });
@@ -656,7 +744,7 @@ export async function runSubagentAnnounceFlow(params: {
                   ? String(directOrigin.threadId)
                   : undefined,
               deliver: true,
-              idempotencyKey: crypto.randomUUID(),
+              idempotencyKey: stableIdempotencyKey,
             },
             expectFinal: true,
             timeoutMs: announceTimeoutMs,

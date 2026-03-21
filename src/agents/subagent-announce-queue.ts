@@ -216,6 +216,18 @@ export function enqueueAnnounce(params: {
   // Preserve any retry backoff marker already encoded in lastEnqueuedAt.
   queue.lastEnqueuedAt = Math.max(queue.lastEnqueuedAt, Date.now());
 
+  // Dedup: drop items with the same stable announceId. Only applies to items
+  // that actually carry a stable announceId — legacy/no-id items are not collapsed.
+  if (params.item.announceId) {
+    const isDuplicate = queue.items.some(
+      (existing) => existing.announceId === params.item.announceId,
+    );
+    if (isDuplicate) {
+      scheduleAnnounceDrain(params.key);
+      return false;
+    }
+  }
+
   const shouldEnqueue = applyQueueDropPolicy({
     queue,
     summarize: (item) => item.summaryLine?.trim() || item.prompt.trim(),
