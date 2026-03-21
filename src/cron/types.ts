@@ -115,6 +115,16 @@ export type CronJobState = {
   consecutiveErrors?: number;
   /** Last failure alert timestamp (ms since epoch) for cooldown gating. */
   lastFailureAlertAtMs?: number;
+  /**
+   * Failure cooldown end time (ms since epoch).
+   * The job will not execute before this time when in a failure cooldown.
+   * Set when consecutiveErrors crosses a grounding threshold (3 or 5).
+   */
+  failureCooldownEndsAtMs?: number;
+  /** Error message at the time of the last grounding alert. Used to detect identity changes. */
+  groundedErrorMessage?: string;
+  /** Streak band when grounding alert was last emitted. Used to detect threshold transitions. */
+  groundedStreakBand?: number;
   /** Number of consecutive schedule computation errors. Auto-disables job after threshold. */
   scheduleErrorCount?: number;
   /** Explicit delivery outcome, separate from execution outcome. */

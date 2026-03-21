@@ -12,6 +12,11 @@ import type {
   CronRunTelemetry,
 } from "../types.js";
 import {
+  isFailureGrounded,
+  resolveFailureCooldownMs,
+  resolveFailureStreakBand,
+} from "./failure-grounding.js";
+import {
   computeJobNextRunAtMs,
   nextWakeAtMs,
   recomputeNextRunsForMaintenance,
@@ -284,13 +289,30 @@ export function applyJobResult(
   // Track consecutive errors for backoff / auto-disable.
   if (result.status === "error") {
     job.state.consecutiveErrors = (job.state.consecutiveErrors ?? 0) + 1;
+
+    // Apply failure cooldown when error count crosses a threshold.
+    // The cooldown end time is stored for diagnostics and used as the
+    // minimum next-run time for recurring jobs.
+    const cooldownMs = resolveFailureCooldownMs(job.state.consecutiveErrors);
+    if (cooldownMs > 0) {
+      job.state.failureCooldownEndsAtMs = result.endedAt + cooldownMs;
+    }
+
     const alertConfig = resolveFailureAlert(state, job);
     if (alertConfig && job.state.consecutiveErrors >= alertConfig.after) {
       const now = state.deps.nowMs();
       const lastAlert = job.state.lastFailureAlertAtMs;
-      const inCooldown =
+      const inTimeCooldown =
         typeof lastAlert === "number" && now - lastAlert < Math.max(0, alertConfig.cooldownMs);
-      if (!inCooldown) {
+      // Grounding: suppress repeated identical failures within the same threshold
+      // band so the main session is not flooded with duplicate error events.
+      const grounded = isFailureGrounded({
+        consecutiveErrors: job.state.consecutiveErrors,
+        error: result.error,
+        groundedErrorMessage: job.state.groundedErrorMessage,
+        groundedStreakBand: job.state.groundedStreakBand,
+      });
+      if (!inTimeCooldown && !grounded) {
         emitFailureAlert(state, {
           job,
           error: result.error,
@@ -299,11 +321,17 @@ export function applyJobResult(
           to: alertConfig.to,
         });
         job.state.lastFailureAlertAtMs = now;
+        // Record grounding state so duplicate alerts are suppressed
+        job.state.groundedErrorMessage = result.error;
+        job.state.groundedStreakBand = resolveFailureStreakBand(job.state.consecutiveErrors);
       }
     }
   } else {
     job.state.consecutiveErrors = 0;
     job.state.lastFailureAlertAtMs = undefined;
+    job.state.failureCooldownEndsAtMs = undefined;
+    job.state.groundedErrorMessage = undefined;
+    job.state.groundedStreakBand = undefined;
   }
 
   const shouldDelete =
@@ -358,14 +386,23 @@ export function applyJobResult(
       const backoff = errorBackoffMs(job.state.consecutiveErrors ?? 1);
       const normalNext = computeJobNextRunAtMs(job, result.endedAt);
       const backoffNext = result.endedAt + backoff;
-      // Use whichever is later: the natural next run or the backoff delay.
-      job.state.nextRunAtMs =
-        normalNext !== undefined ? Math.max(normalNext, backoffNext) : backoffNext;
+      // Also enforce the failure cooldown as a minimum next-run time.
+      // The cooldown was set above when a threshold (3 or 5 failures) was crossed.
+      const cooldownEndsAtMs = job.state.failureCooldownEndsAtMs;
+      const candidates: number[] = [backoffNext];
+      if (normalNext !== undefined) {
+        candidates.push(normalNext);
+      }
+      if (typeof cooldownEndsAtMs === "number" && Number.isFinite(cooldownEndsAtMs)) {
+        candidates.push(cooldownEndsAtMs);
+      }
+      job.state.nextRunAtMs = Math.max(...candidates);
       state.deps.log.info(
         {
           jobId: job.id,
           consecutiveErrors: job.state.consecutiveErrors,
           backoffMs: backoff,
+          cooldownEndsAtMs: cooldownEndsAtMs ?? null,
           nextRunAtMs: job.state.nextRunAtMs,
         },
         "cron: applying error backoff",
