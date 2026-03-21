@@ -55,6 +55,8 @@ export type ChatProps = {
   subagentMonitorResult?: SessionsListResult | null;
   subagentMonitorError?: string | null;
   onSubagentRefresh?: () => void;
+  // Provider usage chips (Anthropic quota + suppression status)
+  anthropicUsageNotes?: string[] | null;
   // Focus mode
   focusMode: boolean;
   // Sidebar state
@@ -245,6 +247,34 @@ function truncate(text: string, maxChars: number) {
   const suffix = "...";
   const sliceTo = Math.max(0, maxChars - suffix.length);
   return `${raw.slice(0, sliceTo)}${suffix}`;
+}
+
+function formatSubagentRuntime(session: {
+  model?: string;
+  modelProvider?: string | null;
+  modelApplied?: boolean;
+  routing?: string;
+  complexity?: string;
+}): string {
+  const provider = typeof session.modelProvider === "string" ? session.modelProvider.trim() : "";
+  const modelValue = typeof session.model === "string" ? session.model.trim() : "";
+
+  const runtime =
+    provider && !modelValue.includes("/")
+      ? `${provider}/${modelValue}`
+      : modelValue || "runtime:unknown";
+
+  const tags: string[] = [runtime, "lane:subagent"];
+  if (typeof session.routing === "string" && session.routing.trim()) {
+    tags.push(`route:${session.routing.trim()}`);
+  }
+  if (typeof session.complexity === "string" && session.complexity.trim()) {
+    tags.push(`complexity:${session.complexity.trim()}`);
+  }
+  if (typeof session.modelApplied === "boolean") {
+    tags.push(session.modelApplied ? "model:applied" : "model:fallback");
+  }
+  return tags.filter(Boolean).join(" • ");
 }
 
 function extractImages(message: unknown): ImageBlock[] {
@@ -839,6 +869,39 @@ ${item.text}<span class="terminal-cursor" aria-hidden="true"></span></pre>
   `;
 }
 
+/**
+ * Render Anthropic provider-usage chips in the orchestration meta row.
+ *
+ * Shows quota windows and suppression notes (e.g. "Sonnet paused 45m (rate_limit)")
+ * sourced from the router-anthropic-suppression.json state file + claude.ai usage API.
+ *
+ * notes are populated by the app layer via `loadProviderUsageSummary` and
+ * `formatUsageWindowSummary` / `resolveSuppressionNotes`.
+ */
+function renderAnthropicUsageChips(notes: string[] | null | undefined) {
+  if (!notes || notes.length === 0) {
+    return nothing;
+  }
+  const hasSuppression = notes.some(
+    (n) => n.includes("paused") || n.includes("rate_limit") || n.includes("provider paused"),
+  );
+  return html`
+    <div class="agent-meta-row agent-meta-row--compact agent-anthropic-usage">
+      <span class="agent-meta-row__label">Anthropic</span>
+      <span class="agent-meta-row__value agent-anthropic-usage__chips">
+        ${notes.map(
+          (note) => html`
+            <span
+              class="pill agent-anthropic-usage__chip ${hasSuppression ? "agent-anthropic-usage__chip--warn" : ""}"
+              title=${note}
+            >${note}</span>
+          `,
+        )}
+      </span>
+    </div>
+  `;
+}
+
 function renderOrchestrationCard(props: ChatProps) {
   const activeSession = props.sessions?.sessions?.find((row) => row.key === props.sessionKey);
   const title =
@@ -959,6 +1022,7 @@ function renderOrchestrationCard(props: ChatProps) {
 
       <div class="agent-orchestration__meta">
         ${renderModelAttribution(props.modelSelection)}
+        ${renderAnthropicUsageChips(props.anthropicUsageNotes ?? null)}
         ${
           props.queue.length
             ? html`
@@ -1229,9 +1293,12 @@ function renderOrchestrationCard(props: ChatProps) {
                               </div>
                             </div>
                             <div class="agent-subagent__meta">
-                              <div class="agent-subagent__time mono">
-                                ${metaParts.join(" • ")}
-                              </div>
+                              <div class="agent-subagent__time mono">${formatAge(updatedAt)}</div>
+                              ${
+                                s.model || s.modelProvider || s.routing || s.modelApplied != null
+                                  ? html`<div class="agent-subagent__runtime mono">${formatSubagentRuntime(s)}</div>`
+                                  : nothing
+                              }
                             </div>
                           </button>
                         `;

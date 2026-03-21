@@ -738,13 +738,48 @@
 .agent-subagent__meta {
   flex: 0 0 auto;
   display: flex;
-  align-items: flex-start;
+  align-items: flex-end;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
 }
 
 .agent-subagent__time {
   font-size: 10px;
   color: var(--muted);
-  padding-top: 2px;
+}
+
+.agent-subagent__runtime {
+  font-size: 10px;
+  color: var(--muted);
+  text-align: right;
+  max-width: 220px;
+  white-space: normal;
+}
+
+/* =============================================
+   Anthropic Usage Chips
+   ============================================= */
+
+.agent-anthropic-usage__chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  align-items: center;
+}
+
+.agent-anthropic-usage__chip {
+  font-size: 10px;
+  padding: 1px 6px;
+  border-radius: 10px;
+  background: var(--surface2, rgba(0, 0, 0, 0.08));
+  color: var(--fg-muted, var(--muted));
+  white-space: nowrap;
+}
+
+.agent-anthropic-usage__chip--warn {
+  background: rgba(255, 160, 0, 0.15);
+  color: var(--warning, #b07800);
 }
 
 /* =============================================
