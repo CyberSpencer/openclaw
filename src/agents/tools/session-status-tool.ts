@@ -15,6 +15,7 @@ import {
   formatUsageWindowSummary,
   loadProviderUsageSummary,
   resolveUsageProviderId,
+  resolveUsageSummaryMaxWindows,
 } from "../../infra/provider-usage.js";
 import {
   buildAgentMainSessionKey,
@@ -309,7 +310,7 @@ export function createSessionStatusTool(opts?: {
           if (snapshot) {
             const formatted = formatUsageWindowSummary(snapshot, {
               now: Date.now(),
-              maxWindows: 2,
+              maxWindows: resolveUsageSummaryMaxWindows(snapshot),
               includeResets: true,
             });
             if (formatted && !formatted.startsWith("error:")) {

@@ -523,6 +523,10 @@ export class OpenClawApp extends LitElement {
   @state() subagentMonitorError: string | null = null;
   private subagentMonitorPollTimer: number | null = null;
   private subagentMonitorPollMs: number | null = null;
+  // Provider-usage rate-limit chips
+  @state() codexUsageNotes: string[] | null = null;
+  @state() anthropicUsageNotes: string[] | null = null;
+  private providerUsagePollTimer: ReturnType<typeof setInterval> | null = null;
   // Sidebar state for tool output viewing
   @state() sidebarOpen = false;
   @state() sidebarContent: string | null = null;
@@ -858,6 +862,7 @@ export class OpenClawApp extends LitElement {
     window.addEventListener("keydown", this.globalKeydownHandler);
     this.rebuildOrchRunIndex();
     handleConnected(this as unknown as Parameters<typeof handleConnected>[0]);
+    void this.refreshProviderUsage();
   }
 
   protected firstUpdated() {
@@ -869,6 +874,7 @@ export class OpenClawApp extends LitElement {
     window.removeEventListener("keydown", this.globalKeydownHandler);
     this.stopSparkStatusPolling();
     this.stopSubagentMonitorPolling();
+    this.stopProviderUsagePolling();
     super.disconnectedCallback();
   }
 
@@ -879,11 +885,14 @@ export class OpenClawApp extends LitElement {
         this.sparkStatusConsecutivePollFailures = 0;
         this.startSparkStatusPolling();
         void this.refreshSparkStatus();
+        this.startProviderUsagePolling();
+        void this.refreshProviderUsage();
       } else {
         this.stopSparkStatusPolling();
         this.sparkStatusConsecutivePollFailures = 0;
         this.sparkStatus = null;
         this.voiceState.sparkVoiceAvailable = false;
+        this.stopProviderUsagePolling();
       }
     }
     if (changed.has("sessionKey")) {
@@ -916,6 +925,44 @@ export class OpenClawApp extends LitElement {
     window.clearInterval(this.subagentMonitorPollTimer);
     this.subagentMonitorPollTimer = null;
     this.subagentMonitorPollMs = null;
+  }
+
+  async refreshProviderUsage() {
+    if (!this.client || !this.connected) {
+      return;
+    }
+    try {
+      type ProviderUsageResult = {
+        providers: Array<{ provider: string; notes?: string[] }>;
+      };
+      const summary = await this.client.request<ProviderUsageResult>("usage.status", {});
+      const anthropic = summary.providers.find((p) => p.provider === "anthropic");
+      const codex = summary.providers.find((p) => p.provider === "openai-codex");
+      this.anthropicUsageNotes = anthropic?.notes ?? null;
+      this.codexUsageNotes = codex?.notes ?? null;
+    } catch {
+      // silently ignore; chips stay cleared on failure
+    }
+  }
+
+  private startProviderUsagePolling(intervalMs = 60_000) {
+    if (this.providerUsagePollTimer != null) {
+      return;
+    }
+    this.providerUsagePollTimer = window.setInterval(() => {
+      if (!this.connected) {
+        return;
+      }
+      void this.refreshProviderUsage();
+    }, intervalMs);
+  }
+
+  private stopProviderUsagePolling() {
+    if (this.providerUsagePollTimer == null) {
+      return;
+    }
+    window.clearInterval(this.providerUsagePollTimer);
+    this.providerUsagePollTimer = null;
   }
 
   private startSparkStatusPolling(intervalMs = 10_000) {

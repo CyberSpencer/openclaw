@@ -17,6 +17,7 @@ import {
   formatUsageWindowSummary,
   loadProviderUsageSummary,
   resolveUsageProviderId,
+  resolveUsageSummaryMaxWindows,
 } from "../../infra/provider-usage.js";
 import type { MediaUnderstandingDecision } from "../../media-understanding/types.js";
 import { normalizeGroupActivation } from "../group-activation.js";
@@ -94,7 +95,7 @@ export async function buildStatusReply(params: {
       if (usageEntry && !usageEntry.error && usageEntry.windows.length > 0) {
         const summaryLine = formatUsageWindowSummary(usageEntry, {
           now: Date.now(),
-          maxWindows: 2,
+          maxWindows: resolveUsageSummaryMaxWindows(usageEntry),
           includeResets: true,
         });
         if (summaryLine) {

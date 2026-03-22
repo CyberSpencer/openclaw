@@ -65,6 +65,7 @@ describe("fetchClaudeUsage", () => {
         five_hour: { utilization: 18, resets_at: fiveHourReset },
         seven_day: { utilization: 54, resets_at: weekReset },
         seven_day_sonnet: { utilization: 67 },
+        seven_day_opus: { utilization: 81 },
       });
     });
 
@@ -73,7 +74,8 @@ describe("fetchClaudeUsage", () => {
     expect(result.windows).toEqual([
       { label: "5h", usedPercent: 18, resetAt: new Date(fiveHourReset).getTime() },
       { label: "Week", usedPercent: 54, resetAt: new Date(weekReset).getTime() },
-      { label: "Sonnet", usedPercent: 67 },
+      { label: "Sonnet week", usedPercent: 67 },
+      { label: "Opus week", usedPercent: 81 },
     ]);
   });
 
@@ -116,6 +118,7 @@ describe("fetchClaudeUsage", () => {
     const result = await fetchClaudeUsage("token", 5000, mockFetch);
 
     expect(result.error).toBeUndefined();
+    expect(result.notes).toEqual(["via claude.ai web session"]);
     expect(result.windows).toEqual([{ label: "5h", usedPercent: 12, resetAt: undefined }]);
   });
 
@@ -134,7 +137,8 @@ describe("fetchClaudeUsage", () => {
 
     const result = await fetchClaudeUsage("token", 5000, mockFetch);
     expect(result.error).toBeUndefined();
-    expect(result.windows).toEqual([{ label: "Opus", usedPercent: 44 }]);
+    expect(result.notes).toEqual(["via claude.ai web session"]);
+    expect(result.windows).toEqual([{ label: "Opus week", usedPercent: 44 }]);
     expect(mockFetch).toHaveBeenCalledTimes(3);
   });
 

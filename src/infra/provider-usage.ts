@@ -2,6 +2,7 @@ export {
   formatUsageReportLines,
   formatUsageSummaryLine,
   formatUsageWindowSummary,
+  resolveUsageSummaryMaxWindows,
 } from "./provider-usage.format.js";
 export { loadProviderUsageSummary } from "./provider-usage.load.js";
 export { resolveUsageProviderId } from "./provider-usage.shared.js";

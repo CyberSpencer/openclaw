@@ -34,6 +34,7 @@ import {
   formatUsageWindowSummary,
   loadProviderUsageSummary,
   resolveUsageProviderId,
+  resolveUsageSummaryMaxWindows,
   type UsageProviderId,
 } from "../../infra/provider-usage.js";
 import { getShellEnvAppliedKeys, shouldEnableShellEnvFallback } from "../../infra/shell-env.js";
@@ -565,7 +566,7 @@ export async function modelsStatusCommand(
         for (const snapshot of usageSummary.providers) {
           const formatted = formatUsageWindowSummary(snapshot, {
             now: Date.now(),
-            maxWindows: 2,
+            maxWindows: resolveUsageSummaryMaxWindows(snapshot),
             includeResets: true,
           });
           if (formatted) {

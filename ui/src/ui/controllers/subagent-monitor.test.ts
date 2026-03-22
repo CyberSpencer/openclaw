@@ -24,6 +24,11 @@ describe("loadSubagentMonitor", () => {
           task: "Do A",
           runId: "run-a",
           status: "running",
+          model: "gpt-5.3-codex/spark",
+          modelProvider: "gpt-5.3-codex",
+          modelApplied: false,
+          routing: "explicit",
+          complexity: "simple",
           createdAt: 100,
           startedAt: 110,
         },
@@ -48,6 +53,11 @@ describe("loadSubagentMonitor", () => {
         derivedTitle: "Do A",
         updatedAt: 110,
         sessionId: "run-a",
+        model: "gpt-5.3-codex/spark",
+        modelProvider: "gpt-5.3-codex",
+        modelApplied: false,
+        routing: "explicit",
+        complexity: "simple",
       }),
     ]);
   });

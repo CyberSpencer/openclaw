@@ -35,11 +35,17 @@ function buildClaudeUsageWindows(data: ClaudeUsageResponse): UsageWindow[] {
     });
   }
 
-  const modelWindow = data.seven_day_sonnet || data.seven_day_opus;
-  if (modelWindow?.utilization !== undefined) {
+  if (data.seven_day_sonnet?.utilization !== undefined) {
     windows.push({
-      label: data.seven_day_sonnet ? "Sonnet" : "Opus",
-      usedPercent: clampPercent(modelWindow.utilization),
+      label: "Sonnet week",
+      usedPercent: clampPercent(data.seven_day_sonnet.utilization),
+    });
+  }
+
+  if (data.seven_day_opus?.utilization !== undefined) {
+    windows.push({
+      label: "Opus week",
+      usedPercent: clampPercent(data.seven_day_opus.utilization),
     });
   }
 
@@ -109,6 +115,7 @@ async function fetchClaudeWebUsage(
     provider: "anthropic",
     displayName: PROVIDER_LABELS.anthropic,
     windows,
+    notes: ["via claude.ai web session"],
   };
 }
 
