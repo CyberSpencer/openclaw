@@ -1,3 +1,4 @@
+import type { ProviderUsageSnapshot } from "../../../src/infra/provider-usage.types.ts";
 import type { EventLogEntry } from "./app-events.ts";
 import type { CompactionStatus, FallbackStatus } from "./app-tool-stream.ts";
 import type {
@@ -268,6 +269,7 @@ export type AppViewState = {
   updateAvailable: import("./types.js").UpdateAvailable | null;
   codexUsageNotes: string[] | null;
   anthropicUsageNotes: string[] | null;
+  anthropicUsageSnapshot: ProviderUsageSnapshot | null;
   client: GatewayBrowserClient | null;
   refreshSessionsAfterChat: Set<string>;
   connect: () => void;

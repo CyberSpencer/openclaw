@@ -1,5 +1,6 @@
 import { LitElement } from "lit";
 import { customElement, state } from "lit/decorators.js";
+import type { ProviderUsageSnapshot } from "../../../src/infra/provider-usage.types.ts";
 import {
   handleChannelConfigReload as handleChannelConfigReloadInternal,
   handleChannelConfigSave as handleChannelConfigSaveInternal,
@@ -526,6 +527,7 @@ export class OpenClawApp extends LitElement {
   // Provider-usage rate-limit chips
   @state() codexUsageNotes: string[] | null = null;
   @state() anthropicUsageNotes: string[] | null = null;
+  @state() anthropicUsageSnapshot: ProviderUsageSnapshot | null = null;
   private providerUsagePollTimer: ReturnType<typeof setInterval> | null = null;
   // Sidebar state for tool output viewing
   @state() sidebarOpen = false;
@@ -933,13 +935,14 @@ export class OpenClawApp extends LitElement {
     }
     try {
       type ProviderUsageResult = {
-        providers: Array<{ provider: string; notes?: string[] }>;
+        providers: ProviderUsageSnapshot[];
       };
       const summary = await this.client.request<ProviderUsageResult>("usage.status", {});
-      const anthropic = summary.providers.find((p) => p.provider === "anthropic");
-      const codex = summary.providers.find((p) => p.provider === "openai-codex");
+      const anthropic = summary.providers.find((p) => p.provider === "anthropic") ?? null;
+      const codex = summary.providers.find((p) => p.provider === "openai-codex") ?? null;
       this.anthropicUsageNotes = anthropic?.notes ?? null;
       this.codexUsageNotes = codex?.notes ?? null;
+      this.anthropicUsageSnapshot = anthropic;
     } catch {
       // silently ignore; chips stay cleared on failure
     }

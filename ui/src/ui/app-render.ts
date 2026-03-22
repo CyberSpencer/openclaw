@@ -456,6 +456,7 @@ export function renderApp(state: AppViewState) {
                 systemStatusError: state.lastError,
                 routerStatus,
                 sparkStatus,
+                anthropicSnapshot: state.anthropicUsageSnapshot,
                 onSettingsChange: (next) => state.applySettings(next),
                 onPasswordChange: (next) => (state.password = next),
                 onSessionKeyChange: (next) => {

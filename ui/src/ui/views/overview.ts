@@ -1,8 +1,10 @@
 import { html, nothing } from "lit";
+import type { ProviderUsageSnapshot } from "../../../../src/infra/provider-usage.types.ts";
 import { formatAgo, formatDurationHuman, formatRelativeTimestamp } from "../format.ts";
 import type { GatewayHelloOk } from "../gateway.ts";
 import { formatNextRun } from "../presenter.ts";
 import type { UiSettings } from "../storage.ts";
+import { renderAnthropicProviderStatus } from "./anthropic-provider-status.ts";
 
 type ControlUiBuildMeta = {
   uiIndexMtimeMs?: number | null;
@@ -40,6 +42,7 @@ export type OverviewProps = {
   systemStatusError: string | null;
   routerStatus: import("../types.js").RouterStatus | null;
   sparkStatus: import("../types.js").SparkStatus | null;
+  anthropicSnapshot?: ProviderUsageSnapshot | null;
   onSettingsChange: (next: UiSettings) => void;
   onPasswordChange: (next: string) => void;
   onSessionKeyChange: (next: string) => void;
@@ -425,6 +428,11 @@ export function renderOverview(props: OverviewProps) {
             : nothing
         }
       </div>
+
+      ${renderAnthropicProviderStatus({
+        snapshot: props.anthropicSnapshot ?? null,
+        loading: false,
+      })}
 
     </section>
 
