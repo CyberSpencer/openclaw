@@ -57,6 +57,8 @@ export type ChatProps = {
   onSubagentRefresh?: () => void;
   // Provider usage chips (Anthropic quota + suppression status)
   anthropicUsageNotes?: string[] | null;
+  // Provider usage chips (Codex quota + suppression status)
+  codexUsageNotes?: string[] | null;
   // Focus mode
   focusMode: boolean;
   // Sidebar state
@@ -902,6 +904,34 @@ function renderAnthropicUsageChips(notes: string[] | null | undefined) {
   `;
 }
 
+/**
+ * Render Codex/OpenAI provider-usage chips in the orchestration meta row.
+ * Mirrors renderAnthropicUsageChips; sources from openai-codex suppression state.
+ */
+function renderCodexUsageChips(notes: string[] | null | undefined) {
+  if (!notes || notes.length === 0) {
+    return nothing;
+  }
+  const hasSuppression = notes.some(
+    (n) => n.includes("paused") || n.includes("rate_limit") || n.includes("provider paused"),
+  );
+  return html`
+    <div class="agent-meta-row agent-meta-row--compact agent-codex-usage">
+      <span class="agent-meta-row__label">Codex</span>
+      <span class="agent-meta-row__value agent-codex-usage__chips">
+        ${notes.map(
+          (note) => html`
+            <span
+              class="pill agent-codex-usage__chip ${hasSuppression ? "agent-codex-usage__chip--warn" : ""}"
+              title=${note}
+            >${note}</span>
+          `,
+        )}
+      </span>
+    </div>
+  `;
+}
+
 function renderOrchestrationCard(props: ChatProps) {
   const activeSession = props.sessions?.sessions?.find((row) => row.key === props.sessionKey);
   const title =
@@ -1023,6 +1053,7 @@ function renderOrchestrationCard(props: ChatProps) {
       <div class="agent-orchestration__meta">
         ${renderModelAttribution(props.modelSelection)}
         ${renderAnthropicUsageChips(props.anthropicUsageNotes ?? null)}
+        ${renderCodexUsageChips(props.codexUsageNotes ?? null)}
         ${
           props.queue.length
             ? html`

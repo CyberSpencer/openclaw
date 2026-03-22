@@ -1391,6 +1391,8 @@ export function renderApp(state: AppViewState) {
                   ttsProgress: state.ttsProgress ?? null,
                   ttsSpeakingMessageKey: state.ttsSpeakingMessageKey ?? null,
                   onStopSpeaking: () => state.handleStopSpeaking?.(),
+                  codexUsageNotes: state.codexUsageNotes,
+                  anthropicUsageNotes: state.anthropicUsageNotes,
                 })}
               `
             : nothing
