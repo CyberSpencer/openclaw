@@ -20,22 +20,22 @@ describe("formatResetCountdown", () => {
     expect(formatResetCountdown(resetAt, now)).toBe("resets in 45m");
   });
 
-  it("formats hours and minutes", () => {
+  it("formats hours (rounded) for multi-hour durations", () => {
     const now = 0;
-    const resetAt = (3 * 60 + 15) * 60_000; // 3h 15m
-    expect(formatResetCountdown(resetAt, now)).toBe("resets in 3h 15m");
+    const resetAt = (3 * 60 + 15) * 60_000; // 3h 15m -> formatDurationHuman rounds to "3h"
+    expect(formatResetCountdown(resetAt, now)).toBe("resets in 3h");
   });
 
-  it("formats 1h 0m when exactly one hour", () => {
+  it("formats 1h when exactly one hour", () => {
     const now = 0;
     const resetAt = 60 * 60_000;
-    expect(formatResetCountdown(resetAt, now)).toBe("resets in 1h 0m");
+    expect(formatResetCountdown(resetAt, now)).toBe("resets in 1h");
   });
 
-  it("formats 0m for less than a minute remaining", () => {
+  it("formats seconds for less than a minute remaining", () => {
     const now = 0;
     const resetAt = 30_000; // 30 seconds
-    expect(formatResetCountdown(resetAt, now)).toBe("resets in 0m");
+    expect(formatResetCountdown(resetAt, now)).toBe("resets in 30s");
   });
 });
 
@@ -88,5 +88,13 @@ describe("resolveNoteIsWarn", () => {
 
   it("returns false for unrelated warning text", () => {
     expect(resolveNoteIsWarn("slow response times detected")).toBe(false);
+  });
+
+  it("returns true for uppercase Paused", () => {
+    expect(resolveNoteIsWarn("Sonnet Paused 30m")).toBe(true);
+  });
+
+  it("returns true for uppercase RATE_LIMIT", () => {
+    expect(resolveNoteIsWarn("RATE_LIMIT hit")).toBe(true);
   });
 });
