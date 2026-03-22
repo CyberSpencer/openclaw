@@ -931,6 +931,9 @@ export class OpenClawApp extends LitElement {
 
   async refreshProviderUsage() {
     if (!this.client || !this.connected) {
+      this.anthropicUsageNotes = null;
+      this.codexUsageNotes = null;
+      this.anthropicUsageSnapshot = null;
       return;
     }
     try {
@@ -938,13 +941,16 @@ export class OpenClawApp extends LitElement {
         providers: ProviderUsageSnapshot[];
       };
       const summary = await this.client.request<ProviderUsageResult>("usage.status", {});
-      const anthropic = summary.providers.find((p) => p.provider === "anthropic") ?? null;
-      const codex = summary.providers.find((p) => p.provider === "openai-codex") ?? null;
+      const providers = Array.isArray(summary.providers) ? summary.providers : [];
+      const anthropic = providers.find((p) => p.provider === "anthropic") ?? null;
+      const codex = providers.find((p) => p.provider === "openai-codex") ?? null;
       this.anthropicUsageNotes = anthropic?.notes ?? null;
       this.codexUsageNotes = codex?.notes ?? null;
       this.anthropicUsageSnapshot = anthropic;
     } catch {
-      // silently ignore; chips stay cleared on failure
+      this.anthropicUsageNotes = null;
+      this.codexUsageNotes = null;
+      this.anthropicUsageSnapshot = null;
     }
   }
 
