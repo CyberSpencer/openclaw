@@ -1,6 +1,5 @@
 import { html, nothing, type TemplateResult } from "lit";
 import type { ProviderUsageSnapshot } from "../../../../src/infra/provider-usage.types.ts";
-import { formatDurationHuman } from "../format.ts";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -24,7 +23,13 @@ export function formatResetCountdown(resetAt: number, now: number): string {
   if (diffMs <= 0) {
     return "resetting soon";
   }
-  return `resets in ${formatDurationHuman(diffMs)}`;
+  const totalMinutes = Math.floor(diffMs / 60_000);
+  const hours = Math.floor(totalMinutes / 60);
+  const minutes = totalMinutes % 60;
+  if (hours > 0) {
+    return `resets in ${hours}h ${minutes}m`;
+  }
+  return `resets in ${minutes}m`;
 }
 
 /**
@@ -45,8 +50,7 @@ export function resolveWindowBarClass(usedPercent: number): string {
  * Returns true if the note text indicates a suppression/warn state.
  */
 export function resolveNoteIsWarn(note: string): boolean {
-  const normalized = note.toLowerCase();
-  return normalized.includes("paused") || normalized.includes("rate_limit");
+  return note.includes("paused") || note.includes("rate_limit");
 }
 
 // ---------------------------------------------------------------------------
@@ -61,7 +65,7 @@ export function renderAnthropicProviderStatus(
     return nothing;
   }
 
-  const hasFallback = (snapshot.notes ?? []).some((n) => n.toLowerCase().includes("paused"));
+  const hasFallback = (snapshot.notes ?? []).some((n) => n.includes("paused"));
   const now = Date.now();
 
   return html`
