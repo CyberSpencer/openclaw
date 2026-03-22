@@ -1,6 +1,9 @@
+import { getCronJobFailureDiagnostics } from "./service/failure-grounding.js";
 import * as ops from "./service/ops.js";
 import { type CronServiceDeps, createCronServiceState } from "./service/state.js";
 import type { CronJob, CronJobCreate, CronJobPatch } from "./types.js";
+export { getCronJobFailureDiagnostics } from "./service/failure-grounding.js";
+export type { CronJobFailureDiagnostics } from "./service/failure-grounding.js";
 
 export type { CronEvent, CronServiceDeps } from "./service/state.js";
 
@@ -48,6 +51,15 @@ export class CronService {
 
   getJob(id: string): CronJob | undefined {
     return this.state.store?.jobs.find((job) => job.id === id);
+  }
+
+  /** Returns operator-facing failure diagnostics for a specific job. */
+  getJobDiagnostics(id: string) {
+    const job = this.state.store?.jobs.find((j) => j.id === id);
+    if (!job) {
+      return undefined;
+    }
+    return getCronJobFailureDiagnostics(job.state, this.state.deps.nowMs());
   }
 
   wake(opts: { mode: "now" | "next-heartbeat"; text: string }) {
