@@ -26,6 +26,7 @@ export type SubagentRunRecord = {
   spawnMode?: SpawnSubagentMode;
   createdAt: number;
   startedAt?: number;
+  lastHeartbeatAt?: number;
   endedAt?: number;
   outcome?: SubagentRunOutcome;
   archiveAtMs?: number;
