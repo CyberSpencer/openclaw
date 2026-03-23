@@ -495,7 +495,23 @@
 
 /* Chat view header adjustments (ChatGPT-style threads sidebar lives in nav). */
 .content--chat .content-header {
-  display: none;
+  flex-direction: row;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  padding-bottom: 0;
+}
+
+.content--chat .content-header > div:first-child {
+  text-align: left;
+}
+
+.content--chat .page-meta {
+  justify-content: flex-start;
+}
+
+.content--chat .chat-controls {
+  flex-shrink: 0;
 }
 
 /* ===========================================

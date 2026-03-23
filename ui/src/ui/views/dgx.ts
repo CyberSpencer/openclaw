@@ -1,6 +1,6 @@
 import { html, nothing, type TemplateResult } from "lit";
 import { icons } from "../icons.js";
-import type { SparkStatus, SparkGpuStatus, SparkContainer } from "../types.js";
+import type { DgxRoutingStatus, SparkStatus, SparkGpuStatus, SparkContainer } from "../types.js";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -9,6 +9,7 @@ import type { SparkStatus, SparkGpuStatus, SparkContainer } from "../types.js";
 export type DgxProps = {
   connected: boolean;
   sparkStatus: SparkStatus | null;
+  routingStatus?: DgxRoutingStatus | null;
   onRefresh: () => void;
 };
 
@@ -253,6 +254,7 @@ export function renderDgx(props: DgxProps): TemplateResult {
 
   const overall = spark?.overall ?? (spark?.active ? "healthy" : "down");
   const counts = spark?.counts;
+  const routing = props.routingStatus ?? null;
   const checkedAt = spark?.checkedAt;
   const checkedLabel = checkedAt
     ? new Date(checkedAt).toLocaleTimeString(undefined, {
@@ -271,6 +273,27 @@ export function renderDgx(props: DgxProps): TemplateResult {
       <div class="dgx-header">
         <div class="dgx-header__left">
           <span class="dgx-header__host mono">${host ?? "DGX Spark"}</span>
+          ${
+            routing
+              ? html`
+                  <span class="muted">
+                    Route:
+                    <span class="mono">${routing.access_mode ?? "n/a"}</span>
+                    /
+                    <span class="mono">${routing.backend ?? "unknown"}</span>
+                    /
+                    <span class="mono">${routing.endpoint_id ?? "unknown"}</span>
+                    ${
+                      routing.wanKillSwitch
+                        ? html`
+                            <strong>(WAN disabled)</strong>
+                          `
+                        : nothing
+                    }
+                  </span>
+                `
+              : nothing
+          }
         </div>
         <div class="dgx-header__right">
           <span class="dgx-badge ${overallBadgeClass(overall)}">

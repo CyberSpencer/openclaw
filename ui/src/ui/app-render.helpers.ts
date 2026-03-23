@@ -1,16 +1,25 @@
 import { html } from "lit";
 import { repeat } from "lit/directives/repeat.js";
+import { parseAgentSessionKey } from "../../../src/sessions/session-key-utils.js";
 import { t } from "../i18n/index.ts";
 import { refreshChat } from "./app-chat.ts";
 import { syncUrlWithSessionKey } from "./app-settings.ts";
 import type { AppViewState } from "./app-view-state.ts";
 import { OpenClawApp } from "./app.ts";
+import {
+  buildChatModelOption,
+  createChatModelOverride,
+  formatChatModelDisplay,
+  normalizeChatModelOverrideValue,
+  resolveServerChatModelValue,
+} from "./chat-model-ref.ts";
 import { ChatState, loadChatHistory } from "./controllers/chat.ts";
+import { loadSessions } from "./controllers/sessions.ts";
 import { icons } from "./icons.ts";
 import { iconForTab, pathForTab, titleForTab, type Tab } from "./navigation.ts";
 import type { ThemeTransitionContext } from "./theme-transition.ts";
 import type { ThemeMode } from "./theme.ts";
-import type { SessionsListResult } from "./types.ts";
+import type { ModelCatalogEntry, SessionsListResult } from "./types.ts";
 
 type SessionDefaultsSnapshot = {
   mainSessionKey?: string;
@@ -123,17 +132,10 @@ function renderCronFilterIcon(hiddenCount: number) {
 }
 
 export function renderChatControls(state: AppViewState) {
-  const mainSessionKey = resolveMainSessionKey(state.hello, state.sessionsResult);
   const hideCron = state.sessionsHideCron ?? true;
   const hiddenCronCount = hideCron
     ? countHiddenCronSessions(state.sessionKey, state.sessionsResult)
     : 0;
-  const sessionOptions = resolveSessionOptions(
-    state.sessionKey,
-    state.sessionsResult,
-    mainSessionKey,
-    hideCron,
-  );
   const disableThinkingToggle = state.onboarding;
   const disableFocusToggle = state.onboarding;
   const showThinking = state.onboarding ? false : state.settings.chatShowThinking;
@@ -174,43 +176,6 @@ export function renderChatControls(state: AppViewState) {
   `;
   return html`
     <div class="chat-controls">
-      <label class="field chat-controls__session">
-        <select
-          .value=${state.sessionKey}
-          ?disabled=${!state.connected}
-          @change=${(e: Event) => {
-            const next = (e.target as HTMLSelectElement).value;
-            state.sessionKey = next;
-            state.chatMessage = "";
-            state.chatStream = null;
-            (state as unknown as OpenClawApp).chatStreamStartedAt = null;
-            state.chatRunId = null;
-            (state as unknown as OpenClawApp).resetToolStream();
-            (state as unknown as OpenClawApp).resetChatScroll();
-            state.applySettings({
-              ...state.settings,
-              sessionKey: next,
-              lastActiveSessionKey: next,
-            });
-            void state.loadAssistantIdentity();
-            syncUrlWithSessionKey(
-              state as unknown as Parameters<typeof syncUrlWithSessionKey>[0],
-              next,
-              true,
-            );
-            void loadChatHistory(state as unknown as ChatState);
-          }}
-        >
-          ${repeat(
-            sessionOptions,
-            (entry) => entry.key,
-            (entry) =>
-              html`<option value=${entry.key} title=${entry.key}>
-                ${entry.displayName ?? entry.key}
-              </option>`,
-          )}
-        </select>
-      </label>
       <button
         class="btn btn--sm btn--icon"
         ?disabled=${state.chatLoading || !state.connected}
@@ -289,6 +254,202 @@ export function renderChatControls(state: AppViewState) {
       </button>
     </div>
   `;
+}
+
+export function renderChatSessionSelect(state: AppViewState) {
+  const sessionGroups = resolveSessionOptionGroups(state, state.sessionKey, state.sessionsResult);
+  const modelSelect = renderChatModelSelect(state);
+  return html`
+    <div class="chat-controls__session-row">
+      <label class="field chat-controls__session">
+        <select
+          .value=${state.sessionKey}
+          ?disabled=${!state.connected || sessionGroups.length === 0}
+          @change=${(e: Event) => {
+            const next = (e.target as HTMLSelectElement).value;
+            if (state.sessionKey === next) {
+              return;
+            }
+            switchChatSession(state, next);
+          }}
+        >
+          ${repeat(
+            sessionGroups,
+            (group) => group.id,
+            (group) =>
+              html`<optgroup label=${group.label}>
+                ${repeat(
+                  group.options,
+                  (entry) => entry.key,
+                  (entry) =>
+                    html`<option value=${entry.key} title=${entry.title}>
+                      ${entry.label}
+                    </option>`,
+                )}
+              </optgroup>`,
+          )}
+        </select>
+      </label>
+      ${modelSelect}
+    </div>
+  `;
+}
+
+export function switchChatSession(state: AppViewState, nextSessionKey: string) {
+  state.sessionKey = nextSessionKey;
+  state.chatMessage = "";
+  state.chatStream = null;
+  (state as unknown as { chatQueue: unknown[] }).chatQueue = [];
+  (state as unknown as OpenClawApp).chatStreamStartedAt = null;
+  state.chatRunId = null;
+  (state as unknown as OpenClawApp).resetToolStream();
+  (state as unknown as OpenClawApp).resetChatScroll();
+  state.applySettings({
+    ...state.settings,
+    sessionKey: nextSessionKey,
+    lastActiveSessionKey: nextSessionKey,
+  });
+  void state.loadAssistantIdentity();
+  syncUrlWithSessionKey(
+    state as unknown as Parameters<typeof syncUrlWithSessionKey>[0],
+    nextSessionKey,
+    true,
+  );
+  void loadChatHistory(state as unknown as ChatState);
+  void refreshSessionOptions(state);
+}
+
+async function refreshSessionOptions(state: AppViewState) {
+  await loadSessions(state as unknown as Parameters<typeof loadSessions>[0], {
+    activeMinutes: 0,
+    limit: 0,
+    includeGlobal: true,
+    includeUnknown: true,
+  });
+}
+
+function resolveActiveSessionRow(state: AppViewState) {
+  return state.sessionsResult?.sessions?.find((row) => row.key === state.sessionKey);
+}
+
+function resolveModelOverrideValue(state: AppViewState): string {
+  const cached = state.chatModelOverrides[state.sessionKey];
+  if (cached) {
+    return normalizeChatModelOverrideValue(cached, state.chatModelCatalog ?? []);
+  }
+  if (cached === null) {
+    return "";
+  }
+  const activeRow = resolveActiveSessionRow(state);
+  if (activeRow && typeof activeRow.model === "string" && activeRow.model.trim()) {
+    return resolveServerChatModelValue(activeRow.model, activeRow.modelProvider);
+  }
+  return "";
+}
+
+function resolveDefaultModelValue(state: AppViewState): string {
+  const defaults = state.sessionsResult?.defaults;
+  return resolveServerChatModelValue(defaults?.model, defaults?.modelProvider);
+}
+
+function buildChatModelOptions(
+  catalog: ModelCatalogEntry[],
+  currentOverride: string,
+  defaultModel: string,
+): Array<{ value: string; label: string }> {
+  const seen = new Set<string>();
+  const options: Array<{ value: string; label: string }> = [];
+  const addOption = (value: string, label?: string) => {
+    const trimmed = value.trim();
+    if (!trimmed) {
+      return;
+    }
+    const key = trimmed.toLowerCase();
+    if (seen.has(key)) {
+      return;
+    }
+    seen.add(key);
+    options.push({ value: trimmed, label: label ?? trimmed });
+  };
+
+  for (const entry of catalog) {
+    const option = buildChatModelOption(entry);
+    addOption(option.value, option.label);
+  }
+
+  if (currentOverride) {
+    addOption(currentOverride);
+  }
+  if (defaultModel) {
+    addOption(defaultModel);
+  }
+  return options;
+}
+
+function renderChatModelSelect(state: AppViewState) {
+  const currentOverride = resolveModelOverrideValue(state);
+  const defaultModel = resolveDefaultModelValue(state);
+  const options = buildChatModelOptions(
+    state.chatModelCatalog ?? [],
+    currentOverride,
+    defaultModel,
+  );
+  const defaultDisplay = formatChatModelDisplay(defaultModel);
+  const defaultLabel = defaultModel ? `Default (${defaultDisplay})` : "Default model";
+  const busy =
+    state.chatLoading || state.chatSending || Boolean(state.chatRunId) || state.chatStream !== null;
+  const disabled =
+    !state.connected || busy || (state.chatModelsLoading && options.length === 0) || !state.client;
+  return html`
+    <label class="field chat-controls__session chat-controls__model">
+      <select
+        data-chat-model-select="true"
+        aria-label="Chat model"
+        ?disabled=${disabled}
+        @change=${async (e: Event) => {
+          const next = (e.target as HTMLSelectElement).value.trim();
+          await switchChatModel(state, next);
+        }}
+      >
+        <option value="" ?selected=${currentOverride === ""}>${defaultLabel}</option>
+        ${repeat(
+          options,
+          (entry) => entry.value,
+          (entry) =>
+            html`<option value=${entry.value} ?selected=${entry.value === currentOverride}>
+              ${entry.label}
+            </option>`,
+        )}
+      </select>
+    </label>
+  `;
+}
+
+async function switchChatModel(state: AppViewState, nextModel: string) {
+  if (!state.client || !state.connected) {
+    return;
+  }
+  const currentOverride = resolveModelOverrideValue(state);
+  if (currentOverride === nextModel) {
+    return;
+  }
+  const targetSessionKey = state.sessionKey;
+  const prevOverride = state.chatModelOverrides[targetSessionKey];
+  state.lastError = null;
+  state.chatModelOverrides = {
+    ...state.chatModelOverrides,
+    [targetSessionKey]: createChatModelOverride(nextModel),
+  };
+  try {
+    await state.client.request("sessions.patch", {
+      key: targetSessionKey,
+      model: nextModel || null,
+    });
+    await refreshSessionOptions(state);
+  } catch (err) {
+    state.chatModelOverrides = { ...state.chatModelOverrides, [targetSessionKey]: prevOverride };
+    state.lastError = `Failed to set model: ${String(err)}`;
+  }
 }
 
 function resolveMainSessionKey(
@@ -431,51 +592,147 @@ export function isCronSessionKey(key: string): boolean {
   return rest.startsWith("cron:");
 }
 
-function resolveSessionOptions(
+type SessionOptionEntry = {
+  key: string;
+  label: string;
+  scopeLabel: string;
+  title: string;
+};
+
+type SessionOptionGroup = {
+  id: string;
+  label: string;
+  options: SessionOptionEntry[];
+};
+
+export function resolveSessionOptionGroups(
+  state: AppViewState,
   sessionKey: string,
   sessions: SessionsListResult | null,
-  mainSessionKey?: string | null,
-  hideCron = false,
-) {
-  const seen = new Set<string>();
-  const options: Array<{ key: string; displayName?: string }> = [];
-
-  const resolvedMain = mainSessionKey && sessions?.sessions?.find((s) => s.key === mainSessionKey);
-  const resolvedCurrent = sessions?.sessions?.find((s) => s.key === sessionKey);
-
-  // Add main session key first
-  if (mainSessionKey) {
-    seen.add(mainSessionKey);
-    options.push({
-      key: mainSessionKey,
-      displayName: resolveSessionDisplayName(mainSessionKey, resolvedMain || undefined),
-    });
+): SessionOptionGroup[] {
+  const rows = sessions?.sessions ?? [];
+  const hideCron = state.sessionsHideCron ?? true;
+  const byKey = new Map<string, SessionsListResult["sessions"][number]>();
+  for (const row of rows) {
+    byKey.set(row.key, row);
   }
 
-  // Add current session key next — always include it even if it's a cron session,
-  // so the active session is never silently dropped from the select.
-  if (!seen.has(sessionKey)) {
-    seen.add(sessionKey);
-    options.push({
-      key: sessionKey,
-      displayName: resolveSessionDisplayName(sessionKey, resolvedCurrent),
-    });
-  }
+  const seenKeys = new Set<string>();
+  const groups = new Map<string, SessionOptionGroup>();
+  const ensureGroup = (groupId: string, label: string): SessionOptionGroup => {
+    const existing = groups.get(groupId);
+    if (existing) {
+      return existing;
+    }
+    const created: SessionOptionGroup = { id: groupId, label, options: [] };
+    groups.set(groupId, created);
+    return created;
+  };
 
-  // Add sessions from the result, optionally filtering out cron sessions.
-  if (sessions?.sessions) {
-    for (const s of sessions.sessions) {
-      if (!seen.has(s.key) && !(hideCron && isCronSessionKey(s.key))) {
-        seen.add(s.key);
-        options.push({
-          key: s.key,
-          displayName: resolveSessionDisplayName(s.key, s),
-        });
+  const addOption = (key: string) => {
+    if (!key || seenKeys.has(key)) {
+      return;
+    }
+    seenKeys.add(key);
+    const row = byKey.get(key);
+    const parsed = parseAgentSessionKey(key);
+    const group = parsed
+      ? ensureGroup(
+          `agent:${parsed.agentId.toLowerCase()}`,
+          resolveAgentGroupLabel(state, parsed.agentId),
+        )
+      : ensureGroup("other", "Other Sessions");
+    const scopeLabel = parsed?.rest?.trim() || key;
+    const label = resolveSessionScopedOptionLabel(key, row, parsed?.rest);
+    group.options.push({ key, label, scopeLabel, title: key });
+  };
+
+  for (const row of rows) {
+    if (row.key !== sessionKey && (row.kind === "global" || row.kind === "unknown")) {
+      continue;
+    }
+    if (hideCron && row.key !== sessionKey && isCronSessionKey(row.key)) {
+      continue;
+    }
+    addOption(row.key);
+  }
+  addOption(sessionKey);
+
+  for (const group of groups.values()) {
+    const counts = new Map<string, number>();
+    for (const option of group.options) {
+      counts.set(option.label, (counts.get(option.label) ?? 0) + 1);
+    }
+    for (const option of group.options) {
+      if ((counts.get(option.label) ?? 0) > 1 && option.scopeLabel !== option.label) {
+        option.label = `${option.label} · ${option.scopeLabel}`;
       }
     }
   }
 
-  return options;
+  const allOptions = Array.from(groups.values()).flatMap((group) =>
+    group.options.map((option) => ({ groupLabel: group.label, option })),
+  );
+  const labels = new Map(allOptions.map(({ option }) => [option, option.label]));
+  const countAssignedLabels = () => {
+    const counts = new Map<string, number>();
+    for (const { option } of allOptions) {
+      const label = labels.get(option) ?? option.label;
+      counts.set(label, (counts.get(label) ?? 0) + 1);
+    }
+    return counts;
+  };
+  const labelIncludesScopeLabel = (label: string, scopeLabel: string) => {
+    const trimmedScope = scopeLabel.trim();
+    if (!trimmedScope) {
+      return false;
+    }
+    return (
+      label === trimmedScope ||
+      label.endsWith(` · ${trimmedScope}`) ||
+      label.endsWith(` / ${trimmedScope}`)
+    );
+  };
+
+  const globalCounts = countAssignedLabels();
+  for (const { groupLabel, option } of allOptions) {
+    const currentLabel = labels.get(option) ?? option.label;
+    if ((globalCounts.get(currentLabel) ?? 0) <= 1) {
+      continue;
+    }
+    const scopedPrefix = `${groupLabel} / `;
+    if (currentLabel.startsWith(scopedPrefix)) {
+      continue;
+    }
+    labels.set(option, `${groupLabel} / ${currentLabel}`);
+  }
+
+  const scopedCounts = countAssignedLabels();
+  for (const { option } of allOptions) {
+    const currentLabel = labels.get(option) ?? option.label;
+    if ((scopedCounts.get(currentLabel) ?? 0) <= 1) {
+      continue;
+    }
+    if (labelIncludesScopeLabel(currentLabel, option.scopeLabel)) {
+      continue;
+    }
+    labels.set(option, `${currentLabel} · ${option.scopeLabel}`);
+  }
+
+  const finalCounts = countAssignedLabels();
+  for (const { option } of allOptions) {
+    const currentLabel = labels.get(option) ?? option.label;
+    if ((finalCounts.get(currentLabel) ?? 0) <= 1) {
+      continue;
+    }
+    labels.set(option, `${currentLabel} · ${option.key}`);
+  }
+
+  for (const { option } of allOptions) {
+    option.label = labels.get(option) ?? option.label;
+  }
+
+  return Array.from(groups.values());
 }
 
 /** Count sessions with a cron: key that would be hidden when hideCron=true. */
@@ -485,6 +742,32 @@ function countHiddenCronSessions(sessionKey: string, sessions: SessionsListResul
   }
   // Don't count the currently active session even if it's a cron.
   return sessions.sessions.filter((s) => isCronSessionKey(s.key) && s.key !== sessionKey).length;
+}
+
+function resolveAgentGroupLabel(state: AppViewState, agentIdRaw: string): string {
+  const normalized = agentIdRaw.trim().toLowerCase();
+  const agent = (state.agentsList?.agents ?? []).find(
+    (entry) => entry.id.trim().toLowerCase() === normalized,
+  );
+  const name = agent?.identity?.name?.trim() || agent?.name?.trim() || "";
+  return name && name !== agentIdRaw ? `${name} (${agentIdRaw})` : agentIdRaw;
+}
+
+function resolveSessionScopedOptionLabel(
+  key: string,
+  row?: SessionsListResult["sessions"][number],
+  rest?: string,
+) {
+  const base = rest?.trim() || key;
+  if (!row) {
+    return base;
+  }
+  const label = row.label?.trim() || "";
+  const displayName = row.displayName?.trim() || "";
+  if ((label && label !== key) || (displayName && displayName !== key)) {
+    return resolveSessionDisplayName(key, row);
+  }
+  return base;
 }
 
 const THEME_ORDER: ThemeMode[] = ["system", "light", "dark"];

@@ -7,8 +7,21 @@ export const TAB_GROUPS = [
     label: "Control",
     tabs: ["overview", "channels", "instances", "sessions", "usage", "cron"],
   },
-  { label: "Agent", tabs: ["orchestrator", "skills", "nodes"] },
-  { label: "Settings", tabs: ["settings", "config", "debug", "logs"] },
+  { label: "Agent", tabs: ["agents", "orchestrator", "skills", "nodes"] },
+  {
+    label: "Settings",
+    tabs: [
+      "settings",
+      "config",
+      "communications",
+      "appearance",
+      "automation",
+      "infrastructure",
+      "aiAgents",
+      "debug",
+      "logs",
+    ],
+  },
 ] as const;
 
 export type Tab =
@@ -26,6 +39,11 @@ export type Tab =
   | "dgx"
   | "settings"
   | "config"
+  | "communications"
+  | "appearance"
+  | "automation"
+  | "infrastructure"
+  | "aiAgents"
   | "debug"
   | "logs";
 
@@ -44,6 +62,11 @@ const TAB_PATHS: Record<Tab, string> = {
   dgx: "/dgx",
   settings: "/settings",
   config: "/config",
+  communications: "/communications",
+  appearance: "/appearance",
+  automation: "/automation",
+  infrastructure: "/infrastructure",
+  aiAgents: "/ai-agents",
   debug: "/debug",
   logs: "/logs",
 };
@@ -159,6 +182,16 @@ export function iconForTab(tab: Tab): IconName {
       return "sliders";
     case "config":
       return "settings";
+    case "communications":
+      return "send";
+    case "appearance":
+      return "spark";
+    case "automation":
+      return "terminal";
+    case "infrastructure":
+      return "globe";
+    case "aiAgents":
+      return "brain";
     case "debug":
       return "bug";
     case "logs":
@@ -198,6 +231,16 @@ export function titleForTab(tab: Tab) {
       return "Settings";
     case "config":
       return "Config";
+    case "communications":
+      return "Communications";
+    case "appearance":
+      return "Appearance";
+    case "automation":
+      return "Automation";
+    case "infrastructure":
+      return "Infrastructure";
+    case "aiAgents":
+      return "AI Agents";
     case "debug":
       return "Debug";
     case "logs":
@@ -237,6 +280,16 @@ export function subtitleForTab(tab: Tab) {
       return "Control UI preferences and gateway runtime toggles.";
     case "config":
       return "Edit ~/.openclaw/openclaw.json safely.";
+    case "communications":
+      return "Channels, broadcast, and audio transport configuration.";
+    case "appearance":
+      return "Theme, shell, and presentation controls.";
+    case "automation":
+      return "Commands, hooks, cron, approvals, and plugins.";
+    case "infrastructure":
+      return "Gateway, web, browser, discovery, and media host settings.";
+    case "aiAgents":
+      return "Agents, models, skills, tools, memory, and session defaults.";
     case "debug":
       return "Gateway snapshots, events, and manual RPC calls.";
     case "logs":

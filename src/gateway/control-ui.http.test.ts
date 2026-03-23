@@ -173,6 +173,28 @@ describe("handleControlUiHttpRequest", () => {
     });
   });
 
+  it("includes resolved local gateway token in bootstrap config when available", async () => {
+    await withControlUiRoot({
+      fn: async (tmp) => {
+        const { res, end } = makeMockHttpResponse();
+        const handled = handleControlUiHttpRequest(
+          { url: CONTROL_UI_BOOTSTRAP_CONFIG_PATH, method: "GET" } as IncomingMessage,
+          res,
+          {
+            root: { kind: "resolved", path: tmp },
+            config: {
+              agents: { defaults: { workspace: tmp } },
+              gateway: { auth: { mode: "token", token: "bootstrap-token" } },
+            } as never,
+          },
+        );
+        expect(handled).toBe(true);
+        const parsed = parseBootstrapPayload(end);
+        expect(parsed.gatewayAuthToken).toBe("bootstrap-token");
+      },
+    });
+  });
+
   it("serves bootstrap config JSON under basePath", async () => {
     await withControlUiRoot({
       fn: async (tmp) => {

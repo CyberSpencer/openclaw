@@ -177,12 +177,26 @@ import {
   SessionsCompactParamsSchema,
   type SessionsUsageParams,
   SessionsUsageParamsSchema,
+  type SessionsCreateParams,
+  SessionsCreateParamsSchema,
   type SessionsDeleteParams,
   SessionsDeleteParamsSchema,
+  type OrchestratorGetParams,
+  OrchestratorGetParamsSchema,
+  type OrchestratorSetParams,
+  OrchestratorSetParamsSchema,
   type SessionsListParams,
   SessionsListParamsSchema,
   type SessionsSubagentsParams,
   SessionsSubagentsParamsSchema,
+  type SessionsMessagesSubscribeParams,
+  SessionsMessagesSubscribeParamsSchema,
+  type SessionsMessagesUnsubscribeParams,
+  SessionsMessagesUnsubscribeParamsSchema,
+  type SessionsAbortParams,
+  SessionsAbortParamsSchema,
+  type SessionsSendParams,
+  SessionsSendParamsSchema,
   type SessionsPatchParams,
   SessionsPatchParamsSchema,
   type SessionsPreviewParams,
@@ -297,12 +311,29 @@ export const validateSessionsListParams = ajv.compile<SessionsListParams>(Sessio
 export const validateSessionsSubagentsParams = ajv.compile<SessionsSubagentsParams>(
   SessionsSubagentsParamsSchema,
 );
+export const validateOrchestratorGetParams = ajv.compile<OrchestratorGetParams>(
+  OrchestratorGetParamsSchema,
+);
+export const validateOrchestratorSetParams = ajv.compile<OrchestratorSetParams>(
+  OrchestratorSetParamsSchema,
+);
 export const validateSessionsPreviewParams = ajv.compile<SessionsPreviewParams>(
   SessionsPreviewParamsSchema,
 );
 export const validateSessionsResolveParams = ajv.compile<SessionsResolveParams>(
   SessionsResolveParamsSchema,
 );
+export const validateSessionsCreateParams = ajv.compile<SessionsCreateParams>(
+  SessionsCreateParamsSchema,
+);
+export const validateSessionsMessagesSubscribeParams = ajv.compile<SessionsMessagesSubscribeParams>(
+  SessionsMessagesSubscribeParamsSchema,
+);
+export const validateSessionsMessagesUnsubscribeParams =
+  ajv.compile<SessionsMessagesUnsubscribeParams>(SessionsMessagesUnsubscribeParamsSchema);
+export const validateSessionsAbortParams =
+  ajv.compile<SessionsAbortParams>(SessionsAbortParamsSchema);
+export const validateSessionsSendParams = ajv.compile<SessionsSendParams>(SessionsSendParamsSchema);
 export const validateSessionsPatchParams =
   ajv.compile<SessionsPatchParams>(SessionsPatchParamsSchema);
 export const validateSessionsResetParams =
@@ -464,7 +495,12 @@ export {
   NodeListParamsSchema,
   NodeInvokeParamsSchema,
   SessionsListParamsSchema,
+  OrchestratorGetParamsSchema,
+  OrchestratorSetParamsSchema,
   SessionsPreviewParamsSchema,
+  SessionsResolveParamsSchema,
+  SessionsCreateParamsSchema,
+  SessionsAbortParamsSchema,
   SessionsPatchParamsSchema,
   SessionsResetParamsSchema,
   SessionsDeleteParamsSchema,
@@ -616,6 +652,9 @@ export type {
   NodeInvokeResultParams,
   NodeEventParams,
   SessionsListParams,
+  SessionsSubagentsParams,
+  OrchestratorGetParams,
+  OrchestratorSetParams,
   SessionsPreviewParams,
   SessionsResolveParams,
   SessionsPatchParams,

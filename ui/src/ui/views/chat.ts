@@ -874,11 +874,10 @@ ${item.text}<span class="terminal-cursor" aria-hidden="true"></span></pre>
 /**
  * Render Anthropic provider-usage chips in the orchestration meta row.
  *
- * Shows quota windows and suppression notes (e.g. "Sonnet paused 45m (rate_limit)")
- * sourced from the router-anthropic-suppression.json state file + claude.ai usage API.
- *
- * notes are populated by the app layer via `loadProviderUsageSummary` and
- * `formatUsageWindowSummary` / `resolveSuppressionNotes`.
+ * Notes are populated from the gateway `usage.status` payload via
+ * `buildProviderUsageChipNotes`, which currently formats provider API usage
+ * windows and provider errors only. There is no UI read-path here for any
+ * legacy suppression-state file.
  */
 function renderAnthropicUsageChips(notes: string[] | null | undefined) {
   if (!notes || notes.length === 0) {
@@ -906,7 +905,8 @@ function renderAnthropicUsageChips(notes: string[] | null | undefined) {
 
 /**
  * Render Codex/OpenAI provider-usage chips in the orchestration meta row.
- * Mirrors renderAnthropicUsageChips; sources from openai-codex suppression state.
+ * Mirrors renderAnthropicUsageChips and uses the same `usage.status` provider
+ * snapshot flow.
  */
 function renderCodexUsageChips(notes: string[] | null | undefined) {
   if (!notes || notes.length === 0) {

@@ -1,5 +1,7 @@
 import { LitElement } from "lit";
 import { customElement, state } from "lit/decorators.js";
+import { buildProviderUsageChipNotes } from "../../../src/infra/provider-usage.chips.js";
+import type { ProviderUsageSnapshot } from "../../../src/infra/provider-usage.types.js";
 import {
   handleChannelConfigReload as handleChannelConfigReloadInternal,
   handleChannelConfigSave as handleChannelConfigSaveInternal,
@@ -53,6 +55,7 @@ import {
 } from "./app-tool-stream.ts";
 import type { AppViewState } from "./app-view-state.ts";
 import { resolveInjectedAssistantIdentity } from "./assistant-identity.ts";
+import type { ChatModelOverride } from "./chat-model-ref.ts";
 import {
   buildCommandPaletteActions,
   filterCommandPaletteActions,
@@ -116,12 +119,14 @@ import type {
   HealthSnapshot,
   LogEntry,
   LogLevel,
+  ModelCatalogEntry,
   PresenceEntry,
   ChannelsStatusSnapshot,
   SessionsListResult,
   SkillStatusReport,
   StatusSummary,
   NostrProfile,
+  ToolsCatalogResult,
 } from "./types.ts";
 import {
   type ChatAttachment,
@@ -143,6 +148,7 @@ declare global {
 const MAX_TTS_CHARS = 250;
 const WORKLET_VERSION = "20260210-v1";
 const SPARK_STATUS_FAILURE_STOP_THRESHOLD = 3;
+const PROVIDER_USAGE_POLL_INTERVAL_MS = 5 * 60_000;
 const SPARK_MIC_CHUNK_MS = 4_000;
 const SPARK_MIC_LONG_RECORDING_NOTICE_MS = 55_000;
 const SPARK_MIC_MAX_AUDIO_BASE64_CHARS = 2_300_000;
@@ -202,38 +208,8 @@ function resolveOnboardingMode(): boolean {
   return normalized === "1" || normalized === "true" || normalized === "yes" || normalized === "on";
 }
 
-type SparkStatusResult = {
-  enabled?: boolean;
-  active?: boolean;
-  source?: "dgx-stats" | "fallback";
-  host?: string | null;
-  checkedAt?: number;
-  voiceAvailable?: boolean;
-  overall?: "healthy" | "degraded" | "down" | "unknown";
-  counts?: { healthy: number; degraded: number; down: number; total: number };
-  services?: Record<
-    string,
-    { url?: string; healthy?: boolean; status?: number; error?: string | null; latency_ms?: number }
-  >;
-  gpu?: {
-    name?: string;
-    temperature_c?: number;
-    power_w?: number;
-    utilization_pct?: number;
-    memory_used_mib?: number;
-    memory_total_mib?: number;
-    unified_memory?: boolean;
-    processes?: Array<{ pid: number; memory_mib: number; process: string }>;
-  } | null;
-  containers?: Array<{
-    name: string;
-    cpu?: string;
-    memory?: string;
-    mem_pct?: string;
-    net_io?: string;
-    block_io?: string;
-  }> | null;
-};
+type SparkStatusResult = import("./types.js").SparkGatewayPollStatus;
+type DgxRoutingStatusResult = import("./types.js").DgxRoutingStatus;
 
 type OrchestratorGetResult = {
   exists?: boolean;
@@ -474,6 +450,8 @@ function hasRecentSubagentActivity(result: SessionsListResult | null | undefined
 export class OpenClawApp extends LitElement {
   @state() settings: UiSettings = loadSettings();
   @state() password = "";
+  @state() loginShowGatewayToken = false;
+  @state() loginShowGatewayPassword = false;
   @state() tab: Tab = "chat";
   @state() onboarding = resolveOnboardingMode();
   @state() connected = false;
@@ -504,6 +482,9 @@ export class OpenClawApp extends LitElement {
   @state() compactionStatus: CompactionStatus | null = null;
   @state() chatAvatarUrl: string | null = null;
   @state() chatThinkingLevel: string | null = null;
+  @state() chatModelOverrides: Record<string, ChatModelOverride | null> = {};
+  @state() chatModelsLoading = false;
+  @state() chatModelCatalog: ModelCatalogEntry[] = [];
   @state() chatQueue: ChatQueueItem[] = [];
   @state() chatAttachments: ChatAttachment[] = [];
   private chatDraftBySession: Record<string, string> = {};
@@ -526,7 +507,15 @@ export class OpenClawApp extends LitElement {
   // Provider-usage rate-limit chips
   @state() codexUsageNotes: string[] | null = null;
   @state() anthropicUsageNotes: string[] | null = null;
-  private providerUsagePollTimer: ReturnType<typeof setInterval> | null = null;
+  /** Browser interval id; typed as number to avoid NodeJS.Timeout vs DOM mismatch under @types/node. */
+  private providerUsagePollTimer: number | null = null;
+  @state() anthropicUsageSnapshot: ProviderUsageSnapshot | null = null;
+  private providerUsageVisibilityHandler = () => {
+    if (!this.connected || document.hidden) {
+      return;
+    }
+    void this.refreshProviderUsage();
+  };
   // Sidebar state for tool output viewing
   @state() sidebarOpen = false;
   @state() sidebarContent: string | null = null;
@@ -632,6 +621,26 @@ export class OpenClawApp extends LitElement {
   @state() configSearchQuery = "";
   @state() configActiveSection: string | null = null;
   @state() configActiveSubsection: string | null = null;
+  @state() communicationsFormMode: "form" | "raw" = "form";
+  @state() communicationsSearchQuery = "";
+  @state() communicationsActiveSection: string | null = null;
+  @state() communicationsActiveSubsection: string | null = null;
+  @state() appearanceFormMode: "form" | "raw" = "form";
+  @state() appearanceSearchQuery = "";
+  @state() appearanceActiveSection: string | null = null;
+  @state() appearanceActiveSubsection: string | null = null;
+  @state() automationFormMode: "form" | "raw" = "form";
+  @state() automationSearchQuery = "";
+  @state() automationActiveSection: string | null = null;
+  @state() automationActiveSubsection: string | null = null;
+  @state() infrastructureFormMode: "form" | "raw" = "form";
+  @state() infrastructureSearchQuery = "";
+  @state() infrastructureActiveSection: string | null = null;
+  @state() infrastructureActiveSubsection: string | null = null;
+  @state() aiAgentsFormMode: "form" | "raw" = "form";
+  @state() aiAgentsSearchQuery = "";
+  @state() aiAgentsActiveSection: string | null = null;
+  @state() aiAgentsActiveSubsection: string | null = null;
 
   @state() channelsLoading = false;
   @state() channelsSnapshot: ChannelsStatusSnapshot | null = null;
@@ -653,6 +662,9 @@ export class OpenClawApp extends LitElement {
   @state() agentsList: AgentsListResult | null = null;
   @state() agentsError: string | null = null;
   @state() agentsSelectedId: string | null = null;
+  @state() toolsCatalogLoading = false;
+  @state() toolsCatalogError: string | null = null;
+  @state() toolsCatalogResult: ToolsCatalogResult | null = null;
   @state() agentsPanel: "overview" | "files" | "tools" | "skills" | "channels" | "cron" =
     "overview";
   @state() agentFilesLoading = false;
@@ -677,6 +689,12 @@ export class OpenClawApp extends LitElement {
   @state() sessionsFilterLimit = "120";
   @state() sessionsIncludeGlobal = true;
   @state() sessionsIncludeUnknown = false;
+  @state() sessionsSearchQuery = "";
+  @state() sessionsSortColumn: "key" | "kind" | "updated" | "tokens" = "updated";
+  @state() sessionsSortDir: "asc" | "desc" = "desc";
+  @state() sessionsPage = 0;
+  @state() sessionsPageSize = 25;
+  @state() sessionsSelectedKeys = new Set<string>();
 
   @state() usageLoading = false;
   @state() usageResult: import("./types.js").SessionsUsageResult | null = null;
@@ -732,12 +750,39 @@ export class OpenClawApp extends LitElement {
   usageQueryDebounceTimer: number | null = null;
 
   @state() cronLoading = false;
+  @state() cronJobsLoadingMore = false;
   @state() cronJobs: CronJob[] = [];
+  @state() cronJobsTotal = 0;
+  @state() cronJobsHasMore = false;
+  @state() cronJobsNextOffset: number | null = null;
+  @state() cronJobsLimit = 50;
+  @state() cronJobsQuery = "";
+  @state() cronJobsEnabledFilter: import("./types.js").CronJobsEnabledFilter = "all";
+  @state() cronJobsScheduleKindFilter: import("./controllers/cron.ts").CronJobsScheduleKindFilter =
+    "all";
+  @state() cronJobsLastStatusFilter: import("./controllers/cron.ts").CronJobsLastStatusFilter =
+    "all";
+  @state() cronJobsSortBy: import("./types.js").CronJobsSortBy = "nextRunAtMs";
+  @state() cronJobsSortDir: import("./types.js").CronSortDir = "asc";
   @state() cronStatus: CronStatus | null = null;
   @state() cronError: string | null = null;
   @state() cronForm: CronFormState = { ...DEFAULT_CRON_FORM };
+  @state() cronFieldErrors: import("./controllers/cron.ts").CronFieldErrors = {};
+  @state() cronEditingJobId: string | null = null;
   @state() cronRunsJobId: string | null = null;
+  @state() cronRunsLoadingMore = false;
   @state() cronRuns: CronRunLogEntry[] = [];
+  @state() cronRunsTotal = 0;
+  @state() cronRunsHasMore = false;
+  @state() cronRunsNextOffset: number | null = null;
+  @state() cronRunsLimit = 50;
+  @state() cronRunsScope: import("./types.js").CronRunScope = "all";
+  @state() cronRunsStatuses: import("./types.js").CronRunsStatusValue[] = [];
+  @state() cronRunsDeliveryStatuses: import("./types.js").CronDeliveryStatus[] = [];
+  @state() cronRunsStatusFilter: import("./types.js").CronRunsStatusFilter = "all";
+  @state() cronRunsQuery = "";
+  @state() cronRunsSortDir: import("./types.js").CronSortDir = "desc";
+  @state() cronModelSuggestions: string[] = [];
   @state() cronBusy = false;
 
   @state() skillsLoading = false;
@@ -774,8 +819,10 @@ export class OpenClawApp extends LitElement {
   @state() memoryStoreLabel: string | null = null;
   @state() nvidiaRouterEnabled: boolean | null = null;
   @state() nvidiaRouterHealthy: boolean | null = null;
+  @state() nvidiaRouterError: string | null = null;
   @state() nvidiaRouterBusy = false;
   @state() sparkStatus: SparkStatusResult | null = null;
+  @state() dgxRoutingStatus: DgxRoutingStatusResult | null = null;
   @state() sparkBusy = false;
   @state() sparkMicRecording = false;
   private sparkMicMediaRecorder: MediaRecorder | null = null;
@@ -860,6 +907,7 @@ export class OpenClawApp extends LitElement {
     super.connectedCallback();
     this.sparkMicTelemetryLog = loadSparkMicTelemetryFromStorage();
     window.addEventListener("keydown", this.globalKeydownHandler);
+    document.addEventListener("visibilitychange", this.providerUsageVisibilityHandler);
     this.rebuildOrchRunIndex();
     handleConnected(this as unknown as Parameters<typeof handleConnected>[0]);
     void this.refreshProviderUsage();
@@ -872,6 +920,7 @@ export class OpenClawApp extends LitElement {
   disconnectedCallback() {
     handleDisconnected(this as unknown as Parameters<typeof handleDisconnected>[0]);
     window.removeEventListener("keydown", this.globalKeydownHandler);
+    document.removeEventListener("visibilitychange", this.providerUsageVisibilityHandler);
     this.stopSparkStatusPolling();
     this.stopSubagentMonitorPolling();
     this.stopProviderUsagePolling();
@@ -891,6 +940,7 @@ export class OpenClawApp extends LitElement {
         this.stopSparkStatusPolling();
         this.sparkStatusConsecutivePollFailures = 0;
         this.sparkStatus = null;
+        this.dgxRoutingStatus = null;
         this.voiceState.sparkVoiceAvailable = false;
         this.stopProviderUsagePolling();
       }
@@ -929,32 +979,41 @@ export class OpenClawApp extends LitElement {
 
   async refreshProviderUsage() {
     if (!this.client || !this.connected) {
+      this.anthropicUsageNotes = null;
+      this.codexUsageNotes = null;
+      this.anthropicUsageSnapshot = null;
       return;
     }
     try {
-      type ProviderUsageResult = {
-        providers: Array<{ provider: string; notes?: string[] }>;
-      };
-      const summary = await this.client.request<ProviderUsageResult>("usage.status", {});
-      const anthropic = summary.providers.find((p) => p.provider === "anthropic");
-      const codex = summary.providers.find((p) => p.provider === "openai-codex");
-      this.anthropicUsageNotes = anthropic?.notes ?? null;
-      this.codexUsageNotes = codex?.notes ?? null;
+      const summary = await this.client.request<{ providers: ProviderUsageSnapshot[] }>(
+        "usage.status",
+        {},
+      );
+      const providers = Array.isArray(summary.providers) ? summary.providers : [];
+      const anthropic = providers.find((p) => p.provider === "anthropic") ?? null;
+      const codex = providers.find((p) => p.provider === "openai-codex") ?? null;
+      const aNotes = anthropic ? buildProviderUsageChipNotes(anthropic) : [];
+      const cNotes = codex ? buildProviderUsageChipNotes(codex) : [];
+      this.anthropicUsageNotes = aNotes.length > 0 ? aNotes : null;
+      this.codexUsageNotes = cNotes.length > 0 ? cNotes : null;
+      this.anthropicUsageSnapshot = anthropic;
     } catch {
-      // silently ignore; chips stay cleared on failure
+      this.anthropicUsageNotes = null;
+      this.codexUsageNotes = null;
+      this.anthropicUsageSnapshot = null;
     }
   }
 
-  private startProviderUsagePolling(intervalMs = 60_000) {
+  private startProviderUsagePolling(intervalMs = PROVIDER_USAGE_POLL_INTERVAL_MS) {
     if (this.providerUsagePollTimer != null) {
       return;
     }
     this.providerUsagePollTimer = window.setInterval(() => {
-      if (!this.connected) {
+      if (!this.connected || document.hidden) {
         return;
       }
       void this.refreshProviderUsage();
-    }, intervalMs);
+    }, intervalMs) as unknown as number;
   }
 
   private stopProviderUsagePolling() {
@@ -2191,6 +2250,38 @@ export class OpenClawApp extends LitElement {
     this.syncActiveRunState(this.sessionKey);
   }
 
+  pruneDisconnectedSessionRunState(activeSessionKeys?: Iterable<string>) {
+    const preserve = new Set<string>();
+    const currentSessionKey = (this.sessionKey ?? "").trim() || "main";
+    preserve.add(currentSessionKey);
+    if (activeSessionKeys) {
+      for (const raw of activeSessionKeys) {
+        const key = String(raw ?? "").trim();
+        if (key) {
+          preserve.add(key);
+        }
+      }
+    }
+
+    for (const [key, { bucket, host }] of this.sessionRunHosts.entries()) {
+      if (preserve.has(key)) {
+        continue;
+      }
+      const hasLiveRun = Boolean(bucket.chatRunId || bucket.chatStream);
+      if (hasLiveRun) {
+        continue;
+      }
+      if (bucket.compactionClearTimer != null) {
+        window.clearTimeout(bucket.compactionClearTimer);
+        bucket.compactionClearTimer = null;
+      }
+      resetToolStreamInternal(host);
+      this.sessionRunHosts.delete(key);
+    }
+
+    this.syncActiveRunState(this.sessionKey);
+  }
+
   private syncActiveRunState(sessionKey: string) {
     const host = this.getSessionRunHost(sessionKey);
     const entry = this.sessionRunHosts.get(host.sessionKey);
@@ -2207,15 +2298,22 @@ export class OpenClawApp extends LitElement {
     this.chatToolMessages = bucket.chatToolMessages;
   }
 
-  async reconcileInFlightOrchestratorRuns() {
+  async reconcileInFlightOrchestratorRuns(): Promise<{ activeSessionKeys: string[] }> {
     if (!this.client || !this.connected) {
-      return;
+      return { activeSessionKeys: [] };
     }
 
     const requesterSessionKey = (this.sessionKey ?? "").trim();
     if (!requesterSessionKey) {
-      return;
+      return { activeSessionKeys: [] };
     }
+    const activeSessionKeys = new Set<string>();
+    const rememberActiveSessionKey = (sessionKey: string | undefined) => {
+      const key = (sessionKey ?? "").trim();
+      if (key) {
+        activeSessionKeys.add(key);
+      }
+    };
 
     const applyRunState = (
       cardId: string,
@@ -2245,7 +2343,7 @@ export class OpenClawApp extends LitElement {
               status: nextStatus,
               startedAt: opts?.startedAt ?? run.startedAt,
               endedAt: opts?.endedAt ?? (nextStatus === "running" ? run.endedAt : Date.now()),
-              error: nextStatus === "error" ? (opts?.error ?? run.error) : run.error,
+              error: nextStatus === "error" ? (opts?.error ?? run.error) : undefined,
             },
             updatedAt: Date.now(),
           };
@@ -2254,6 +2352,15 @@ export class OpenClawApp extends LitElement {
       );
     };
 
+    const cards = (this.orchBoards ?? []).flatMap((board) => board.cards ?? []);
+    const inFlightCards = cards.filter((card) => {
+      const status = card.run?.status;
+      return status === "accepted" || status === "running";
+    });
+    if (inFlightCards.length === 0) {
+      return { activeSessionKeys: [] };
+    }
+
     let tasks: Array<{
       runId?: string;
       childSessionKey?: string;
@@ -2261,6 +2368,7 @@ export class OpenClawApp extends LitElement {
       startedAt?: number;
       endedAt?: number;
     }> = [];
+    let tasksFetchFailed = false;
 
     try {
       const res = await this.client.request<SessionsSubagentsResult>("sessions.subagents", {
@@ -2269,8 +2377,14 @@ export class OpenClawApp extends LitElement {
         limit: 200,
       });
       tasks = Array.isArray(res?.tasks) ? res.tasks : [];
-    } catch {
+    } catch (err) {
+      tasksFetchFailed = true;
+      console.warn("[orchestrator] sessions.subagents reconciliation failed", err);
       tasks = [];
+    }
+    if (tasksFetchFailed) {
+      this.lastError =
+        "orchestrator reconciliation degraded: sessions.subagents unavailable; statuses may lag until live updates arrive";
     }
 
     const byRunId = new Map<string, (typeof tasks)[number]>();
@@ -2287,13 +2401,10 @@ export class OpenClawApp extends LitElement {
       }
     }
 
-    const cards = (this.orchBoards ?? []).flatMap((board) => board.cards ?? []);
-    for (const card of cards) {
+    const unresolvedCards: typeof inFlightCards = [];
+    for (const card of inFlightCards) {
       const run = card.run;
       if (!run) {
-        continue;
-      }
-      if (run.status !== "accepted" && run.status !== "running") {
         continue;
       }
 
@@ -2304,6 +2415,7 @@ export class OpenClawApp extends LitElement {
 
       if (task) {
         if (task.status === "running") {
+          rememberActiveSessionKey(task.childSessionKey ?? childSessionKey);
           applyRunState(card.id, "running", { startedAt: task.startedAt });
           continue;
         }
@@ -2320,13 +2432,48 @@ export class OpenClawApp extends LitElement {
           continue;
         }
       }
+      unresolvedCards.push(card);
+    }
 
+    const runIds = [
+      ...new Set(
+        unresolvedCards
+          .map((card) => (card.run?.runId ?? "").trim())
+          .filter((value) => Boolean(value)),
+      ),
+    ];
+    const snapshotsByRunId = new Map<string, AgentWaitResult | null>();
+    if (runIds.length > 0) {
+      const settled = await Promise.allSettled(
+        runIds.map(async (runId) => {
+          try {
+            const snapshot = await this.client.request<AgentWaitResult>("agent.wait", {
+              runId,
+              timeoutMs: 1,
+            });
+            return { runId, snapshot };
+          } catch {
+            return { runId, snapshot: null };
+          }
+        }),
+      );
+      for (const result of settled) {
+        if (result.status === "fulfilled") {
+          snapshotsByRunId.set(result.value.runId, result.value.snapshot);
+        }
+      }
+    }
+
+    for (const card of unresolvedCards) {
+      const run = card.run;
+      if (!run) {
+        continue;
+      }
+      const runId = (run.runId ?? "").trim();
+      const childSessionKey = (run.sessionKey ?? "").trim();
       if (runId) {
-        try {
-          const snapshot = await this.client.request<AgentWaitResult>("agent.wait", {
-            runId,
-            timeoutMs: 1,
-          });
+        const snapshot = snapshotsByRunId.get(runId);
+        if (snapshot) {
           const status = typeof snapshot?.status === "string" ? snapshot.status : "";
           const startedAt =
             typeof snapshot?.startedAt === "number" ? snapshot.startedAt : undefined;
@@ -2340,15 +2487,21 @@ export class OpenClawApp extends LitElement {
             applyRunState(card.id, "error", { startedAt, endedAt, error });
             continue;
           }
-        } catch {
-          // best-effort reconciliation
+          if (status === "running") {
+            rememberActiveSessionKey(childSessionKey);
+            applyRunState(card.id, "running", { startedAt });
+            continue;
+          }
         }
       }
 
       if (run.status === "accepted") {
+        rememberActiveSessionKey(childSessionKey);
         applyRunState(card.id, "running", { startedAt: run.createdAt });
       }
     }
+
+    return { activeSessionKeys: [...activeSessionKeys] };
   }
 
   handleOrchestratorAgentEvent(payload: AgentEventPayload) {
@@ -3474,9 +3627,11 @@ export class OpenClawApp extends LitElement {
       const status = await this.client.request<RouterStatusResult>("router.status", {});
       this.nvidiaRouterEnabled = status.enabled !== false;
       this.nvidiaRouterHealthy = status.enabled === false ? false : Boolean(status.healthy);
+      this.nvidiaRouterError = typeof status.error === "string" ? status.error : null;
     } catch {
       this.nvidiaRouterEnabled = null;
       this.nvidiaRouterHealthy = null;
+      this.nvidiaRouterError = null;
     } finally {
       this.nvidiaRouterBusy = false;
     }
@@ -3496,6 +3651,7 @@ export class OpenClawApp extends LitElement {
       });
       this.nvidiaRouterEnabled = result.enabled !== false;
       this.nvidiaRouterHealthy = result.enabled === false ? false : Boolean(result.healthy);
+      this.nvidiaRouterError = typeof result.error === "string" ? result.error : null;
     } catch (err) {
       this.lastError = String(err);
     } finally {
@@ -3523,6 +3679,8 @@ export class OpenClawApp extends LitElement {
       this.sparkBusy = false;
     }
 
+    await this.refreshDgxRoutingStatus();
+
     const available = this.isSparkVoiceAvailable();
     const wasAvailable = this.voiceState.sparkVoiceAvailable;
     this.voiceState.sparkVoiceAvailable = available;
@@ -3537,6 +3695,18 @@ export class OpenClawApp extends LitElement {
         ? "Spark voice became unavailable. Conversation stopped."
         : "Spark status polling failed repeatedly. Conversation stopped.";
       this.requestUpdate();
+    }
+  }
+
+  async refreshDgxRoutingStatus() {
+    if (!this.client || !this.connected) {
+      return;
+    }
+    try {
+      const status = await this.client.request<DgxRoutingStatusResult>("dgx.routing.status", {});
+      this.dgxRoutingStatus = status;
+    } catch {
+      this.dgxRoutingStatus = null;
     }
   }
 

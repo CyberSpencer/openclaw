@@ -105,6 +105,92 @@ export function buildCommandPaletteActions(state: AppViewState): CommandPaletteA
 
   actions.push(
     {
+      id: "operator:doctor",
+      group: "Operator",
+      label: "Run Doctor",
+      detail: "Run non-interactive gateway diagnostics.",
+      keywords: ["health", "diagnostics", "doctor"],
+      disabled: !state.connected || state.doctorRunning,
+      run: () => state.handleDoctorRun(),
+    },
+    {
+      id: "operator:doctor-deep",
+      group: "Operator",
+      label: "Doctor (deep)",
+      detail: "Run a deeper gateway diagnostics pass.",
+      keywords: ["health", "diagnostics", "doctor", "deep"],
+      disabled: !state.connected || state.doctorRunning,
+      run: () => state.handleDoctorRun({ deep: true }),
+    },
+    {
+      id: "operator:restart-gateway",
+      group: "Operator",
+      label: "Restart Gateway",
+      detail: "Restart the gateway process.",
+      keywords: ["restart", "gateway", "reboot"],
+      disabled: !state.connected || state.gatewayRestartBusy,
+      run: () => {
+        const ok = confirm("Restart the gateway now? Connected clients will briefly disconnect.");
+        if (!ok) {
+          return;
+        }
+        return state.handleGatewayRestart();
+      },
+    },
+  );
+
+  actions.push(
+    {
+      id: "config:reload",
+      group: "Config",
+      label: "Reload Config",
+      detail: "Fetch the current gateway config into the editor.",
+      keywords: ["config", "reload", "load"],
+      disabled: !state.connected || state.configLoading,
+      run: () => state.handleConfigLoad(),
+    },
+    {
+      id: "config:save",
+      group: "Config",
+      label: "Save Config",
+      detail: "Write the current config editor contents to disk.",
+      keywords: ["config", "save", "write"],
+      disabled: !state.connected || state.configSaving,
+      run: () => state.handleConfigSave(),
+    },
+    {
+      id: "config:apply",
+      group: "Config",
+      label: "Apply Config",
+      detail: "Save and reload the gateway config immediately.",
+      keywords: ["config", "apply", "reload"],
+      disabled: !state.connected || state.configApplying,
+      run: () => state.handleConfigApply(),
+    },
+    {
+      id: "config:update",
+      group: "Config",
+      label: state.updateAvailable ? "Update Gateway" : "Check Update Banner",
+      detail: state.updateAvailable
+        ? `Upgrade to ${state.updateAvailable.latestVersion}.`
+        : "Run the gateway update flow when an update is available.",
+      keywords: ["update", "upgrade", "gateway"],
+      disabled: !state.connected || state.updateRunning || !state.updateAvailable,
+      run: () => state.handleRunUpdate(),
+    },
+  );
+
+  actions.push({
+    id: "operator:exec-approvals",
+    group: "Operator",
+    label: "Exec Approvals",
+    detail: "Jump to node exec approvals and allowlists.",
+    keywords: ["exec", "approvals", "allowlist", "nodes"],
+    run: () => state.setTab("nodes"),
+  });
+
+  actions.push(
+    {
       id: "theme:system",
       group: "Theme",
       label: "Theme: System",

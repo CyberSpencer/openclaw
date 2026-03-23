@@ -90,6 +90,8 @@ export type CronProps = {
     cronRunsQuery?: string;
     cronRunsSortDir?: CronSortDir;
   }) => void | Promise<void>;
+  /** When set, shows a control to enable/disable the cron scheduler (config.patch). */
+  onToggleSchedulerEnabled?: (enabled: boolean) => void | Promise<void>;
 };
 
 function getRunStatusOptions(): Array<{ value: CronRunsStatusValue; label: string }> {
@@ -416,6 +418,19 @@ export function renderCron(props: CronProps) {
         </div>
       </div>
       <div class="cron-summary-strip__actions">
+        ${
+          props.onToggleSchedulerEnabled
+            ? html`
+                <button
+                  class="btn"
+                  ?disabled=${props.busy || props.loading}
+                  @click=${() => props.onToggleSchedulerEnabled?.(props.status?.enabled !== true)}
+                >
+                  ${props.status?.enabled ? "Disable scheduler" : "Enable scheduler"}
+                </button>
+              `
+            : nothing
+        }
         <button class="btn" ?disabled=${props.loading} @click=${props.onRefresh}>
           ${props.loading ? t("cron.summary.refreshing") : t("cron.summary.refresh")}
         </button>

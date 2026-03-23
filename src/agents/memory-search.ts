@@ -356,10 +356,12 @@ function mergeConfig(
     (overrideRemote?.endpoints?.length ?? 0) > 0 ||
     overrideRemote?.apiKey ||
     overrideRemote?.headers ||
+    (overrideRemote?.endpoints && overrideRemote.endpoints.length > 0) ||
     defaultRemote?.baseUrl ||
     (defaultRemote?.endpoints?.length ?? 0) > 0 ||
     defaultRemote?.apiKey ||
-    defaultRemote?.headers,
+    defaultRemote?.headers ||
+    (defaultRemote?.endpoints && defaultRemote.endpoints.length > 0),
   );
   const includeRemote =
     hasRemoteConfig ||

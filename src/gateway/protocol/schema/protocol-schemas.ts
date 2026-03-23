@@ -126,17 +126,23 @@ import {
   NodePairVerifyParamsSchema,
   NodeRenameParamsSchema,
 } from "./nodes.js";
+import { OrchestratorGetParamsSchema, OrchestratorSetParamsSchema } from "./orchestrator.js";
 import { PushTestParamsSchema, PushTestResultSchema } from "./push.js";
 import {
   SessionsCompactParamsSchema,
+  SessionsCreateParamsSchema,
   SessionsDeleteParamsSchema,
-  SessionsListParamsSchema,
   SessionsSubagentsParamsSchema,
+  SessionsListParamsSchema,
+  SessionsMessagesSubscribeParamsSchema,
+  SessionsAbortParamsSchema,
   SessionsPatchParamsSchema,
   SessionsPreviewParamsSchema,
   SessionsResetParamsSchema,
   SessionsResolveParamsSchema,
   SessionsSpawnParamsSchema,
+  SessionsSendParamsSchema,
+  SessionsUsageParamsSchema,
 } from "./sessions.js";
 import { PresenceEntrySchema, SnapshotSchema, StateVersionSchema } from "./snapshot.js";
 import {
@@ -195,13 +201,20 @@ export const ProtocolSchemas: Record<string, TSchema> = {
   PushTestResult: PushTestResultSchema,
   SessionsListParams: SessionsListParamsSchema,
   SessionsSubagentsParams: SessionsSubagentsParamsSchema,
+  OrchestratorGetParams: OrchestratorGetParamsSchema,
+  OrchestratorSetParams: OrchestratorSetParamsSchema,
   SessionsPreviewParams: SessionsPreviewParamsSchema,
   SessionsResolveParams: SessionsResolveParamsSchema,
+  SessionsCreateParams: SessionsCreateParamsSchema,
+  SessionsSpawnParams: SessionsSpawnParamsSchema,
+  SessionsSendParams: SessionsSendParamsSchema,
+  SessionsMessagesSubscribeParams: SessionsMessagesSubscribeParamsSchema,
+  SessionsAbortParams: SessionsAbortParamsSchema,
   SessionsPatchParams: SessionsPatchParamsSchema,
   SessionsResetParams: SessionsResetParamsSchema,
   SessionsDeleteParams: SessionsDeleteParamsSchema,
   SessionsCompactParams: SessionsCompactParamsSchema,
-  SessionsSpawnParams: SessionsSpawnParamsSchema,
+  SessionsUsageParams: SessionsUsageParamsSchema,
   ConfigGetParams: ConfigGetParamsSchema,
   ConfigSetParams: ConfigSetParamsSchema,
   ConfigApplyParams: ConfigApplyParamsSchema,

@@ -1,6 +1,13 @@
+import { isRestartEnabled } from "../../config/commands.js";
+import { loadConfig } from "../../config/config.js";
 import { resolveMainSessionKeyFromConfig } from "../../config/sessions.js";
 import { getLastHeartbeatEvent } from "../../infra/heartbeat-events.js";
 import { setHeartbeatsEnabled } from "../../infra/heartbeat-runner.js";
+import {
+  formatDoctorNonInteractiveHint,
+  writeRestartSentinel,
+} from "../../infra/restart-sentinel.js";
+import { scheduleGatewaySigusr1Restart } from "../../infra/restart.js";
 import { enqueueSystemEvent, isSystemEventContextChanged } from "../../infra/system-events.js";
 import { listSystemPresence, updateSystemPresence } from "../../infra/system-presence.js";
 import { ErrorCodes, errorShape } from "../protocol/index.js";
@@ -8,6 +15,77 @@ import { broadcastPresenceSnapshot } from "../server/presence-events.js";
 import type { GatewayRequestHandlers } from "./types.js";
 
 export const systemHandlers: GatewayRequestHandlers = {
+  "gateway.restart": async ({ params, respond, context, client }) => {
+    const cfg = loadConfig();
+    if (!isRestartEnabled(cfg)) {
+      respond(
+        false,
+        undefined,
+        errorShape(
+          ErrorCodes.INVALID_REQUEST,
+          "Gateway restart is disabled (commands.restart=false).",
+        ),
+      );
+      return;
+    }
+    const delayMs =
+      typeof params.delayMs === "number" && Number.isFinite(params.delayMs)
+        ? Math.floor(params.delayMs)
+        : undefined;
+    const reason =
+      typeof params.reason === "string" && params.reason.trim()
+        ? params.reason.trim().slice(0, 200)
+        : undefined;
+    const deviceRec =
+      client?.connect &&
+      typeof client.connect === "object" &&
+      client.connect !== null &&
+      "device" in client.connect
+        ? (client.connect as { device?: { id?: string } }).device
+        : undefined;
+    const deviceId = typeof deviceRec?.id === "string" ? deviceRec.id : undefined;
+    try {
+      await writeRestartSentinel({
+        kind: "restart",
+        status: "ok",
+        ts: Date.now(),
+        message: reason ?? null,
+        doctorHint: formatDoctorNonInteractiveHint(),
+        stats: {
+          mode: "gateway.restart",
+          reason: reason ?? null,
+        },
+      });
+    } catch {
+      // best-effort only
+    }
+    const scheduled = scheduleGatewaySigusr1Restart({
+      delayMs,
+      reason,
+      audit: {
+        actor: "gateway.restart",
+        deviceId,
+        clientIp: client?.clientIp,
+      },
+    });
+    context.logGateway.info(
+      `gateway.restart: scheduled delayMs=${scheduled.delayMs} coalesced=${scheduled.coalesced} reason=${reason ?? "none"}`,
+    );
+    respond(true, scheduled, undefined);
+  },
+
+  "gateway.identity.get": ({ respond }) => {
+    const identity = loadOrCreateDeviceIdentity();
+    respond(
+      true,
+      {
+        deviceId: identity.deviceId,
+        publicKey: publicKeyRawBase64UrlFromPem(identity.publicKeyPem),
+      },
+      undefined,
+    );
+  },
+
   "last-heartbeat": ({ respond }) => {
     respond(true, getLastHeartbeatEvent(), undefined);
   },

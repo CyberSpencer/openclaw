@@ -39,6 +39,9 @@ import {
 import type { GatewayRequestHandlers, RespondFn } from "./types.js";
 
 const COST_USAGE_CACHE_TTL_MS = 30_000;
+const PROVIDER_USAGE_CACHE_TTL_MS = 5 * 60_000;
+const PROVIDER_USAGE_TRANSIENT_ERROR_BACKOFF_MS = 5 * 60_000;
+const PROVIDER_USAGE_ERROR_BACKOFF_MS = 60_000;
 const DAY_MS = 24 * 60 * 60 * 1000;
 
 type DateRange = { startMs: number; endMs: number };
@@ -52,7 +55,19 @@ type CostUsageCacheEntry = {
   inFlight?: Promise<CostUsageSummary>;
 };
 
+type ProviderUsageSummary = Awaited<ReturnType<typeof loadProviderUsageSummary>>;
+
+type ProviderUsageCacheEntry = {
+  summary?: ProviderUsageSummary;
+  fallbackSummary?: ProviderUsageSummary;
+  updatedAt?: number;
+  backoffUntil?: number;
+  lastError?: string;
+  inFlight?: Promise<ProviderUsageSummary>;
+};
+
 const costUsageCache = new Map<string, CostUsageCacheEntry>();
+const providerUsageCache: ProviderUsageCacheEntry = {};
 
 function resolveSessionUsageFileOrRespond(
   key: string,
@@ -326,6 +341,132 @@ async function loadCostUsageSummaryCached(params: {
   return await inFlight;
 }
 
+function buildEmptyProviderUsageSummary(now = Date.now()): ProviderUsageSummary {
+  return {
+    updatedAt: now,
+    providers: [],
+  };
+}
+
+function describeProviderUsageError(error: unknown): string {
+  if (error instanceof Error && error.message.trim()) {
+    return error.message.trim();
+  }
+  if (typeof error === "string" && error.trim()) {
+    return error.trim();
+  }
+  if (error && typeof error === "object") {
+    const maybeMessage = (error as { message?: unknown }).message;
+    if (typeof maybeMessage === "string" && maybeMessage.trim()) {
+      return maybeMessage.trim();
+    }
+  }
+  return String(error);
+}
+
+function extractProviderUsageErrorStatus(error: unknown): number | undefined {
+  if (!error || typeof error !== "object") {
+    return undefined;
+  }
+  const candidate = (error as { status?: unknown; statusCode?: unknown; code?: unknown }).status;
+  const fallback = (error as { statusCode?: unknown; code?: unknown }).statusCode;
+  const code = (error as { code?: unknown }).code;
+  for (const value of [candidate, fallback, code]) {
+    if (typeof value === "number" && Number.isFinite(value)) {
+      return Math.trunc(value);
+    }
+    if (typeof value === "string") {
+      const match = /\b(\d{3})\b/.exec(value);
+      if (match) {
+        return Number(match[1]);
+      }
+    }
+  }
+  return undefined;
+}
+
+function isTransientProviderUsageError(error: unknown): boolean {
+  const status = extractProviderUsageErrorStatus(error);
+  if (status === 408 || status === 425 || status === 429) {
+    return true;
+  }
+  if (typeof status === "number" && status >= 500 && status <= 599) {
+    return true;
+  }
+  const message = describeProviderUsageError(error).toLowerCase();
+  return /(rate[_ ]limit|too many requests|http 429|timeout|timed out|temporar|unavailable|overloaded|reset|closed|abort|econn|fetch failed|network)/i.test(
+    message,
+  );
+}
+
+function resolveProviderUsageErrorBackoffMs(error: unknown): number {
+  return isTransientProviderUsageError(error)
+    ? PROVIDER_USAGE_TRANSIENT_ERROR_BACKOFF_MS
+    : PROVIDER_USAGE_ERROR_BACKOFF_MS;
+}
+
+async function loadProviderUsageSummaryCached(): Promise<ProviderUsageSummary> {
+  const now = Date.now();
+  const cached = providerUsageCache;
+  if (cached.summary && cached.updatedAt && now - cached.updatedAt < PROVIDER_USAGE_CACHE_TTL_MS) {
+    return cached.summary;
+  }
+  if (cached.inFlight) {
+    if (cached.summary) {
+      return cached.summary;
+    }
+    if (cached.fallbackSummary) {
+      return cached.fallbackSummary;
+    }
+    return await cached.inFlight;
+  }
+  if (cached.backoffUntil && cached.backoffUntil > now) {
+    if (cached.summary) {
+      return cached.summary;
+    }
+    if (cached.fallbackSummary) {
+      return cached.fallbackSummary;
+    }
+    return buildEmptyProviderUsageSummary(now);
+  }
+
+  const inFlight = loadProviderUsageSummary()
+    .then((summary) => {
+      providerUsageCache.summary = summary;
+      providerUsageCache.updatedAt = Date.now();
+      providerUsageCache.fallbackSummary = undefined;
+      providerUsageCache.backoffUntil = undefined;
+      providerUsageCache.lastError = undefined;
+      return summary;
+    })
+    .catch((error) => {
+      const failedAt = Date.now();
+      providerUsageCache.backoffUntil = failedAt + resolveProviderUsageErrorBackoffMs(error);
+      providerUsageCache.lastError = describeProviderUsageError(error);
+      if (providerUsageCache.summary) {
+        return providerUsageCache.summary;
+      }
+      const fallbackSummary = buildEmptyProviderUsageSummary(failedAt);
+      providerUsageCache.fallbackSummary = fallbackSummary;
+      return fallbackSummary;
+    })
+    .finally(() => {
+      if (providerUsageCache.inFlight === inFlight) {
+        providerUsageCache.inFlight = undefined;
+      }
+    });
+
+  providerUsageCache.inFlight = inFlight;
+
+  if (cached.summary) {
+    return cached.summary;
+  }
+  if (cached.fallbackSummary) {
+    return cached.fallbackSummary;
+  }
+  return await inFlight;
+}
+
 // Exposed for unit tests (kept as a single export to avoid widening the public API surface).
 export const __test = {
   parseDateParts,
@@ -337,7 +478,14 @@ export const __test = {
   parseDateRange,
   discoverAllSessionsForUsage,
   loadCostUsageSummaryCached,
+  buildEmptyProviderUsageSummary,
+  describeProviderUsageError,
+  extractProviderUsageErrorStatus,
+  isTransientProviderUsageError,
+  resolveProviderUsageErrorBackoffMs,
+  loadProviderUsageSummaryCached,
   costUsageCache,
+  providerUsageCache,
 };
 
 export type SessionUsageEntry = {
@@ -397,7 +545,7 @@ export type SessionsUsageResult = {
 
 export const usageHandlers: GatewayRequestHandlers = {
   "usage.status": async ({ respond }) => {
-    const summary = await loadProviderUsageSummary();
+    const summary = await loadProviderUsageSummaryCached();
     respond(true, summary, undefined);
   },
   "usage.cost": async ({ respond, params }) => {

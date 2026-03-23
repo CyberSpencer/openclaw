@@ -3,6 +3,54 @@ const KEY = "openclaw.control.settings.v1";
 import { inferBasePathFromPathname, normalizeBasePath } from "./navigation.ts";
 import type { ThemeMode } from "./theme.ts";
 
+function unbracketHostname(hostname: string): string {
+  const trimmed = hostname.trim().toLowerCase();
+  if (trimmed.startsWith("[") && trimmed.endsWith("]")) {
+    return trimmed.slice(1, -1);
+  }
+  return trimmed;
+}
+
+function isLoopbackHostname(hostname: string): boolean {
+  const value = unbracketHostname(hostname);
+  if (value === "localhost" || value === "127.0.0.1" || value === "::1") {
+    return true;
+  }
+  if (value.startsWith("::ffff:")) {
+    return value.slice("::ffff:".length) === "127.0.0.1";
+  }
+  return false;
+}
+
+export function alignLoopbackGatewayUrlWithDocument(
+  gatewayUrl: string,
+  documentHost: string,
+  documentHostname: string,
+): string {
+  const trimmed = (gatewayUrl ?? "").trim();
+  const docHost = (documentHost ?? "").trim();
+  const docHostname = (documentHostname ?? "").trim();
+  if (!trimmed || !docHost || !docHostname) {
+    return trimmed;
+  }
+  try {
+    const parsed = new URL(trimmed);
+    if (parsed.protocol !== "ws:" && parsed.protocol !== "wss:") {
+      return trimmed;
+    }
+    if (!isLoopbackHostname(parsed.hostname) || !isLoopbackHostname(docHostname)) {
+      return trimmed;
+    }
+    if (parsed.host.toLowerCase() === docHost.toLowerCase()) {
+      return trimmed;
+    }
+    parsed.host = docHost;
+    return parsed.toString();
+  } catch {
+    return trimmed;
+  }
+}
+
 export type UiSettings = {
   gatewayUrl: string;
   token: string;
@@ -66,15 +114,27 @@ export function loadSettings(): UiSettings {
   try {
     const raw = localStorage.getItem(KEY);
     if (!raw) {
-      return defaults;
+      return {
+        ...defaults,
+        gatewayUrl: alignLoopbackGatewayUrlWithDocument(
+          defaults.gatewayUrl,
+          location.host,
+          location.hostname,
+        ),
+      };
     }
     const parsed = JSON.parse(raw) as Partial<UiSettings>;
     const parsedTheme = (parsed as { theme?: unknown }).theme;
+    const mergedGatewayUrl =
+      typeof parsed.gatewayUrl === "string" && parsed.gatewayUrl.trim()
+        ? parsed.gatewayUrl.trim()
+        : defaults.gatewayUrl;
     return {
-      gatewayUrl:
-        typeof parsed.gatewayUrl === "string" && parsed.gatewayUrl.trim()
-          ? parsed.gatewayUrl.trim()
-          : defaults.gatewayUrl,
+      gatewayUrl: alignLoopbackGatewayUrlWithDocument(
+        mergedGatewayUrl,
+        location.host,
+        location.hostname,
+      ),
       token: typeof parsed.token === "string" ? parsed.token : defaults.token,
       sessionKey:
         typeof parsed.sessionKey === "string" && parsed.sessionKey.trim()
@@ -137,10 +197,21 @@ export function loadSettings(): UiSettings {
         typeof parsed.ttsLanguage === "string" ? parsed.ttsLanguage.trim() : defaults.ttsLanguage,
     };
   } catch {
-    return defaults;
+    return {
+      ...defaults,
+      gatewayUrl: alignLoopbackGatewayUrlWithDocument(
+        defaults.gatewayUrl,
+        location.host,
+        location.hostname,
+      ),
+    };
   }
 }
 
 export function saveSettings(next: UiSettings) {
-  localStorage.setItem(KEY, JSON.stringify(next));
+  const gatewayUrl =
+    typeof location !== "undefined"
+      ? alignLoopbackGatewayUrlWithDocument(next.gatewayUrl, location.host, location.hostname)
+      : next.gatewayUrl;
+  localStorage.setItem(KEY, JSON.stringify({ ...next, gatewayUrl }));
 }

@@ -19,6 +19,7 @@ export type ConfigProps = {
   schemaLoading: boolean;
   uiHints: ConfigUiHints;
   formMode: "form" | "raw";
+  showModeToggle?: boolean;
   formValue: Record<string, unknown> | null;
   originalValue: Record<string, unknown> | null;
   searchQuery: string;
@@ -34,6 +35,9 @@ export type ConfigProps = {
   onSave: () => void;
   onApply: () => void;
   onUpdate: () => void;
+  navRootLabel?: string;
+  includeSections?: string[];
+  excludeSections?: string[];
 };
 
 const TAG_SEARCH_PRESETS = [
@@ -353,6 +357,8 @@ export function renderConfig(props: ConfigProps) {
   const validity = props.valid == null ? "unknown" : props.valid ? "valid" : "invalid";
   const analysis = analyzeConfigSchema(props.schema);
   const formUnsafe = analysis.schema ? analysis.unsupportedPaths.length > 0 : false;
+  const include = props.includeSections?.length ? new Set(props.includeSections) : null;
+  const exclude = props.excludeSections?.length ? new Set(props.excludeSections) : null;
 
   // Get available sections from schema
   const schemaProps = analysis.schema?.properties ?? {};
@@ -364,22 +370,36 @@ export function renderConfig(props: ConfigProps) {
     .filter((k) => !knownKeys.has(k))
     .map((k) => ({ key: k, label: k.charAt(0).toUpperCase() + k.slice(1) }));
 
-  const allSections = [...availableSections, ...extraSections];
+  const allSections = [...availableSections, ...extraSections].filter((section) => {
+    if (include && !include.has(section.key)) {
+      return false;
+    }
+    if (exclude && exclude.has(section.key)) {
+      return false;
+    }
+    return true;
+  });
 
   const activeSectionSchema =
     props.activeSection && analysis.schema && schemaType(analysis.schema) === "object"
       ? analysis.schema.properties?.[props.activeSection]
       : undefined;
+  const activeSectionAllowed =
+    props.activeSection == null ||
+    allSections.some((section) => section.key === props.activeSection);
   const activeSectionMeta = props.activeSection
-    ? resolveSectionMeta(props.activeSection, activeSectionSchema)
+    ? activeSectionAllowed
+      ? resolveSectionMeta(props.activeSection, activeSectionSchema)
+      : null
     : null;
-  const subsections = props.activeSection
-    ? resolveSubsections({
-        key: props.activeSection,
-        schema: activeSectionSchema,
-        uiHints: props.uiHints,
-      })
-    : [];
+  const subsections =
+    props.activeSection && activeSectionAllowed
+      ? resolveSubsections({
+          key: props.activeSection,
+          schema: activeSectionSchema,
+          uiHints: props.uiHints,
+        })
+      : [];
   const allowSubnav =
     props.formMode === "form" && Boolean(props.activeSection) && subsections.length > 0;
   const isAllSubsection = props.activeSubsection === ALL_SUBSECTION;
@@ -416,7 +436,7 @@ export function renderConfig(props: ConfigProps) {
       <!-- Sidebar -->
       <aside class="config-sidebar">
         <div class="config-sidebar__header">
-          <div class="config-sidebar__title">Settings</div>
+          <div class="config-sidebar__title">${props.navRootLabel ?? "Settings"}</div>
           <span
             class="pill pill--sm ${
               validity === "valid" ? "pill--ok" : validity === "invalid" ? "pill--danger" : ""
@@ -521,7 +541,7 @@ export function renderConfig(props: ConfigProps) {
             @click=${() => props.onSectionChange(null)}
           >
             <span class="config-nav__icon">${sidebarIcons.all}</span>
-            <span class="config-nav__label">All Settings</span>
+            <span class="config-nav__label">All ${props.navRootLabel ?? "Settings"}</span>
           </button>
           ${allSections.map(
             (section) => html`
@@ -539,23 +559,29 @@ export function renderConfig(props: ConfigProps) {
         </nav>
 
         <!-- Mode toggle at bottom -->
-        <div class="config-sidebar__footer">
-          <div class="config-mode-toggle">
-            <button
-              class="config-mode-toggle__btn ${props.formMode === "form" ? "active" : ""}"
-              ?disabled=${props.schemaLoading || !props.schema}
-              @click=${() => props.onFormModeChange("form")}
-            >
-              Form
-            </button>
-            <button
-              class="config-mode-toggle__btn ${props.formMode === "raw" ? "active" : ""}"
-              @click=${() => props.onFormModeChange("raw")}
-            >
-              Raw
-            </button>
-          </div>
-        </div>
+        ${
+          props.showModeToggle === false
+            ? nothing
+            : html`
+                <div class="config-sidebar__footer">
+                  <div class="config-mode-toggle">
+                    <button
+                      class="config-mode-toggle__btn ${props.formMode === "form" ? "active" : ""}"
+                      ?disabled=${props.schemaLoading || !props.schema}
+                      @click=${() => props.onFormModeChange("form")}
+                    >
+                      Form
+                    </button>
+                    <button
+                      class="config-mode-toggle__btn ${props.formMode === "raw" ? "active" : ""}"
+                      @click=${() => props.onFormModeChange("raw")}
+                    >
+                      Raw
+                    </button>
+                  </div>
+                </div>
+              `
+        }
       </aside>
 
       <!-- Main content -->

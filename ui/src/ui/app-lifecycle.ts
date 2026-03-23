@@ -19,6 +19,7 @@ import {
 } from "./app-settings.ts";
 import { loadControlUiBootstrapConfig } from "./controllers/control-ui-bootstrap.ts";
 import { normalizeBasePath } from "./navigation.ts";
+import { alignLoopbackGatewayUrlWithDocument } from "./storage.ts";
 
 type LifecycleHost = GatewayHost & {
   chatManualRefreshInFlight: boolean;
@@ -58,11 +59,30 @@ function maybeApplyBootstrapGatewayToken(
   }
   const localGatewayUrl = resolveLocalGatewayUrl(bootstrapBasePath || host.basePath);
   const configuredGatewayUrl = host.settings.gatewayUrl.trim();
-  const effectiveGatewayUrl = configuredGatewayUrl || localGatewayUrl;
-  if (normalizeGatewayUrl(effectiveGatewayUrl) !== normalizeGatewayUrl(localGatewayUrl)) {
+  const effectiveGatewayUrl = configuredGatewayUrl
+    ? alignLoopbackGatewayUrlWithDocument(
+        configuredGatewayUrl,
+        window.location.host,
+        window.location.hostname,
+      )
+    : localGatewayUrl;
+  const alignedLocalGatewayUrl = alignLoopbackGatewayUrlWithDocument(
+    localGatewayUrl,
+    window.location.host,
+    window.location.hostname,
+  );
+  if (normalizeGatewayUrl(effectiveGatewayUrl) !== normalizeGatewayUrl(alignedLocalGatewayUrl)) {
     return;
   }
-  if (host.settings.token === nextToken && configuredGatewayUrl === effectiveGatewayUrl) {
+  const settingsGatewayUrl = alignLoopbackGatewayUrlWithDocument(
+    host.settings.gatewayUrl.trim() || alignedLocalGatewayUrl,
+    window.location.host,
+    window.location.hostname,
+  );
+  if (
+    host.settings.token === nextToken &&
+    normalizeGatewayUrl(settingsGatewayUrl) === normalizeGatewayUrl(effectiveGatewayUrl)
+  ) {
     return;
   }
   applySettings(host, {

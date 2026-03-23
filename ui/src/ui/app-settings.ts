@@ -405,6 +405,7 @@ export async function loadOverview(host: SettingsHost) {
     loadSessions(host),
     loadCronStatus(host),
     loadDebug(host),
+    loadLogs(host, { reset: true, quiet: true }),
   ]);
 }
 

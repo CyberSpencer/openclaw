@@ -222,6 +222,7 @@ export async function sendChatMessage(
 export async function steerChatMessage(
   state: ChatState,
   message: string,
+  opts?: { idempotencyKey?: string },
 ): Promise<ChatSteerResult | null> {
   if (!state.client || !state.connected) {
     return null;
@@ -232,7 +233,8 @@ export async function steerChatMessage(
   }
 
   const now = Date.now();
-  const steerId = generateUUID();
+  const steerIdRaw = opts?.idempotencyKey ?? generateUUID();
+  const steerId = steerIdRaw.trim() || generateUUID();
 
   // Optimistic append so the terminal/log reflects the steer immediately.
   state.chatMessages = [
@@ -248,8 +250,8 @@ export async function steerChatMessage(
   state.chatSending = true;
   state.lastError = null;
   try {
-    const res = await state.client.request<ChatSteerResult | null>("chat.steer", {
-      sessionKey: state.sessionKey,
+    const res = await state.client.request<ChatSteerResult | null>("sessions.steer", {
+      key: state.sessionKey,
       message: msg,
       idempotencyKey: steerId,
     });
@@ -265,6 +267,44 @@ export async function steerChatMessage(
         timestamp: Date.now(),
       },
     ];
+    return null;
+  } finally {
+    state.chatSending = false;
+  }
+}
+
+/**
+ * Deliver a steer request without mutating chatMessages.
+ * Used to retry steering after compaction completes, without duplicating the user's message.
+ */
+export async function deliverChatSteer(
+  state: ChatState,
+  message: string,
+  idempotencyKey: string,
+): Promise<ChatSteerResult | null> {
+  if (!state.client || !state.connected) {
+    return null;
+  }
+  const msg = message.trim();
+  if (!msg) {
+    return null;
+  }
+  const key = idempotencyKey.trim();
+  if (!key) {
+    return null;
+  }
+
+  state.chatSending = true;
+  state.lastError = null;
+  try {
+    const res = await state.client.request<ChatSteerResult | null>("sessions.steer", {
+      key: state.sessionKey,
+      message: msg,
+      idempotencyKey: key,
+    });
+    return res ?? null;
+  } catch (err) {
+    state.lastError = String(err);
     return null;
   } finally {
     state.chatSending = false;

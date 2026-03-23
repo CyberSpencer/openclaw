@@ -199,7 +199,16 @@ export function renderSettings(state: AppViewState) {
           <div class="list-item">
             <div class="list-main">
               <div class="list-title">NVIDIA Router</div>
-              <div class="list-sub">Controls request routing and failover for DGX-first setups.</div>
+              <div class="list-sub">
+                Controls request routing and failover for DGX-first setups.
+                ${
+                  state.nvidiaRouterHealthy === false && state.nvidiaRouterError
+                    ? html`<span class="mono" style="display:block; margin-top:6px; opacity:0.85;"
+                      >${state.nvidiaRouterError}</span
+                    >`
+                    : nothing
+                }
+              </div>
             </div>
             <div class="list-meta">
               ${statusPill(state.nvidiaRouterEnabled, { on: state.nvidiaRouterHealthy === false ? "On (degraded)" : "On", off: "Off" })}
@@ -329,7 +338,7 @@ export function renderSettings(state: AppViewState) {
         <div class="card-sub">Jump to the right page for deeper control.</div>
         <div class="row" style="margin-top: 14px; flex-wrap: wrap;">
           <button class="btn" @click=${() => state.setTab("sessions")}>Sessions</button>
-          <button class="btn" @click=${() => state.setTab("nodes")}>Nodes + Exec approvals</button>
+          <button class="btn" @click=${() => state.setTab("nodes")}>Exec approvals</button>
           <button class="btn" @click=${() => state.setTab("skills")}>Skills</button>
           <button class="btn" @click=${() => state.setTab("channels")}>Channels</button>
           <button class="btn" @click=${() => state.setTab("config")}>Config editor</button>
@@ -338,6 +347,20 @@ export function renderSettings(state: AppViewState) {
         </div>
       </section>
 
+      <section class="card">
+        <div class="card-title">Settings Areas</div>
+        <div class="card-sub">Focused settings surfaces inside the custom shell.</div>
+        <div class="row" style="margin-top: 14px; flex-wrap: wrap;">
+          <button class="btn" @click=${() => state.setTab("communications")}>Communications</button>
+          <button class="btn" @click=${() => state.setTab("appearance")}>Appearance</button>
+          <button class="btn" @click=${() => state.setTab("automation")}>Automation</button>
+          <button class="btn" @click=${() => state.setTab("infrastructure")}>Infrastructure</button>
+          <button class="btn" @click=${() => state.setTab("aiAgents")}>AI Agents</button>
+        </div>
+      </section>
+    </section>
+
+    <section class="grid grid-cols-2" style="margin-top: 18px;">
       <section class="card">
         <div class="card-title">Help</div>
         <div class="card-sub">Docs and quick reminders.</div>
@@ -359,6 +382,51 @@ export function renderSettings(state: AppViewState) {
               Docs: Control UI
             </a>
           </div>
+        </div>
+      </section>
+
+      <section class="card">
+        <div class="card-title">Operator Shortcuts</div>
+        <div class="card-sub">High-signal admin actions without leaving the shell.</div>
+        <div class="row" style="margin-top: 14px; flex-wrap: wrap;">
+          <button
+            class="btn"
+            ?disabled=${!state.connected || state.doctorRunning}
+            @click=${() => state.handleDoctorRun()}
+          >
+            ${state.doctorRunning ? "Doctor running…" : "Run Doctor"}
+          </button>
+          <button
+            class="btn"
+            ?disabled=${!state.connected || state.doctorRunning}
+            @click=${() => state.handleDoctorRun({ deep: true })}
+          >
+            Doctor (deep)
+          </button>
+          <button class="btn" ?disabled=${!state.connected || state.configLoading} @click=${() => state.handleConfigLoad()}>
+            Reload Config
+          </button>
+          <button class="btn" ?disabled=${!state.connected || state.configSaving} @click=${() => state.handleConfigSave()}>
+            Save Config
+          </button>
+          <button class="btn" ?disabled=${!state.connected || state.configApplying} @click=${() => state.handleConfigApply()}>
+            Apply Config
+          </button>
+          <button
+            class="btn danger"
+            ?disabled=${!state.connected || state.gatewayRestartBusy}
+            @click=${() => {
+              const ok = confirm(
+                "Restart the gateway now? Connected clients will briefly disconnect.",
+              );
+              if (!ok) {
+                return;
+              }
+              void state.handleGatewayRestart();
+            }}
+          >
+            ${state.gatewayRestartBusy ? "Restarting…" : "Restart Gateway"}
+          </button>
         </div>
       </section>
     </section>

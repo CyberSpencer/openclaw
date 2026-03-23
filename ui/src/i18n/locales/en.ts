@@ -81,6 +81,17 @@ export const en: TranslationMap = {
       cron: "Cron",
       cronNext: "Next wake {time}",
     },
+    cards: {
+      cost: "Cost",
+      skills: "Skills",
+      recentSessions: "Recent sessions",
+    },
+    attention: {
+      title: "Attention",
+    },
+    logTail: {
+      title: "Gateway log tail",
+    },
     notes: {
       title: "Notes",
       subtitle: "Quick reminders for remote control setups.",

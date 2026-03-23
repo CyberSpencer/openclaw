@@ -1,5 +1,7 @@
+import type { ProviderUsageSnapshot } from "../../../src/infra/provider-usage.types.ts";
 import type { EventLogEntry } from "./app-events.ts";
-import type { CompactionStatus, FallbackStatus } from "./app-tool-stream.ts";
+import type { ModelSelectionInfo, CompactionStatus, FallbackStatus } from "./app-tool-stream.ts";
+import type { CommandPaletteAction } from "./command-palette.ts";
 import type {
   CronFieldErrors,
   CronJobsLastStatusFilter,
@@ -9,8 +11,14 @@ import type { DevicePairingList } from "./controllers/devices.ts";
 import type { ExecApprovalRequest } from "./controllers/exec-approval.ts";
 import type { ExecApprovalsFile, ExecApprovalsSnapshot } from "./controllers/exec-approvals.ts";
 import type { SkillMessage } from "./controllers/skills.ts";
+import type { VoiceState } from "./controllers/voice.ts";
 import type { GatewayBrowserClient, GatewayHelloOk } from "./gateway.ts";
 import type { Tab } from "./navigation.ts";
+import type {
+  OrchestrationBoard,
+  OrchestrationCard,
+  OrchestrationLaneId,
+} from "./orchestrator-store.ts";
 import type { UiSettings } from "./storage.ts";
 import type { ThemeTransitionContext } from "./theme-transition.ts";
 import type { ThemeMode } from "./theme.ts";
@@ -41,16 +49,33 @@ import type {
   SessionUsageTimeSeries,
   SessionsListResult,
   SkillStatusReport,
+  SparkGatewayPollStatus,
   ToolsCatalogResult,
   StatusSummary,
 } from "./types.ts";
-import type { ChatAttachment, ChatQueueItem, CronFormState } from "./ui-types.ts";
+import type { ChatAttachment, ChatQueueItem, CronFormState, TaskPlan } from "./ui-types.ts";
 import type { NostrProfileFormState } from "./views/channels.nostr-profile-form.ts";
 import type { SessionLogEntry } from "./views/usage.ts";
+
+export type OrchestratorDraftState = {
+  title: string;
+  task: string;
+  agentId: string;
+  runner: "subagent" | "codex";
+  model: string;
+  thinking: string;
+  timeoutSeconds: string;
+  cleanup: "keep" | "delete";
+  codexMode: "plan" | "apply" | "run";
+  codexShellAllowlist: string;
+  showAdvanced: boolean;
+};
 
 export type AppViewState = {
   settings: UiSettings;
   password: string;
+  loginShowGatewayToken: boolean;
+  loginShowGatewayPassword: boolean;
   tab: Tab;
   onboarding: boolean;
   basePath: string;
@@ -78,8 +103,64 @@ export type AppViewState = {
   fallbackStatus: FallbackStatus | null;
   chatAvatarUrl: string | null;
   chatThinkingLevel: string | null;
+  chatModelOverrides: Record<string, import("./chat-model-ref.ts").ChatModelOverride | null>;
+  chatModelsLoading: boolean;
+  chatModelCatalog: import("./types.ts").ModelCatalogEntry[];
   chatQueue: ChatQueueItem[];
   chatManualRefreshInFlight: boolean;
+  chatModelSelection: ModelSelectionInfo | null;
+  chatTaskPlan: TaskPlan | null;
+  chatThreadsLoading: boolean;
+  chatThreadsResult: SessionsListResult | null;
+  chatThreadsError: string | null;
+  chatThreadsQuery: string;
+  chatThreadsShowSubagents: boolean;
+  subagentMonitorLoading: boolean;
+  subagentMonitorResult: SessionsListResult | null;
+  subagentMonitorError: string | null;
+  commandPaletteOpen: boolean;
+  commandPaletteQuery: string;
+  commandPaletteIndex: number;
+  orchestrationExpanded: boolean;
+  orchBoards: OrchestrationBoard[];
+  orchSelectedBoardId: string;
+  orchSelectedCardId: string | null;
+  orchDragOverLaneId: string | null;
+  orchBusyCardId: string | null;
+  orchTemplateQuery: string;
+  orchDraft: OrchestratorDraftState;
+  memorySearchEnabled: boolean | null;
+  memorySearchBusy: boolean;
+  memoryStoreLabel: string | null;
+  nvidiaRouterEnabled: boolean | null;
+  nvidiaRouterHealthy: boolean | null;
+  nvidiaRouterError: string | null;
+  nvidiaRouterBusy: boolean;
+  sparkStatus: SparkGatewayPollStatus | null;
+  dgxRoutingStatus: import("./types.ts").DgxRoutingStatus | null;
+  sparkBusy: boolean;
+  sparkMicRecording: boolean;
+  sparkMicTelemetryLog: Array<Record<string, unknown>>;
+  voiceBarVisible: boolean;
+  voiceBarExpanded: boolean;
+  voiceState: VoiceState;
+  ttsSpeaking: boolean;
+  ttsProgress: string | null;
+  ttsSpeakingMessageKey: string | null;
+  sparkVoices: { id: string; name: string; description?: string }[];
+  doctorRunning: boolean;
+  doctorResult: {
+    ok: boolean;
+    exitCode: number | null;
+    signal: string | null;
+    durationMs: number;
+    timedOut: boolean;
+    stdout: string;
+    stderr: string;
+  } | null;
+  doctorError: string | null;
+  gatewayRestartBusy: boolean;
+  gatewayRestartError: string | null;
   nodesLoading: boolean;
   nodes: Array<Record<string, unknown>>;
   chatNewMessagesBelow: boolean;
@@ -123,6 +204,26 @@ export type AppViewState = {
   configSearchQuery: string;
   configActiveSection: string | null;
   configActiveSubsection: string | null;
+  communicationsFormMode: "form" | "raw";
+  communicationsSearchQuery: string;
+  communicationsActiveSection: string | null;
+  communicationsActiveSubsection: string | null;
+  appearanceFormMode: "form" | "raw";
+  appearanceSearchQuery: string;
+  appearanceActiveSection: string | null;
+  appearanceActiveSubsection: string | null;
+  automationFormMode: "form" | "raw";
+  automationSearchQuery: string;
+  automationActiveSection: string | null;
+  automationActiveSubsection: string | null;
+  infrastructureFormMode: "form" | "raw";
+  infrastructureSearchQuery: string;
+  infrastructureActiveSection: string | null;
+  infrastructureActiveSubsection: string | null;
+  aiAgentsFormMode: "form" | "raw";
+  aiAgentsSearchQuery: string;
+  aiAgentsActiveSection: string | null;
+  aiAgentsActiveSubsection: string | null;
   channelsLoading: boolean;
   channelsSnapshot: ChannelsStatusSnapshot | null;
   channelsError: string | null;
@@ -167,6 +268,12 @@ export type AppViewState = {
   sessionsFilterLimit: string;
   sessionsIncludeGlobal: boolean;
   sessionsIncludeUnknown: boolean;
+  sessionsSearchQuery: string;
+  sessionsSortColumn: "key" | "kind" | "updated" | "tokens";
+  sessionsSortDir: "asc" | "desc";
+  sessionsPage: number;
+  sessionsPageSize: number;
+  sessionsSelectedKeys: Set<string>;
   sessionsHideCron: boolean;
   usageLoading: boolean;
   usageResult: SessionsUsageResult | null;
@@ -268,6 +375,7 @@ export type AppViewState = {
   updateAvailable: import("./types.js").UpdateAvailable | null;
   codexUsageNotes: string[] | null;
   anthropicUsageNotes: string[] | null;
+  anthropicUsageSnapshot: ProviderUsageSnapshot | null;
   client: GatewayBrowserClient | null;
   refreshSessionsAfterChat: Set<string>;
   connect: () => void;
@@ -302,12 +410,7 @@ export type AppViewState = {
   handleToggleSkillEnabled: (key: string, enabled: boolean) => Promise<void>;
   handleUpdateSkillEdit: (key: string, value: string) => void;
   handleSaveSkillApiKey: (key: string, apiKey: string) => Promise<void>;
-  handleCronToggle: (jobId: string, enabled: boolean) => Promise<void>;
-  handleCronRun: (jobId: string) => Promise<void>;
-  handleCronRemove: (jobId: string) => Promise<void>;
-  handleCronAdd: () => Promise<void>;
-  handleCronRunsLoad: (jobId: string) => Promise<void>;
-  handleCronFormUpdate: (path: string, value: unknown) => void;
+  handleCronSchedulerToggle: (enabled: boolean) => Promise<void>;
   handleSessionsLoad: () => Promise<void>;
   handleSessionsPatch: (key: string, patch: unknown) => Promise<void>;
   handleLoadNodes: () => Promise<void>;
@@ -320,7 +423,10 @@ export type AppViewState = {
   setPassword: (next: string) => void;
   setSessionKey: (next: string) => void;
   setChatMessage: (next: string) => void;
-  handleSendChat: (messageOverride?: string, opts?: { restoreDraft?: boolean }) => Promise<void>;
+  handleSendChat: (
+    messageOverride?: string,
+    opts?: { restoreDraft?: boolean; forceQueue?: boolean },
+  ) => Promise<void>;
   handleAbortChat: () => Promise<void>;
   removeQueuedMessage: (id: string) => void;
   handleChatScroll: (event: Event) => void;
@@ -331,4 +437,42 @@ export type AppViewState = {
   handleOpenSidebar: (content: string) => void;
   handleCloseSidebar: () => void;
   handleSplitRatioChange: (ratio: number) => void;
+  openCommandPalette: () => void | Promise<void>;
+  closeCommandPalette: () => void;
+  getCommandPaletteActions: () => CommandPaletteAction[];
+  runCommandPaletteAction: (action: CommandPaletteAction) => void;
+  handleMemorySearchToggle: () => Promise<void>;
+  handleNvidiaRouterToggle: (forceEnabled?: boolean) => Promise<void>;
+  refreshSparkStatus: () => Promise<void>;
+  refreshDgxRoutingStatus: () => Promise<void>;
+  toggleVoiceBar: () => void;
+  toggleVoiceBarExpanded: () => void;
+  handleVoiceDriveOpenClawChange: (enabled: boolean) => void;
+  handleVoiceStartConversation: () => void | Promise<void>;
+  handleVoiceStopConversation: () => void | Promise<void>;
+  handleVoiceClose: () => void | Promise<void>;
+  handleVoiceRetry: () => void | Promise<void>;
+  handleTtsVoiceChange: (voice: string | null) => void;
+  handleTtsInstructChange: (instruct: string | null) => void;
+  handleTtsLanguageChange: (language: string | null) => void;
+  openChatSession: (sessionKey: string) => void;
+  handleChatNewThread: () => Promise<void>;
+  handleChatThreadsQueryChange: (next: string) => void;
+  handleChatThreadRename: (key: string) => Promise<void>;
+  handleChatThreadDelete: (key: string) => Promise<void>;
+  orchSelectCard: (cardId: string | null) => void;
+  orchCreateCard: (laneId?: OrchestrationLaneId) => void;
+  orchUpdateCard: (cardId: string, patch: Partial<OrchestrationCard>) => void;
+  orchMoveCard: (cardId: string, laneId: OrchestrationLaneId) => void;
+  orchDeleteCard: (cardId: string) => void;
+  orchDuplicateCard: (cardId: string) => void;
+  orchRunCard: (cardId: string) => Promise<void>;
+  orchCleanupCardSession: (cardId: string) => Promise<void>;
+  orchSetDraft: (patch: Partial<OrchestratorDraftState>) => void;
+  orchAddDraftCard: (opts?: { run?: boolean }) => Promise<void> | void;
+  handleDoctorRun: (opts?: { deep?: boolean }) => Promise<void>;
+  handleGatewayRestart: () => Promise<void>;
+  handleSparkMicClick: () => Promise<void>;
+  handleSpeakText: (text: string, messageKey?: string) => Promise<void>;
+  handleStopSpeaking: () => void;
 };

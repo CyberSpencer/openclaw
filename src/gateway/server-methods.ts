@@ -13,12 +13,15 @@ import { healthHandlers } from "./server-methods/health.js";
 import { logsHandlers } from "./server-methods/logs.js";
 import { modelsHandlers } from "./server-methods/models.js";
 import { nodeHandlers } from "./server-methods/nodes.js";
+import { nvidiaRouterHandlers } from "./server-methods/nvidia-router.js";
 import { orchestratorHandlers } from "./server-methods/orchestrator.js";
+import { pushHandlers } from "./server-methods/push.js";
 import { routerStatusHandlers } from "./server-methods/router-status.js";
 import { sendHandlers } from "./server-methods/send.js";
 import { sessionsHandlers } from "./server-methods/sessions.js";
 import { skillsHandlers } from "./server-methods/skills.js";
 import { sparkStatusHandlers } from "./server-methods/spark-status.js";
+import { sparkVoiceMethodsHandlers } from "./server-methods/spark-voice-methods.js";
 import { sparkVoiceHandlers } from "./server-methods/spark-voice.js";
 import { systemHandlers } from "./server-methods/system.js";
 import { talkHandlers } from "./server-methods/talk.js";
@@ -26,6 +29,7 @@ import { ttsHandlers } from "./server-methods/tts.js";
 import type { GatewayRequestHandlers, GatewayRequestOptions } from "./server-methods/types.js";
 import { updateHandlers } from "./server-methods/update.js";
 import { usageHandlers } from "./server-methods/usage.js";
+import { voiceGatewayHandlers } from "./server-methods/voice-gateway.js";
 import { voiceHandlers } from "./server-methods/voice.js";
 import { voicewakeHandlers } from "./server-methods/voicewake.js";
 import { webHandlers } from "./server-methods/web.js";
@@ -215,6 +219,13 @@ export const coreGatewayHandlers: GatewayRequestHandlers = {
   ...nodeHandlers,
   ...sendHandlers,
   ...usageHandlers,
+  ...sparkStatusHandlers,
+  ...dgxRoutingHandlers,
+  ...doctorHandlers,
+  ...sparkVoiceMethodsHandlers,
+  ...voiceGatewayHandlers,
+  ...nvidiaRouterHandlers,
+  ...pushHandlers,
   ...agentHandlers,
   ...agentsHandlers,
   ...browserHandlers,

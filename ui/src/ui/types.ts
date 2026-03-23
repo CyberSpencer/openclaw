@@ -1,4 +1,5 @@
 export type UpdateAvailable = import("../../../src/infra/update-startup.js").UpdateAvailable;
+export type ModelCatalogEntry = import("../../../src/agents/model-catalog.js").ModelCatalogEntry;
 
 export type ChannelsStatusSnapshot = {
   ts: number;
@@ -425,6 +426,7 @@ export type GatewaySessionRow = {
   systemSent?: boolean;
   abortedLastRun?: boolean;
   thinkingLevel?: string;
+  fastMode?: boolean;
   verboseLevel?: string;
   reasoningLevel?: string;
   elevatedLevel?: string;
@@ -439,10 +441,7 @@ export type GatewaySessionRow = {
   contextTokens?: number;
   runStatus?: string;
   runtimeMs?: number;
-  modelApplied?: boolean;
   outcome?: { status?: string; error?: string };
-  routing?: string;
-  complexity?: string;
   task?: string;
   source?: "subagent" | "background-exec";
   openable?: boolean;
@@ -667,6 +666,17 @@ export type LogEntry = {
   meta?: Record<string, unknown> | null;
 };
 
+export type AttentionSeverity = "error" | "warning" | "info";
+
+export type AttentionItem = {
+  severity: AttentionSeverity;
+  icon: string;
+  title: string;
+  description: string;
+  href?: string;
+  external?: boolean;
+};
+
 export type RouterStatus = {
   enabled: boolean;
   healthy: boolean;
@@ -710,10 +720,41 @@ export type SparkStatus = {
   containers?: SparkContainer[] | null;
 };
 
+export type DgxRoutingStatus = {
+  checkedAt?: number;
+  configured_mode?: "auto" | "lan" | "wan";
+  access_mode?: "lan" | "wan";
+  backend?: string;
+  fallback_hop?: number;
+  endpoint_id?: string;
+  wanKillSwitch?: boolean;
+  model?: string | null;
+  selection_reason?: string | null;
+  logPath?: string;
+};
+
+/** Partial payload from spark health polling before overview normalization. */
+export type SparkGatewayPollStatus = Partial<SparkStatus> & {
+  services?: Record<
+    string,
+    { url?: string; healthy?: boolean; status?: number; error?: string | null; latency_ms?: number }
+  >;
+};
+
 export type PersonaPlexStatus = {
   enabled: boolean;
   installed: boolean;
   running: boolean;
   hasToken: boolean;
   port: number;
+};
+
+export type HealthSummary = {
+  ok: boolean;
+  ts: number;
+  durationMs: number;
+  heartbeatSeconds: number;
+  defaultAgentId: string;
+  agents: string[];
+  sessions: { path: string; count: number; recent: string[] };
 };

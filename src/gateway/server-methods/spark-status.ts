@@ -381,6 +381,56 @@ function mapDgxServices(
   return result;
 }
 
+/** Exported for unit tests. */
+export function mapDgxStatsPayload(
+  data: Record<string, unknown>,
+  hostLabel: string | null,
+  checkedAt: number,
+): Record<string, unknown> {
+  const overall = typeof data.overall === "string" ? data.overall : "unknown";
+  const counts = data.counts;
+  const rawServices = asRecord(data.services) ?? {};
+  const services: Record<string, unknown> = {};
+  for (const [name, raw] of Object.entries(rawServices)) {
+    const svc = asRecord(raw);
+    if (!svc) {
+      continue;
+    }
+    const st = typeof svc.status === "string" ? svc.status : "";
+    const code = typeof svc.code === "number" ? svc.code : st === "healthy" ? 200 : 503;
+    const reason = typeof svc.reason === "string" ? svc.reason : "";
+    services[name] = {
+      healthy: st === "healthy",
+      status: code,
+      error: st === "healthy" || !reason ? null : reason,
+      latency_ms: typeof svc.latency_ms === "number" ? svc.latency_ms : undefined,
+    };
+  }
+  const voice = asRecord(data.voice);
+  const vStt = services.voice_stt as { healthy?: boolean } | undefined;
+  const vTts = services.voice_tts as { healthy?: boolean } | undefined;
+  const voiceAvailable =
+    typeof voice?.available === "boolean"
+      ? voice.available
+      : Boolean(vStt?.healthy && vTts?.healthy);
+
+  const active = overall !== "down";
+
+  return {
+    enabled: true,
+    active,
+    source: "dgx-stats",
+    host: hostLabel,
+    checkedAt,
+    voiceAvailable,
+    overall,
+    counts,
+    services,
+    gpu: data.gpu ?? null,
+    containers: Array.isArray(data.containers) ? data.containers : null,
+  };
+}
+
 export const sparkStatusHandlers: GatewayRequestHandlers = {
   "spark.status": async ({ respond }) => {
     const now = Date.now();

@@ -1,12 +1,17 @@
 import { html, nothing } from "lit";
 import { parseAgentSessionKey } from "../../../src/routing/session-key.js";
 import { refreshChatAvatar } from "./app-chat.ts";
-import { renderChatControls, renderTab, renderThemeToggle } from "./app-render.helpers.ts";
+import {
+  renderChatControls,
+  renderChatSessionSelect,
+  renderTab,
+  renderThemeToggle,
+} from "./app-render.helpers.ts";
 import type { AppViewState } from "./app-view-state.ts";
 import { loadAgentFiles, loadAgentFileContent, saveAgentFile } from "./controllers/agent-files.ts";
 import { loadAgentIdentity, loadAgentIdentities } from "./controllers/agent-identity.ts";
 import { loadAgentSkills } from "./controllers/agent-skills.ts";
-import { loadAgents } from "./controllers/agents.ts";
+import { loadAgents, loadToolsCatalog } from "./controllers/agents.ts";
 import { loadChannels } from "./controllers/channels.ts";
 import { loadChatThreads } from "./controllers/chat-threads.ts";
 import { loadChatHistory } from "./controllers/chat.ts";
@@ -19,11 +24,23 @@ import {
   removeConfigFormValue,
 } from "./controllers/config.ts";
 import {
-  loadCronRuns,
-  toggleCronJob,
-  runCronJob,
-  removeCronJob,
   addCronJob,
+  cancelCronEdit,
+  getVisibleCronJobs,
+  hasCronFormErrors,
+  loadCronRuns,
+  loadMoreCronJobs,
+  loadMoreCronRuns,
+  normalizeCronFormState,
+  reloadCronJobs,
+  removeCronJob,
+  runCronJob,
+  startCronClone,
+  startCronEdit,
+  toggleCronJob,
+  updateCronJobsFilter,
+  updateCronRunsFilter,
+  validateCronForm,
 } from "./controllers/cron.ts";
 import { loadDebug, callDebugMethod } from "./controllers/debug.ts";
 import {
@@ -42,7 +59,12 @@ import {
 import { loadLogs } from "./controllers/logs.ts";
 import { loadNodes } from "./controllers/nodes.ts";
 import { loadPresence } from "./controllers/presence.ts";
-import { deleteSession, loadSessions, patchSession } from "./controllers/sessions.ts";
+import {
+  deleteSession,
+  deleteSessionsAndRefresh,
+  loadSessions,
+  patchSession,
+} from "./controllers/sessions.ts";
 import {
   installSkill,
   loadSkills,
@@ -54,6 +76,7 @@ import { loadSubagentMonitor } from "./controllers/subagent-monitor.ts";
 import { loadSessionLogs, loadSessionTimeSeries, loadUsage } from "./controllers/usage.ts";
 import { icons } from "./icons.ts";
 import { TAB_GROUPS, subtitleForTab, titleForTab } from "./navigation.ts";
+import { resolveConfiguredCronModelSuggestions } from "./views/agents-utils.ts";
 import { renderAgents } from "./views/agents.ts";
 import { renderChannels } from "./views/channels.ts";
 import { renderChatThreadsNav } from "./views/chat-threads-nav.ts";
@@ -66,6 +89,7 @@ import { renderDgx } from "./views/dgx.ts";
 import { renderExecApprovalPrompt } from "./views/exec-approval.ts";
 import { renderGatewayUrlConfirmation } from "./views/gateway-url-confirmation.ts";
 import { renderInstances } from "./views/instances.ts";
+import { renderLoginGate } from "./views/login-gate.ts";
 import { renderLogs } from "./views/logs.ts";
 import { renderNodes } from "./views/nodes.ts";
 import { renderOrchestrator } from "./views/orchestrator.ts";
@@ -75,6 +99,137 @@ import { renderSettings } from "./views/settings.ts";
 import { renderSkills } from "./views/skills.ts";
 import { renderUsage } from "./views/usage.ts";
 import { renderVoiceBar } from "./views/voice-bar.ts";
+
+const CRON_THINKING_SUGGESTIONS = ["off", "minimal", "low", "medium", "high"];
+const COMMUNICATION_SECTION_KEYS = ["channels", "messages", "broadcast", "talk", "audio"] as const;
+const APPEARANCE_SECTION_KEYS = ["ui", "wizard"] as const;
+const AUTOMATION_SECTION_KEYS = [
+  "commands",
+  "hooks",
+  "bindings",
+  "cron",
+  "approvals",
+  "plugins",
+] as const;
+const INFRASTRUCTURE_SECTION_KEYS = [
+  "gateway",
+  "web",
+  "browser",
+  "nodeHost",
+  "canvasHost",
+  "discovery",
+  "media",
+] as const;
+const AI_AGENTS_SECTION_KEYS = [
+  "agents",
+  "models",
+  "skills",
+  "tools",
+  "memory",
+  "session",
+] as const;
+const CRON_TIMEZONE_SUGGESTIONS = [
+  "UTC",
+  "America/Los_Angeles",
+  "America/Denver",
+  "America/Chicago",
+  "America/New_York",
+  "Europe/London",
+  "Europe/Berlin",
+  "Asia/Tokyo",
+];
+
+type DismissedUpdateBanner = {
+  latestVersion: string;
+  channel: string | null;
+  dismissedAtMs: number;
+};
+
+const DISMISSED_UPDATE_BANNER_KEY = "openclaw.control.dismissed-update-banner.v1";
+
+function loadDismissedUpdateBanner(): DismissedUpdateBanner | null {
+  if (typeof window === "undefined") {
+    return null;
+  }
+  try {
+    const raw = window.localStorage.getItem(DISMISSED_UPDATE_BANNER_KEY);
+    if (!raw) {
+      return null;
+    }
+    const parsed = JSON.parse(raw) as Partial<DismissedUpdateBanner>;
+    if (!parsed || typeof parsed.latestVersion !== "string") {
+      return null;
+    }
+    return {
+      latestVersion: parsed.latestVersion,
+      channel: typeof parsed.channel === "string" ? parsed.channel : null,
+      dismissedAtMs: typeof parsed.dismissedAtMs === "number" ? parsed.dismissedAtMs : Date.now(),
+    };
+  } catch {
+    return null;
+  }
+}
+
+function isUpdateBannerDismissed(updateAvailable: unknown): boolean {
+  const dismissed = loadDismissedUpdateBanner();
+  if (!dismissed) {
+    return false;
+  }
+  const info = updateAvailable as { latestVersion?: unknown; channel?: unknown };
+  const latestVersion = info && typeof info.latestVersion === "string" ? info.latestVersion : null;
+  const channel = info && typeof info.channel === "string" ? info.channel : null;
+  return Boolean(
+    latestVersion && dismissed.latestVersion === latestVersion && dismissed.channel === channel,
+  );
+}
+
+function dismissUpdateBanner(updateAvailable: unknown) {
+  if (typeof window === "undefined") {
+    return;
+  }
+  const info = updateAvailable as { latestVersion?: unknown; channel?: unknown };
+  const latestVersion = info && typeof info.latestVersion === "string" ? info.latestVersion : null;
+  if (!latestVersion) {
+    return;
+  }
+  const channel = info && typeof info.channel === "string" ? info.channel : null;
+  const payload: DismissedUpdateBanner = {
+    latestVersion,
+    channel,
+    dismissedAtMs: Date.now(),
+  };
+  try {
+    window.localStorage.setItem(DISMISSED_UPDATE_BANNER_KEY, JSON.stringify(payload));
+  } catch {
+    /* ignore storage failures */
+  }
+}
+
+function isHttpUrl(value: string): boolean {
+  return /^https?:\/\//i.test(value.trim());
+}
+
+function normalizeSuggestionValue(value: unknown): string {
+  return typeof value === "string" ? value.trim() : "";
+}
+
+function uniquePreserveOrder(values: string[]): string[] {
+  const seen = new Set<string>();
+  const output: string[] = [];
+  for (const value of values) {
+    const normalized = value.trim();
+    if (!normalized) {
+      continue;
+    }
+    const key = normalized.toLowerCase();
+    if (seen.has(key)) {
+      continue;
+    }
+    seen.add(key);
+    output.push(normalized);
+  }
+  return output;
+}
 
 const AVATAR_DATA_RE = /^data:/i;
 const AVATAR_HTTP_RE = /^https?:\/\//i;
@@ -182,23 +337,38 @@ export function renderApp(state: AppViewState) {
   const sparkActive = state.sparkStatus?.active;
   const sparkKnown = Boolean(state.sparkStatus);
   const sparkHost = typeof state.sparkStatus?.host === "string" ? state.sparkStatus.host : null;
+  const sparkServices = state.sparkStatus?.services as
+    | Record<string, { error?: unknown }>
+    | undefined;
+  const sparkRouterError =
+    typeof sparkServices?.router?.error === "string" ? sparkServices.router.error : null;
+  const sparkRouterDegraded = Boolean(sparkRouterError?.startsWith("degraded"));
   const sparkLabel = state.sparkBusy
     ? "..."
     : !sparkKnown
       ? "..."
       : sparkEnabled === false
         ? "Off"
+        : sparkRouterDegraded
+          ? "Degraded"
+          : sparkActive
+            ? "On"
+            : "Fallback";
+  const sparkDotClass =
+    !sparkKnown || sparkEnabled === false
+      ? "neutral"
+      : sparkRouterDegraded
+        ? ""
         : sparkActive
-          ? "On"
-          : "Fallback";
-  const sparkDotClass = !sparkKnown || sparkEnabled === false ? "neutral" : sparkActive ? "ok" : "";
+          ? "ok"
+          : "";
   const sparkTitle = !sparkKnown
     ? "DGX Spark status unavailable"
     : sparkEnabled === false
       ? "DGX Spark disabled"
       : sparkActive
-        ? `DGX Spark active${sparkHost ? ` (${sparkHost})` : ""}`
-        : `DGX Spark fallback${sparkHost ? ` (${sparkHost})` : ""}`;
+        ? `DGX Spark active${sparkHost ? ` (${sparkHost})` : ""}${sparkRouterError ? ` · router ${sparkRouterError}` : ""}`
+        : `DGX Spark fallback${sparkHost ? ` (${sparkHost})` : ""}${sparkRouterError ? ` · router ${sparkRouterError}` : ""}`;
   const configValue =
     state.configForm ?? (state.configSnapshot?.config as Record<string, unknown> | null);
   const resolvedAgentId =
@@ -215,6 +385,7 @@ export function renderApp(state: AppViewState) {
           healthy: state.nvidiaRouterEnabled === false ? false : state.nvidiaRouterHealthy === true,
           url: "",
           checkedAt: Date.now(),
+          error: state.nvidiaRouterError ?? undefined,
         };
   const sparkStatus: import("./types.js").SparkStatus | null = state.sparkStatus
     ? {
@@ -234,6 +405,66 @@ export function renderApp(state: AppViewState) {
         containers: state.sparkStatus.containers,
       }
     : null;
+
+  if (!state.connected) {
+    return html`
+      ${renderLoginGate(state)}
+      ${renderGatewayUrlConfirmation(state)}
+    `;
+  }
+
+  const visibleCronJobs = getVisibleCronJobs(state);
+  const cronAgentSuggestions = Array.from(
+    new Set(
+      [
+        ...(state.agentsList?.agents?.map((entry) => entry.id.trim()) ?? []),
+        ...state.cronJobs
+          .map((job) => (typeof job.agentId === "string" ? job.agentId.trim() : ""))
+          .filter(Boolean),
+      ].filter(Boolean),
+    ),
+  ).toSorted((a, b) => a.localeCompare(b));
+  const cronModelSuggestionsMerged = Array.from(
+    new Set(
+      [
+        ...state.cronModelSuggestions,
+        ...resolveConfiguredCronModelSuggestions(configValue),
+        ...state.cronJobs
+          .map((job) => {
+            if (job.payload.kind !== "agentTurn" || typeof job.payload.model !== "string") {
+              return "";
+            }
+            return job.payload.model.trim();
+          })
+          .filter(Boolean),
+      ].filter(Boolean),
+    ),
+  ).toSorted((a, b) => a.localeCompare(b));
+  const selectedDeliveryChannel =
+    state.cronForm.deliveryChannel && state.cronForm.deliveryChannel.trim()
+      ? state.cronForm.deliveryChannel.trim()
+      : "last";
+  const jobToSuggestions = state.cronJobs
+    .map((job) => normalizeSuggestionValue(job.delivery?.to))
+    .filter(Boolean);
+  const accountToSuggestions = (
+    selectedDeliveryChannel === "last"
+      ? Object.values(state.channelsSnapshot?.channelAccounts ?? {}).flat()
+      : (state.channelsSnapshot?.channelAccounts?.[selectedDeliveryChannel] ?? [])
+  )
+    .flatMap((account) => [
+      normalizeSuggestionValue(account.accountId),
+      normalizeSuggestionValue(account.name),
+    ])
+    .filter(Boolean);
+  const rawDeliveryToSuggestions = uniquePreserveOrder([
+    ...jobToSuggestions,
+    ...accountToSuggestions,
+  ]);
+  const deliveryToSuggestions =
+    state.cronForm.deliveryMode === "webhook"
+      ? rawDeliveryToSuggestions.filter((value) => isHttpUrl(value))
+      : rawDeliveryToSuggestions;
 
   return html`
     <div class="shell ${isChat ? "shell--chat" : ""} ${chatFocus ? "shell--chat-focus" : ""} ${state.settings.navCollapsed ? "shell--nav-collapsed" : ""} ${state.onboarding ? "shell--onboarding" : ""}">
@@ -310,7 +541,13 @@ export function renderApp(state: AppViewState) {
             class="pill topbar-action-btn topbar-action-btn--status"
             ?disabled=${!state.connected || state.nvidiaRouterBusy}
             @click=${() => state.handleNvidiaRouterToggle()}
-            title="${state.nvidiaRouterEnabled === false ? "Enable NVIDIA Router" : "Disable NVIDIA Router"}"
+            title=${
+              state.nvidiaRouterEnabled === false
+                ? "Enable NVIDIA Router"
+                : state.nvidiaRouterHealthy === false
+                  ? `NVIDIA Router degraded${state.nvidiaRouterError ? `: ${state.nvidiaRouterError}` : ""}`
+                  : "Disable NVIDIA Router"
+            }
             aria-label="${state.nvidiaRouterEnabled === false ? "Enable NVIDIA Router" : "Disable NVIDIA Router"}"
           >
             <span class="statusDot ${state.nvidiaRouterHealthy ? "ok" : ""}"></span>
@@ -426,10 +663,44 @@ export function renderApp(state: AppViewState) {
         </div>
       </aside>
       <main id="main-content" class="content ${isChat ? "content--chat" : ""}" tabindex="-1">
+        ${
+          state.updateAvailable &&
+          state.updateAvailable.latestVersion !== state.updateAvailable.currentVersion &&
+          !isUpdateBannerDismissed(state.updateAvailable)
+            ? html`<div class="update-banner callout danger" role="alert">
+                <strong>Update available:</strong> v${state.updateAvailable.latestVersion}
+                (running v${state.updateAvailable.currentVersion}).
+                <button
+                  class="btn btn--sm update-banner__btn"
+                  ?disabled=${state.updateRunning || !state.connected}
+                  @click=${() => runUpdate(state)}
+                >
+                  ${state.updateRunning ? "Updating…" : "Update & restart"}
+                </button>
+                <button
+                  class="btn btn--sm update-banner__btn"
+                  title="Dismiss"
+                  aria-label="Dismiss update banner"
+                  @click=${() => {
+                    dismissUpdateBanner(state.updateAvailable);
+                    state.updateAvailable = null;
+                  }}
+                >
+                  ${icons.x}
+                </button>
+              </div>`
+            : nothing
+        }
         <section class="content-header">
           <div>
-            ${state.tab === "usage" ? nothing : html`<div class="page-title">${titleForTab(state.tab)}</div>`}
-            ${state.tab === "usage" ? nothing : html`<div class="page-sub">${subtitleForTab(state.tab)}</div>`}
+            ${
+              isChat
+                ? renderChatSessionSelect(state)
+                : state.tab === "usage"
+                  ? nothing
+                  : html`<div class="page-title">${titleForTab(state.tab)}</div>`
+            }
+            ${isChat || state.tab === "usage" ? nothing : html`<div class="page-sub">${subtitleForTab(state.tab)}</div>`}
           </div>
           <div class="page-meta">
             ${state.lastError ? html`<div class="pill danger">${state.lastError}</div>` : nothing}
@@ -447,15 +718,28 @@ export function renderApp(state: AppViewState) {
                 settings: state.settings,
                 password: state.password,
                 lastError: state.lastError,
+                lastErrorCode: state.lastErrorCode,
                 presenceCount,
                 sessionsCount,
                 cronEnabled: state.cronStatus?.enabled ?? null,
                 cronNext,
+                cronStatus: state.cronStatus,
                 lastChannelsRefresh: state.channelsLastSuccess,
+                usageResult: state.usageResult,
+                sessionsResult: state.sessionsResult,
+                skillsReport: state.skillsReport,
+                cronJobs: state.cronJobs,
+                eventLog: state.eventLog,
+                overviewLogLines: state.logsEntries.map(
+                  (entry) => entry.raw ?? entry.message ?? "",
+                ),
                 systemStatusLoading,
                 systemStatusError: state.lastError,
                 routerStatus,
                 sparkStatus,
+                anthropicSnapshot: state.anthropicUsageSnapshot,
+                orchBoards: state.orchBoards,
+                orchSelectedBoardId: state.orchSelectedBoardId,
                 onSettingsChange: (next) => state.applySettings(next),
                 onPasswordChange: (next) => (state.password = next),
                 onSessionKeyChange: (next) => {
@@ -471,7 +755,9 @@ export function renderApp(state: AppViewState) {
                 },
                 onConnect: () => state.connect(),
                 onRefresh: () => state.loadOverview(),
+                onRefreshLogs: () => loadLogs(state, { reset: true }),
                 onRouterSetEnabled: (enabled) => void state.handleNvidiaRouterToggle(enabled),
+                onNavigate: (tab) => state.setTab(tab as import("./navigation.ts").Tab),
               })
             : nothing
         }
@@ -481,6 +767,7 @@ export function renderApp(state: AppViewState) {
             ? renderDgx({
                 connected: state.connected,
                 sparkStatus,
+                routingStatus: state.dgxRoutingStatus,
                 onRefresh: () => state.refreshSparkStatus(),
               })
             : nothing
@@ -550,14 +837,77 @@ export function renderApp(state: AppViewState) {
                 includeGlobal: state.sessionsIncludeGlobal,
                 includeUnknown: state.sessionsIncludeUnknown,
                 basePath: state.basePath,
+                searchQuery: state.sessionsSearchQuery,
+                sortColumn: state.sessionsSortColumn,
+                sortDir: state.sessionsSortDir,
+                page: state.sessionsPage,
+                pageSize: state.sessionsPageSize,
+                selectedKeys: state.sessionsSelectedKeys,
                 onFiltersChange: (next) => {
                   state.sessionsFilterActive = next.activeMinutes;
                   state.sessionsFilterLimit = next.limit;
                   state.sessionsIncludeGlobal = next.includeGlobal;
                   state.sessionsIncludeUnknown = next.includeUnknown;
+                  state.sessionsPage = 0;
+                  state.sessionsSelectedKeys = new Set();
+                },
+                onSearchChange: (query) => {
+                  state.sessionsSearchQuery = query;
+                  state.sessionsPage = 0;
+                },
+                onSortChange: (column, dir) => {
+                  state.sessionsSortColumn = column;
+                  state.sessionsSortDir = dir;
+                  state.sessionsPage = 0;
+                },
+                onPageChange: (page) => {
+                  state.sessionsPage = Math.max(0, page);
+                },
+                onPageSizeChange: (size) => {
+                  state.sessionsPageSize = size;
+                  state.sessionsPage = 0;
                 },
                 onRefresh: () => loadSessions(state),
                 onPatch: (key, patch) => patchSession(state, key, patch),
+                onToggleSelect: (key) => {
+                  const next = new Set(state.sessionsSelectedKeys);
+                  if (next.has(key)) {
+                    next.delete(key);
+                  } else {
+                    next.add(key);
+                  }
+                  state.sessionsSelectedKeys = next;
+                },
+                onSelectPage: (keys) => {
+                  const next = new Set(state.sessionsSelectedKeys);
+                  for (const key of keys) {
+                    next.add(key);
+                  }
+                  state.sessionsSelectedKeys = next;
+                },
+                onDeselectPage: (keys) => {
+                  const next = new Set(state.sessionsSelectedKeys);
+                  for (const key of keys) {
+                    next.delete(key);
+                  }
+                  state.sessionsSelectedKeys = next;
+                },
+                onDeselectAll: () => {
+                  state.sessionsSelectedKeys = new Set();
+                },
+                onDeleteSelected: async () => {
+                  const deleted = await deleteSessionsAndRefresh(
+                    state,
+                    Array.from(state.sessionsSelectedKeys),
+                  );
+                  if (deleted.length > 0) {
+                    const next = new Set(state.sessionsSelectedKeys);
+                    for (const key of deleted) {
+                      next.delete(key);
+                    }
+                    state.sessionsSelectedKeys = next;
+                  }
+                },
                 onDelete: (key) => deleteSession(state, key),
               })
             : nothing
@@ -584,6 +934,8 @@ export function renderApp(state: AppViewState) {
                 timeSeriesBreakdownMode: state.usageTimeSeriesBreakdownMode,
                 timeSeries: state.usageTimeSeries,
                 timeSeriesLoading: state.usageTimeSeriesLoading,
+                timeSeriesCursorStart: state.usageTimeSeriesCursorStart,
+                timeSeriesCursorEnd: state.usageTimeSeriesCursorEnd,
                 sessionLogs: state.usageSessionLogs,
                 sessionLogsLoading: state.usageSessionLogsLoading,
                 sessionLogsExpanded: state.usageSessionLogsExpanded,
@@ -804,6 +1156,10 @@ export function renderApp(state: AppViewState) {
                 onTimeSeriesBreakdownChange: (mode) => {
                   state.usageTimeSeriesBreakdownMode = mode;
                 },
+                onTimeSeriesCursorRangeChange: (start, end) => {
+                  state.usageTimeSeriesCursorStart = start;
+                  state.usageTimeSeriesCursorEnd = end;
+                },
                 onClearDays: () => {
                   state.usageSelectedDays = [];
                 },
@@ -831,11 +1187,23 @@ export function renderApp(state: AppViewState) {
             ? renderCron({
                 basePath: state.basePath,
                 loading: state.cronLoading,
+                jobsLoadingMore: state.cronJobsLoadingMore,
                 status: state.cronStatus,
-                jobs: state.cronJobs,
+                jobs: visibleCronJobs,
+                jobsTotal: state.cronJobsTotal,
+                jobsHasMore: state.cronJobsHasMore,
+                jobsQuery: state.cronJobsQuery,
+                jobsEnabledFilter: state.cronJobsEnabledFilter,
+                jobsScheduleKindFilter: state.cronJobsScheduleKindFilter,
+                jobsLastStatusFilter: state.cronJobsLastStatusFilter,
+                jobsSortBy: state.cronJobsSortBy,
+                jobsSortDir: state.cronJobsSortDir,
+                editingJobId: state.cronEditingJobId,
                 error: state.cronError,
                 busy: state.cronBusy,
                 form: state.cronForm,
+                fieldErrors: state.cronFieldErrors,
+                canSubmit: !hasCronFormErrors(state.cronFieldErrors),
                 channels: state.channelsSnapshot?.channelMeta?.length
                   ? state.channelsSnapshot.channelMeta.map((entry) => entry.id)
                   : (state.channelsSnapshot?.channelOrder ?? []),
@@ -843,14 +1211,70 @@ export function renderApp(state: AppViewState) {
                 channelMeta: state.channelsSnapshot?.channelMeta ?? [],
                 runsJobId: state.cronRunsJobId,
                 runs: state.cronRuns,
-                onFormChange: (patch) => (state.cronForm = { ...state.cronForm, ...patch }),
+                runsTotal: state.cronRunsTotal,
+                runsHasMore: state.cronRunsHasMore,
+                runsLoadingMore: state.cronRunsLoadingMore,
+                runsScope: state.cronRunsScope,
+                runsStatuses: state.cronRunsStatuses,
+                runsDeliveryStatuses: state.cronRunsDeliveryStatuses,
+                runsStatusFilter: state.cronRunsStatusFilter,
+                runsQuery: state.cronRunsQuery,
+                runsSortDir: state.cronRunsSortDir,
+                agentSuggestions: cronAgentSuggestions,
+                modelSuggestions: cronModelSuggestionsMerged,
+                thinkingSuggestions: CRON_THINKING_SUGGESTIONS,
+                timezoneSuggestions: CRON_TIMEZONE_SUGGESTIONS,
+                deliveryToSuggestions,
+                onFormChange: (patch) => {
+                  state.cronForm = normalizeCronFormState({ ...state.cronForm, ...patch });
+                  state.cronFieldErrors = validateCronForm(state.cronForm);
+                },
                 onRefresh: () => state.loadCron(),
-                onToggleSchedulerEnabled: (enabled) => state.handleCronSchedulerToggle(enabled),
                 onAdd: () => addCronJob(state),
+                onEdit: (job) => startCronEdit(state, job),
+                onClone: (job) => startCronClone(state, job),
+                onCancelEdit: () => cancelCronEdit(state),
                 onToggle: (job, enabled) => toggleCronJob(state, job, enabled),
-                onRun: (job) => runCronJob(state, job),
+                onRun: (job) => void runCronJob(state, job),
                 onRemove: (job) => removeCronJob(state, job),
-                onLoadRuns: (jobId) => loadCronRuns(state, jobId),
+                onLoadRuns: (jobId) => {
+                  updateCronRunsFilter(state, { cronRunsScope: "job" });
+                  void loadCronRuns(state, jobId);
+                },
+                onLoadMoreJobs: () => void loadMoreCronJobs(state),
+                onJobsFiltersChange: async (patch) => {
+                  updateCronJobsFilter(state, patch);
+                  const shouldReload =
+                    typeof patch.cronJobsQuery === "string" ||
+                    Boolean(patch.cronJobsEnabledFilter) ||
+                    Boolean(patch.cronJobsSortBy) ||
+                    Boolean(patch.cronJobsSortDir);
+                  if (shouldReload) {
+                    await reloadCronJobs(state);
+                  }
+                },
+                onJobsFiltersReset: async () => {
+                  updateCronJobsFilter(state, {
+                    cronJobsQuery: "",
+                    cronJobsEnabledFilter: "all",
+                    cronJobsScheduleKindFilter: "all",
+                    cronJobsLastStatusFilter: "all",
+                    cronJobsSortBy: "nextRunAtMs",
+                    cronJobsSortDir: "asc",
+                  });
+                  await reloadCronJobs(state);
+                },
+                onLoadMoreRuns: () => void loadMoreCronRuns(state),
+                onRunsFiltersChange: async (patch) => {
+                  updateCronRunsFilter(state, patch);
+                  if (state.cronRunsScope === "all") {
+                    await loadCronRuns(state, null);
+                    return;
+                  }
+                  await loadCronRuns(state, state.cronRunsJobId);
+                },
+                onToggleSchedulerEnabled: (enabled) =>
+                  void state.handleCronSchedulerToggle(enabled),
               })
             : nothing
         }
@@ -890,8 +1314,12 @@ export function renderApp(state: AppViewState) {
                 agentSkillsError: state.agentSkillsError,
                 agentSkillsAgentId: state.agentSkillsAgentId,
                 skillsFilter: state.skillsFilter,
+                toolsCatalogLoading: state.toolsCatalogLoading,
+                toolsCatalogError: state.toolsCatalogError,
+                toolsCatalogResult: state.toolsCatalogResult,
                 onRefresh: async () => {
                   await loadAgents(state);
+                  void loadToolsCatalog(state);
                   const agentIds = state.agentsList?.agents?.map((entry) => entry.id) ?? [];
                   if (agentIds.length > 0) {
                     void loadAgentIdentities(state, agentIds);
@@ -1434,6 +1862,216 @@ export function renderApp(state: AppViewState) {
                 onSave: () => saveConfig(state),
                 onApply: () => applyConfig(state),
                 onUpdate: () => runUpdate(state),
+              })
+            : nothing
+        }
+
+        ${
+          state.tab === "communications"
+            ? renderConfig({
+                raw: state.configRaw,
+                originalRaw: state.configRawOriginal,
+                valid: state.configValid,
+                issues: state.configIssues,
+                loading: state.configLoading,
+                saving: state.configSaving,
+                applying: state.configApplying,
+                updating: state.updateRunning,
+                connected: state.connected,
+                schema: state.configSchema,
+                schemaLoading: state.configSchemaLoading,
+                uiHints: state.configUiHints,
+                formMode: state.communicationsFormMode,
+                formValue: state.configForm,
+                originalValue: state.configFormOriginal,
+                searchQuery: state.communicationsSearchQuery,
+                activeSection: state.communicationsActiveSection,
+                activeSubsection: state.communicationsActiveSubsection,
+                onRawChange: (next) => {
+                  state.configRaw = next;
+                },
+                onFormModeChange: (mode) => (state.communicationsFormMode = mode),
+                onFormPatch: (path, value) => updateConfigFormValue(state, path, value),
+                onSearchChange: (query) => (state.communicationsSearchQuery = query),
+                onSectionChange: (section) => {
+                  state.communicationsActiveSection = section;
+                  state.communicationsActiveSubsection = null;
+                },
+                onSubsectionChange: (section) => (state.communicationsActiveSubsection = section),
+                onReload: () => loadConfig(state),
+                onSave: () => saveConfig(state),
+                onApply: () => applyConfig(state),
+                onUpdate: () => runUpdate(state),
+                navRootLabel: "Communications",
+                includeSections: [...COMMUNICATION_SECTION_KEYS],
+              })
+            : nothing
+        }
+
+        ${
+          state.tab === "appearance"
+            ? renderConfig({
+                raw: state.configRaw,
+                originalRaw: state.configRawOriginal,
+                valid: state.configValid,
+                issues: state.configIssues,
+                loading: state.configLoading,
+                saving: state.configSaving,
+                applying: state.configApplying,
+                updating: state.updateRunning,
+                connected: state.connected,
+                schema: state.configSchema,
+                schemaLoading: state.configSchemaLoading,
+                uiHints: state.configUiHints,
+                formMode: state.appearanceFormMode,
+                formValue: state.configForm,
+                originalValue: state.configFormOriginal,
+                searchQuery: state.appearanceSearchQuery,
+                activeSection: state.appearanceActiveSection,
+                activeSubsection: state.appearanceActiveSubsection,
+                onRawChange: (next) => {
+                  state.configRaw = next;
+                },
+                onFormModeChange: (mode) => (state.appearanceFormMode = mode),
+                onFormPatch: (path, value) => updateConfigFormValue(state, path, value),
+                onSearchChange: (query) => (state.appearanceSearchQuery = query),
+                onSectionChange: (section) => {
+                  state.appearanceActiveSection = section;
+                  state.appearanceActiveSubsection = null;
+                },
+                onSubsectionChange: (section) => (state.appearanceActiveSubsection = section),
+                onReload: () => loadConfig(state),
+                onSave: () => saveConfig(state),
+                onApply: () => applyConfig(state),
+                onUpdate: () => runUpdate(state),
+                navRootLabel: "Appearance",
+                includeSections: [...APPEARANCE_SECTION_KEYS],
+              })
+            : nothing
+        }
+
+        ${
+          state.tab === "automation"
+            ? renderConfig({
+                raw: state.configRaw,
+                originalRaw: state.configRawOriginal,
+                valid: state.configValid,
+                issues: state.configIssues,
+                loading: state.configLoading,
+                saving: state.configSaving,
+                applying: state.configApplying,
+                updating: state.updateRunning,
+                connected: state.connected,
+                schema: state.configSchema,
+                schemaLoading: state.configSchemaLoading,
+                uiHints: state.configUiHints,
+                formMode: state.automationFormMode,
+                formValue: state.configForm,
+                originalValue: state.configFormOriginal,
+                searchQuery: state.automationSearchQuery,
+                activeSection: state.automationActiveSection,
+                activeSubsection: state.automationActiveSubsection,
+                onRawChange: (next) => {
+                  state.configRaw = next;
+                },
+                onFormModeChange: (mode) => (state.automationFormMode = mode),
+                onFormPatch: (path, value) => updateConfigFormValue(state, path, value),
+                onSearchChange: (query) => (state.automationSearchQuery = query),
+                onSectionChange: (section) => {
+                  state.automationActiveSection = section;
+                  state.automationActiveSubsection = null;
+                },
+                onSubsectionChange: (section) => (state.automationActiveSubsection = section),
+                onReload: () => loadConfig(state),
+                onSave: () => saveConfig(state),
+                onApply: () => applyConfig(state),
+                onUpdate: () => runUpdate(state),
+                navRootLabel: "Automation",
+                includeSections: [...AUTOMATION_SECTION_KEYS],
+              })
+            : nothing
+        }
+
+        ${
+          state.tab === "infrastructure"
+            ? renderConfig({
+                raw: state.configRaw,
+                originalRaw: state.configRawOriginal,
+                valid: state.configValid,
+                issues: state.configIssues,
+                loading: state.configLoading,
+                saving: state.configSaving,
+                applying: state.configApplying,
+                updating: state.updateRunning,
+                connected: state.connected,
+                schema: state.configSchema,
+                schemaLoading: state.configSchemaLoading,
+                uiHints: state.configUiHints,
+                formMode: state.infrastructureFormMode,
+                formValue: state.configForm,
+                originalValue: state.configFormOriginal,
+                searchQuery: state.infrastructureSearchQuery,
+                activeSection: state.infrastructureActiveSection,
+                activeSubsection: state.infrastructureActiveSubsection,
+                onRawChange: (next) => {
+                  state.configRaw = next;
+                },
+                onFormModeChange: (mode) => (state.infrastructureFormMode = mode),
+                onFormPatch: (path, value) => updateConfigFormValue(state, path, value),
+                onSearchChange: (query) => (state.infrastructureSearchQuery = query),
+                onSectionChange: (section) => {
+                  state.infrastructureActiveSection = section;
+                  state.infrastructureActiveSubsection = null;
+                },
+                onSubsectionChange: (section) => (state.infrastructureActiveSubsection = section),
+                onReload: () => loadConfig(state),
+                onSave: () => saveConfig(state),
+                onApply: () => applyConfig(state),
+                onUpdate: () => runUpdate(state),
+                navRootLabel: "Infrastructure",
+                includeSections: [...INFRASTRUCTURE_SECTION_KEYS],
+              })
+            : nothing
+        }
+
+        ${
+          state.tab === "aiAgents"
+            ? renderConfig({
+                raw: state.configRaw,
+                originalRaw: state.configRawOriginal,
+                valid: state.configValid,
+                issues: state.configIssues,
+                loading: state.configLoading,
+                saving: state.configSaving,
+                applying: state.configApplying,
+                updating: state.updateRunning,
+                connected: state.connected,
+                schema: state.configSchema,
+                schemaLoading: state.configSchemaLoading,
+                uiHints: state.configUiHints,
+                formMode: state.aiAgentsFormMode,
+                formValue: state.configForm,
+                originalValue: state.configFormOriginal,
+                searchQuery: state.aiAgentsSearchQuery,
+                activeSection: state.aiAgentsActiveSection,
+                activeSubsection: state.aiAgentsActiveSubsection,
+                onRawChange: (next) => {
+                  state.configRaw = next;
+                },
+                onFormModeChange: (mode) => (state.aiAgentsFormMode = mode),
+                onFormPatch: (path, value) => updateConfigFormValue(state, path, value),
+                onSearchChange: (query) => (state.aiAgentsSearchQuery = query),
+                onSectionChange: (section) => {
+                  state.aiAgentsActiveSection = section;
+                  state.aiAgentsActiveSubsection = null;
+                },
+                onSubsectionChange: (section) => (state.aiAgentsActiveSubsection = section),
+                onReload: () => loadConfig(state),
+                onSave: () => saveConfig(state),
+                onApply: () => applyConfig(state),
+                onUpdate: () => runUpdate(state),
+                navRootLabel: "AI Agents",
+                includeSections: [...AI_AGENTS_SECTION_KEYS],
               })
             : nothing
         }

@@ -2,6 +2,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { CURRENT_SESSION_VERSION } from "@mariozechner/pi-coding-agent";
 import { resolveSessionAgentId } from "../../agents/agent-scope.js";
+import type { ModelCatalogEntry } from "../../agents/model-catalog.js";
 import { resolveThinkingDefault } from "../../agents/model-selection.js";
 import { resolveAgentTimeoutMs } from "../../agents/timeout.js";
 import { dispatchInboundMessage } from "../../auto-reply/dispatch.js";
@@ -580,7 +581,21 @@ export const chatHandlers: GatewayRequestHandlers = {
       } else {
         const sessionAgentId = resolveSessionAgentId({ sessionKey, config: cfg });
         const { provider, model } = resolveSessionModelRef(cfg, entry, sessionAgentId);
-        const catalog = await context.loadGatewayModelCatalog();
+        // Model catalog load can hang on provider plugins or a stuck shared in-flight
+        // promise; chat.history must not block the Control UI on it.
+        const catalogTimeoutMs = 2_500;
+        let catalogTimeoutId: ReturnType<typeof setTimeout> | undefined;
+        const catalogTimeoutPromise = new Promise<ModelCatalogEntry[]>((resolve) => {
+          catalogTimeoutId = setTimeout(() => resolve([]), catalogTimeoutMs);
+        });
+        const catalog = await Promise.race([
+          context.loadGatewayModelCatalog().finally(() => {
+            if (catalogTimeoutId) {
+              clearTimeout(catalogTimeoutId);
+            }
+          }),
+          catalogTimeoutPromise,
+        ]);
         thinkingLevel = resolveThinkingDefault({
           cfg,
           provider,

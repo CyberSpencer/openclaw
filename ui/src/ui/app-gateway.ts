@@ -28,6 +28,7 @@ import {
   removeExecApproval,
 } from "./controllers/exec-approval.ts";
 import { loadNodes, type NodesState } from "./controllers/nodes.ts";
+import { loadSessions } from "./controllers/sessions.ts";
 import { loadSubagentMonitor, type SubagentMonitorState } from "./controllers/subagent-monitor.ts";
 import type {
   GatewayEventFrame,
@@ -59,6 +60,7 @@ export type GatewayHost = SettingsHost &
     updateAvailable?: UpdateAvailable | null;
     getSessionRunHost: (sessionKey: string) => unknown;
     resetAllSessionRunState: () => void;
+    pruneDisconnectedSessionRunState?: (activeSessionKeys?: Iterable<string>) => void;
     execApprovalQueue: ExecApprovalRequest[];
     execApprovalError: string | null;
     maybeAutoResolveVoiceExecApproval?: (entry: ExecApprovalRequest) => boolean;
@@ -84,7 +86,10 @@ export type GatewayHost = SettingsHost &
     handleOrchestratorStoreEvent?: (payload: unknown) => void;
     handleChatThreadFinalEvent?: (sessionKey: string) => void;
     loadOrchestratorFromGateway?: (opts?: { seedIfMissing?: boolean }) => Promise<void> | void;
-    reconcileInFlightOrchestratorRuns?: () => Promise<void> | void;
+    reconcileInFlightOrchestratorRuns?: () =>
+      | Promise<{ activeSessionKeys?: string[] } | void>
+      | { activeSessionKeys?: string[] }
+      | void;
   };
 
 type SessionDefaultsSnapshot = {
@@ -272,12 +277,27 @@ export function connectGateway(host: GatewayHost) {
       host.lastErrorCode = null;
       host.hello = hello;
       applySnapshot(host, hello);
-      // Reset orphaned run state from before disconnect.
-      // Any in-flight run's final event may have been lost during the disconnect window.
-      host.resetAllSessionRunState();
       void loadAssistantIdentity(host);
-      void host.loadOrchestratorFromGateway?.({ seedIfMissing: true });
-      void host.reconcileInFlightOrchestratorRuns?.();
+      void (async () => {
+        let activeSessionKeys: string[] = [];
+        try {
+          await host.loadOrchestratorFromGateway?.({ seedIfMissing: true });
+          const reconcileResult = await host.reconcileInFlightOrchestratorRuns?.();
+          if (
+            reconcileResult &&
+            typeof reconcileResult === "object" &&
+            Array.isArray(reconcileResult.activeSessionKeys)
+          ) {
+            activeSessionKeys = reconcileResult.activeSessionKeys
+              .map((value) => String(value ?? "").trim())
+              .filter((value) => Boolean(value));
+          }
+        } catch (err) {
+          console.warn("[gateway] reconnect orchestration bootstrap failed", err);
+        } finally {
+          host.pruneDisconnectedSessionRunState?.(activeSessionKeys);
+        }
+      })();
       void loadAgents(host);
       void loadNodes(host, { quiet: true });
       void loadDevices(host, { quiet: true });
@@ -501,6 +521,14 @@ function handleGatewayEventUnsafe(host: GatewayHost, evt: GatewayEventFrame) {
       host.presenceError = null;
       host.presenceStatus = null;
     }
+    return;
+  }
+
+  if (evt.event === "sessions.changed") {
+    void loadSessions(host);
+    void loadChatThreads(host, {
+      search: host.chatThreadsQuery,
+    });
     return;
   }
 

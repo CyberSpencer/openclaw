@@ -118,11 +118,17 @@ import type {
   NodePairVerifyParamsSchema,
   NodeRenameParamsSchema,
 } from "./nodes.js";
+import type { OrchestratorGetParamsSchema, OrchestratorSetParamsSchema } from "./orchestrator.js";
 import type { PushTestParamsSchema, PushTestResultSchema } from "./push.js";
 import type {
+  SessionsAbortParamsSchema,
   SessionsCompactParamsSchema,
+  SessionsCreateParamsSchema,
   SessionsDeleteParamsSchema,
   SessionsListParamsSchema,
+  SessionsMessagesSubscribeParamsSchema,
+  SessionsMessagesUnsubscribeParamsSchema,
+  SessionsSendParamsSchema,
   SessionsSubagentsParamsSchema,
   SessionsPatchParamsSchema,
   SessionsPreviewParamsSchema,
@@ -184,14 +190,23 @@ export type PushTestParams = Static<typeof PushTestParamsSchema>;
 export type PushTestResult = Static<typeof PushTestResultSchema>;
 export type SessionsListParams = Static<typeof SessionsListParamsSchema>;
 export type SessionsSubagentsParams = Static<typeof SessionsSubagentsParamsSchema>;
+export type OrchestratorGetParams = Static<typeof OrchestratorGetParamsSchema>;
+export type OrchestratorSetParams = Static<typeof OrchestratorSetParamsSchema>;
 export type SessionsPreviewParams = Static<typeof SessionsPreviewParamsSchema>;
 export type SessionsResolveParams = Static<typeof SessionsResolveParamsSchema>;
+export type SessionsCreateParams = Static<typeof SessionsCreateParamsSchema>;
+export type SessionsSpawnParams = Static<typeof SessionsSpawnParamsSchema>;
+export type SessionsSendParams = Static<typeof SessionsSendParamsSchema>;
+export type SessionsMessagesSubscribeParams = Static<typeof SessionsMessagesSubscribeParamsSchema>;
+export type SessionsMessagesUnsubscribeParams = Static<
+  typeof SessionsMessagesUnsubscribeParamsSchema
+>;
+export type SessionsAbortParams = Static<typeof SessionsAbortParamsSchema>;
 export type SessionsPatchParams = Static<typeof SessionsPatchParamsSchema>;
 export type SessionsResetParams = Static<typeof SessionsResetParamsSchema>;
 export type SessionsDeleteParams = Static<typeof SessionsDeleteParamsSchema>;
 export type SessionsCompactParams = Static<typeof SessionsCompactParamsSchema>;
 export type SessionsUsageParams = Static<typeof SessionsUsageParamsSchema>;
-export type SessionsSpawnParams = Static<typeof SessionsSpawnParamsSchema>;
 export type ConfigGetParams = Static<typeof ConfigGetParamsSchema>;
 export type ConfigSetParams = Static<typeof ConfigSetParamsSchema>;
 export type ConfigApplyParams = Static<typeof ConfigApplyParamsSchema>;

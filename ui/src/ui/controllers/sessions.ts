@@ -63,6 +63,7 @@ export async function patchSession(
   patch: {
     label?: string | null;
     thinkingLevel?: string | null;
+    fastMode?: boolean | null;
     verboseLevel?: string | null;
     reasoningLevel?: string | null;
   },
@@ -76,6 +77,9 @@ export async function patchSession(
   }
   if ("thinkingLevel" in patch) {
     params.thinkingLevel = patch.thinkingLevel;
+  }
+  if ("fastMode" in patch) {
+    params.fastMode = patch.fastMode;
   }
   if ("verboseLevel" in patch) {
     params.verboseLevel = patch.verboseLevel;
@@ -124,4 +128,46 @@ export async function deleteSessionAndRefresh(state: SessionsState, key: string)
   }
   await loadSessions(state);
   return true;
+}
+
+export async function deleteSessionsAndRefresh(
+  state: SessionsState,
+  keys: string[],
+): Promise<string[]> {
+  if (!state.client || !state.connected || keys.length === 0) {
+    return [];
+  }
+  if (state.sessionsLoading) {
+    return [];
+  }
+  const noun = keys.length === 1 ? "session" : "sessions";
+  const confirmed = window.confirm(
+    `Delete ${keys.length} ${noun}?\n\nThis will delete the session entries and archive their transcripts.`,
+  );
+  if (!confirmed) {
+    return [];
+  }
+  state.sessionsLoading = true;
+  state.sessionsError = null;
+  const deleted: string[] = [];
+  const deleteErrors: string[] = [];
+  try {
+    for (const key of keys) {
+      try {
+        await state.client.request("sessions.delete", { key, deleteTranscript: true });
+        deleted.push(key);
+      } catch (err) {
+        deleteErrors.push(String(err));
+      }
+    }
+  } finally {
+    state.sessionsLoading = false;
+  }
+  if (deleted.length > 0) {
+    await loadSessions(state);
+  }
+  if (deleteErrors.length > 0) {
+    state.sessionsError = deleteErrors.join("; ");
+  }
+  return deleted;
 }

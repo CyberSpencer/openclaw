@@ -17,14 +17,30 @@ vi.mock("../../infra/session-cost-usage.js", async () => {
   };
 });
 
+vi.mock("../../infra/provider-usage.js", () => ({
+  loadProviderUsageSummary: vi.fn(async () => ({
+    updatedAt: Date.now(),
+    providers: [],
+  })),
+}));
+
+import { loadProviderUsageSummary } from "../../infra/provider-usage.js";
 import { loadCostUsageSummary } from "../../infra/session-cost-usage.js";
-import { __test } from "./usage.js";
+import { __test, usageHandlers } from "./usage.js";
+
+function resetProviderUsageCache() {
+  const cache = __test.providerUsageCache as Record<string, unknown>;
+  for (const key of Object.keys(cache)) {
+    delete cache[key];
+  }
+}
 
 describe("gateway usage helpers", () => {
   const dayMs = 24 * 60 * 60 * 1000;
 
   beforeEach(() => {
     __test.costUsageCache.clear();
+    resetProviderUsageCache();
     vi.useRealTimers();
     vi.clearAllMocks();
   });
@@ -157,5 +173,110 @@ describe("gateway usage helpers", () => {
     expect(a.totals.totalTokens).toBe(1);
     expect(b.totals.totalTokens).toBe(1);
     expect(vi.mocked(loadCostUsageSummary)).toHaveBeenCalledTimes(1);
+  });
+
+  it("loadProviderUsageSummaryCached caches successful snapshots within TTL", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-02-05T00:00:00.000Z"));
+    vi.mocked(loadProviderUsageSummary).mockResolvedValue({
+      updatedAt: Date.now(),
+      providers: [{ provider: "anthropic", displayName: "Anthropic", windows: [] }],
+    });
+
+    const a = await __test.loadProviderUsageSummaryCached();
+    const b = await __test.loadProviderUsageSummaryCached();
+
+    expect(a.providers).toHaveLength(1);
+    expect(b.providers).toHaveLength(1);
+    expect(vi.mocked(loadProviderUsageSummary)).toHaveBeenCalledTimes(1);
+  });
+
+  it("deduplicates concurrent cold-start provider usage refreshes", async () => {
+    let resolveSummary: ((value: { updatedAt: number; providers: [] }) => void) | null = null;
+    vi.mocked(loadProviderUsageSummary).mockImplementation(
+      () =>
+        new Promise((resolve) => {
+          resolveSummary = resolve;
+        }),
+    );
+
+    const first = __test.loadProviderUsageSummaryCached();
+    const second = __test.loadProviderUsageSummaryCached();
+
+    expect(vi.mocked(loadProviderUsageSummary)).toHaveBeenCalledTimes(1);
+
+    resolveSummary?.({ updatedAt: Date.now(), providers: [] });
+
+    await expect(first).resolves.toEqual({ updatedAt: expect.any(Number), providers: [] });
+    await expect(second).resolves.toEqual({ updatedAt: expect.any(Number), providers: [] });
+  });
+
+  it("serves the last good provider snapshot while a stale refresh fails with HTTP 429", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-02-05T00:00:00.000Z"));
+
+    const goodSummary = {
+      updatedAt: Date.now(),
+      providers: [{ provider: "anthropic", displayName: "Anthropic", windows: [] }],
+    };
+    vi.mocked(loadProviderUsageSummary)
+      .mockResolvedValueOnce(goodSummary)
+      .mockRejectedValueOnce(Object.assign(new Error("HTTP 429"), { status: 429 }));
+
+    expect(await __test.loadProviderUsageSummaryCached()).toEqual(goodSummary);
+    expect(vi.mocked(loadProviderUsageSummary)).toHaveBeenCalledTimes(1);
+
+    vi.advanceTimersByTime(5 * 60_000 + 1);
+
+    await expect(__test.loadProviderUsageSummaryCached()).resolves.toEqual(goodSummary);
+    expect(vi.mocked(loadProviderUsageSummary)).toHaveBeenCalledTimes(2);
+
+    await Promise.resolve();
+    await Promise.resolve();
+
+    await expect(__test.loadProviderUsageSummaryCached()).resolves.toEqual(goodSummary);
+    expect(vi.mocked(loadProviderUsageSummary)).toHaveBeenCalledTimes(2);
+  });
+
+  it("returns an empty fallback summary during cold-start provider usage backoff", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-02-05T00:00:00.000Z"));
+    vi.mocked(loadProviderUsageSummary).mockRejectedValue(
+      Object.assign(new Error("HTTP 429"), { status: 429 }),
+    );
+
+    const first = await __test.loadProviderUsageSummaryCached();
+    const second = await __test.loadProviderUsageSummaryCached();
+
+    expect(first.providers).toEqual([]);
+    expect(second.providers).toEqual([]);
+    expect(vi.mocked(loadProviderUsageSummary)).toHaveBeenCalledTimes(1);
+  });
+
+  it("usage.status responds with cached provider usage instead of surfacing transient refresh failures", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-02-05T00:00:00.000Z"));
+
+    const respond = vi.fn();
+    const goodSummary = {
+      updatedAt: Date.now(),
+      providers: [{ provider: "anthropic", displayName: "Anthropic", windows: [] }],
+    };
+    vi.mocked(loadProviderUsageSummary)
+      .mockResolvedValueOnce(goodSummary)
+      .mockRejectedValueOnce(Object.assign(new Error("HTTP 429"), { status: 429 }));
+
+    await usageHandlers["usage.status"]({
+      respond,
+    } as unknown as Parameters<(typeof usageHandlers)["usage.status"]>[0]);
+
+    vi.advanceTimersByTime(5 * 60_000 + 1);
+
+    await usageHandlers["usage.status"]({
+      respond,
+    } as unknown as Parameters<(typeof usageHandlers)["usage.status"]>[0]);
+
+    expect(respond).toHaveBeenNthCalledWith(1, true, goodSummary, undefined);
+    expect(respond).toHaveBeenNthCalledWith(2, true, goodSummary, undefined);
   });
 });

@@ -61,3 +61,85 @@ describe("loadSettings default gateway URL derivation", () => {
     expect(loadSettings().gatewayUrl).toBe("ws://gateway.example:18789/apps/openclaw");
   });
 });
+
+describe("alignLoopbackGatewayUrlWithDocument", () => {
+  it("rewrites 127.0.0.1 to localhost when the document uses localhost", async () => {
+    const { alignLoopbackGatewayUrlWithDocument } = await import("./storage.ts");
+    expect(
+      alignLoopbackGatewayUrlWithDocument("ws://127.0.0.1:32555", "localhost:32555", "localhost"),
+    ).toBe("ws://localhost:32555/");
+  });
+
+  it("rewrites localhost to 127.0.0.1 when the document uses 127.0.0.1", async () => {
+    const { alignLoopbackGatewayUrlWithDocument } = await import("./storage.ts");
+    expect(
+      alignLoopbackGatewayUrlWithDocument("ws://localhost:32555", "127.0.0.1:32555", "127.0.0.1"),
+    ).toBe("ws://127.0.0.1:32555/");
+  });
+
+  it("leaves non-loopback gateway URLs unchanged", async () => {
+    const { alignLoopbackGatewayUrlWithDocument } = await import("./storage.ts");
+    const url = "wss://gateway.example:8443/openclaw";
+    expect(alignLoopbackGatewayUrlWithDocument(url, "localhost:32555", "localhost")).toBe(url);
+  });
+
+  it("leaves loopback URL unchanged when host already matches the document", async () => {
+    const { alignLoopbackGatewayUrlWithDocument } = await import("./storage.ts");
+    expect(
+      alignLoopbackGatewayUrlWithDocument("ws://localhost:32555", "localhost:32555", "localhost"),
+    ).toBe("ws://localhost:32555");
+  });
+});
+
+describe("loadSettings loopback gateway URL alignment", () => {
+  beforeEach(() => {
+    vi.resetModules();
+    vi.stubGlobal("localStorage", createStorageMock());
+    vi.stubGlobal("navigator", { language: "en-US" } as Navigator);
+  });
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+    vi.unstubAllGlobals();
+  });
+
+  it("aligns persisted 127.0.0.1 URL to localhost when the page is localhost", async () => {
+    vi.stubGlobal("location", {
+      protocol: "http:",
+      host: "localhost:32555",
+      hostname: "localhost",
+      pathname: "/chat",
+    } as Location);
+    vi.stubGlobal("window", {} as Window & typeof globalThis);
+
+    const storage = createStorageMock();
+    storage.setItem(
+      "openclaw.control.settings.v1",
+      JSON.stringify({ gatewayUrl: "ws://127.0.0.1:32555" }),
+    );
+    vi.stubGlobal("localStorage", storage);
+
+    const { loadSettings } = await import("./storage.ts");
+    expect(loadSettings().gatewayUrl).toBe("ws://localhost:32555/");
+  });
+
+  it("aligns gatewayUrl when saving settings", async () => {
+    vi.stubGlobal("location", {
+      protocol: "http:",
+      host: "localhost:32555",
+      hostname: "localhost",
+      pathname: "/chat",
+    } as Location);
+    vi.stubGlobal("window", {} as Window & typeof globalThis);
+
+    const storage = createStorageMock();
+    vi.stubGlobal("localStorage", storage);
+
+    const { saveSettings, loadSettings } = await import("./storage.ts");
+    const base = loadSettings();
+    saveSettings({ ...base, gatewayUrl: "ws://127.0.0.1:32555" });
+    const parsed = JSON.parse(storage.getItem("openclaw.control.settings.v1") ?? "{}");
+    expect(parsed.gatewayUrl).toMatch(/localhost:32555/);
+    expect(parsed.gatewayUrl).not.toMatch(/127\\.0\\.0\\.1/);
+  });
+});
