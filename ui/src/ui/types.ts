@@ -445,6 +445,7 @@ export type GatewaySessionRow = {
   task?: string;
   source?: "subagent" | "background-exec";
   openable?: boolean;
+  spawnMode?: "run" | "session";
 };
 
 export type SessionsListResult = {

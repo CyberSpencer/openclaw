@@ -3,7 +3,10 @@ import { ref } from "lit/directives/ref.js";
 import { repeat } from "lit/directives/repeat.js";
 import { unsafeHTML } from "lit/directives/unsafe-html.js";
 import { formatDurationCompact } from "../../../../src/infra/format-time/format-duration.js";
-import { formatRelativeTimestamp } from "../../../../src/infra/format-time/format-relative.js";
+import {
+  formatRelativeTimestamp,
+  formatRelativeTimestamp as formatAge,
+} from "../../../../src/infra/format-time/format-relative.js";
 import type { ModelSelectionInfo } from "../app-tool-stream.ts";
 import { extractTextCached } from "../chat/message-extract.ts";
 import { normalizeMessage, normalizeRoleForGrouping } from "../chat/message-normalizer.ts";
@@ -1218,13 +1221,15 @@ function renderOrchestrationCard(props: ChatProps) {
       <div class="agent-subagents">
         <div class="agent-subagents__header">
           <div class="agent-subagents__title">
-            Subagents
+            Subagents & runs
             <span class="agent-subagents__count mono">${subagents.length}</span>
           </div>
           ${
             subagents.length > 0
               ? html`
-                  <div class="agent-subagents__hint muted">spawned by this thread, plus background coding agents</div>
+                  <div class="agent-subagents__hint muted">
+                    thread sessions, one-shot runs, and background coding agents spawned by this thread
+                  </div>
                 `
               : nothing
           }
@@ -1281,6 +1286,15 @@ function renderOrchestrationCard(props: ChatProps) {
                             : taskStr);
                         const hasPreview = Boolean(preview);
                         const metaParts: string[] = [];
+                        const laneLabel =
+                          s.source === "background-exec"
+                            ? "background agent"
+                            : s.spawnMode === "run"
+                              ? "one-shot run"
+                              : s.spawnMode === "session"
+                                ? "thread session"
+                                : "subagent";
+                        metaParts.push(laneLabel);
                         if (typeof s.runtimeMs === "number" && s.runtimeMs > 0) {
                           const runtimeLabel = formatDurationCompact(s.runtimeMs, { spaced: true });
                           if (runtimeLabel) {

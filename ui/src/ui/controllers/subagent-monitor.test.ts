@@ -29,6 +29,7 @@ describe("loadSubagentMonitor", () => {
           modelApplied: false,
           routing: "explicit",
           complexity: "simple",
+          spawnMode: "run",
           createdAt: 100,
           startedAt: 110,
         },
@@ -58,6 +59,7 @@ describe("loadSubagentMonitor", () => {
         modelApplied: false,
         routing: "explicit",
         complexity: "simple",
+        spawnMode: "run",
       }),
     ]);
   });

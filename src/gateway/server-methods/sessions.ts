@@ -472,6 +472,7 @@ export const sessionsHandlers: GatewayRequestHandlers = {
           requesterSessionKey: entry.requesterSessionKey,
           source: "subagent",
           openable: true,
+          spawnMode: entry.spawnMode,
           assignedSessionKey: entry.childSessionKey,
           assignedRunId: entry.runId,
           runId: entry.runId,

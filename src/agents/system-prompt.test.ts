@@ -223,6 +223,9 @@ describe("buildAgentSystemPrompt", () => {
     expect(prompt).toContain(
       "When a first-class tool exists for an action, use the tool directly instead of asking the user to run equivalent CLI or slash commands.",
     );
+    expect(prompt).toContain(
+      "Treat external CI spend as scarce: prefer local validation and passive inspection, and do not trigger or rerun GitHub Actions unless the user explicitly asks or the spend is clearly justified.",
+    );
   });
 
   it("lists available tools when provided", () => {

@@ -44,6 +44,11 @@ type ToolStreamHost = {
   toolStreamOrder: string[];
   chatToolMessages: Record<string, unknown>[];
   toolStreamSyncTimer: number | null;
+  handleSpawnedRunAccepted?: (info: {
+    childSessionKey?: string;
+    runId?: string;
+    spawnMode?: "run" | "session";
+  }) => void;
 };
 
 function toTrimmedString(value: unknown): string | null {
@@ -332,6 +337,27 @@ function resolveAcceptedSession(
   return { accepted: true, sessionKey };
 }
 
+function maybeHandleSpawnToolResult(
+  host: ToolStreamHost,
+  name: string,
+  phase: string,
+  raw: unknown,
+) {
+  if (name !== "sessions_spawn" || phase !== "result" || !raw || typeof raw !== "object") {
+    return;
+  }
+  const result = raw as Record<string, unknown>;
+  const status = toTrimmedString(result.status);
+  if (status !== "accepted") {
+    return;
+  }
+  host.handleSpawnedRunAccepted?.({
+    childSessionKey: toTrimmedString(result.childSessionKey) ?? undefined,
+    runId: toTrimmedString(result.runId) ?? undefined,
+    spawnMode: result.mode === "session" ? "session" : result.mode === "run" ? "run" : undefined,
+  });
+}
+
 function handleLifecycleFallbackEvent(host: CompactionHost, payload: AgentEventPayload) {
   const data = payload.data ?? {};
   const phase = payload.stream === "fallback" ? "fallback" : toTrimmedString(data.phase);
@@ -465,12 +491,15 @@ export function handleAgentEvent(host: ToolStreamHost, payload?: AgentEventPaylo
   const name = typeof data.name === "string" ? data.name : "tool";
   const phase = typeof data.phase === "string" ? data.phase : "";
   const args = phase === "start" ? data.args : undefined;
+  const rawResult = phase === "result" ? data.result : undefined;
   const output =
     phase === "update"
       ? formatToolOutput(data.partialResult)
       : phase === "result"
         ? formatToolOutput(data.result)
         : undefined;
+
+  maybeHandleSpawnToolResult(host, name, phase, rawResult);
 
   const now = Date.now();
   let entry = host.toolStreamById.get(toolCallId);

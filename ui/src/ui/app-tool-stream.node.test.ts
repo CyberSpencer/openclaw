@@ -21,6 +21,7 @@ function createHost(overrides?: Partial<MutableHost>): MutableHost {
     compactionClearTimer: null,
     fallbackStatus: null,
     fallbackClearTimer: null,
+    handleSpawnedRunAccepted: vi.fn(),
     ...overrides,
   };
 }
@@ -135,5 +136,38 @@ describe("app-tool-stream fallback lifecycle handling", () => {
     expect(host.fallbackStatus?.phase).toBe("cleared");
     expect(host.fallbackStatus?.previous).toBe("deepinfra/moonshotai/Kimi-K2.5");
     vi.useRealTimers();
+  });
+
+  it("nudges the host when sessions_spawn accepts a child run", () => {
+    const handleSpawnedRunAccepted = vi.fn();
+    const host = createHost({
+      chatRunId: "run-main",
+      handleSpawnedRunAccepted,
+    });
+
+    handleAgentEvent(host, {
+      runId: "run-main",
+      seq: 2,
+      stream: "tool",
+      ts: Date.now(),
+      sessionKey: "main",
+      data: {
+        toolCallId: "tool-1",
+        name: "sessions_spawn",
+        phase: "result",
+        result: {
+          status: "accepted",
+          childSessionKey: "agent:main:subagent:worker",
+          runId: "run-child",
+          mode: "run",
+        },
+      },
+    });
+
+    expect(handleSpawnedRunAccepted).toHaveBeenCalledWith({
+      childSessionKey: "agent:main:subagent:worker",
+      runId: "run-child",
+      spawnMode: "run",
+    });
   });
 });

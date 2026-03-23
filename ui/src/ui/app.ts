@@ -427,6 +427,7 @@ type SessionRunHost = Parameters<typeof resetToolStreamInternal>[0] & {
 };
 
 const SUBAGENT_RECENT_WINDOW_MS = 5 * 60_000;
+const SUBAGENT_SPAWN_POLL_BOOST_MS = 20_000;
 
 function hasRecentSubagentActivity(result: SessionsListResult | null | undefined): boolean {
   const sessions = result?.sessions ?? [];
@@ -504,6 +505,7 @@ export class OpenClawApp extends LitElement {
   @state() subagentMonitorError: string | null = null;
   private subagentMonitorPollTimer: number | null = null;
   private subagentMonitorPollMs: number | null = null;
+  private subagentMonitorBoostUntil: number | null = null;
   // Provider-usage rate-limit chips
   @state() codexUsageNotes: string[] | null = null;
   @state() anthropicUsageNotes: string[] | null = null;
@@ -946,6 +948,7 @@ export class OpenClawApp extends LitElement {
       }
     }
     if (changed.has("sessionKey")) {
+      this.subagentMonitorBoostUntil = null;
       this.syncActiveRunState(this.sessionKey);
     }
     if (this.connected && changed.has("sessionKey")) {
@@ -975,6 +978,17 @@ export class OpenClawApp extends LitElement {
     window.clearInterval(this.subagentMonitorPollTimer);
     this.subagentMonitorPollTimer = null;
     this.subagentMonitorPollMs = null;
+  }
+
+  handleSpawnedRunAccepted(_info?: {
+    childSessionKey?: string;
+    runId?: string;
+    spawnMode?: "run" | "session";
+  }) {
+    this.subagentMonitorBoostUntil = Date.now() + SUBAGENT_SPAWN_POLL_BOOST_MS;
+    if (this.connected) {
+      void loadSubagentMonitor(this, { quiet: true });
+    }
   }
 
   async refreshProviderUsage() {
@@ -1071,7 +1085,11 @@ export class OpenClawApp extends LitElement {
     const runActive = Boolean(this.chatRunId) || this.chatStream !== null;
     const planActive = isTaskPlanIncomplete(this.chatTaskPlan);
     const recentSubagent = hasRecentSubagentActivity(this.subagentMonitorResult);
-    const shouldPoll = this.connected && (runActive || planActive || recentSubagent);
+    const boostedSubagentPoll =
+      typeof this.subagentMonitorBoostUntil === "number" &&
+      this.subagentMonitorBoostUntil > Date.now();
+    const shouldPoll =
+      this.connected && (runActive || planActive || recentSubagent || boostedSubagentPoll);
 
     if (shouldPoll) {
       const intervalMs = runActive ? 1500 : 3000;

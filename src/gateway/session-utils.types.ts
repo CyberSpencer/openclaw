@@ -92,6 +92,7 @@ export type SubagentTaskRow = {
   requesterSessionKey: string;
   source?: "subagent" | "background-exec";
   openable?: boolean;
+  spawnMode?: "run" | "session";
   label?: string;
   task: string;
   status: SubagentTaskStatus;

@@ -172,6 +172,8 @@ async function resolveRouterHealthTarget(): Promise<{
   };
 }
 
+// The NVIDIA router /health endpoint returns HTTP 200 even when degraded.
+// Must inspect the JSON body for {status|value: "degraded", reason?: string}.
 async function probeHealth(
   url: string,
   headers: Record<string, string>,
@@ -189,10 +191,44 @@ async function probeHealth(
       headers,
       signal: controller.signal,
     });
-    return {
+    const base = {
       healthy: response.ok,
       status: response.status,
       error: response.ok ? undefined : `HTTP ${response.status}`,
+    };
+    if (!response.ok) {
+      return base;
+    }
+    let parsed: unknown = null;
+    try {
+      parsed = (await response.json()) as unknown;
+    } catch {
+      return base;
+    }
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+      return base;
+    }
+    const record = parsed as Record<string, unknown>;
+    const rawStatus = record.status ?? record.value;
+    const statusText = typeof rawStatus === "string" ? rawStatus.trim().toLowerCase() : "";
+    const reason = typeof record.reason === "string" ? record.reason.trim() : "";
+    if (!statusText) {
+      return base;
+    }
+    if (statusText === "healthy" || statusText === "ok") {
+      return { healthy: true, status: response.status };
+    }
+    if (statusText === "degraded") {
+      return {
+        healthy: false,
+        status: response.status,
+        error: reason ? `degraded: ${reason}` : "degraded",
+      };
+    }
+    return {
+      healthy: false,
+      status: response.status,
+      error: reason ? `status=${statusText}: ${reason}` : `status=${statusText}`,
     };
   } catch (err) {
     return {

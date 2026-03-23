@@ -21,6 +21,7 @@ type SessionsSubagentsResponse = {
     runtimeMs?: number;
     source?: "subagent" | "background-exec";
     openable?: boolean;
+    spawnMode?: "run" | "session";
   }>;
 };
 
@@ -97,9 +98,6 @@ export async function loadSubagentMonitor(
           sessionId: runId || undefined,
           model: typeof task.model === "string" ? task.model : undefined,
           modelProvider: typeof task.modelProvider === "string" ? task.modelProvider : undefined,
-          modelApplied: typeof task.modelApplied === "boolean" ? task.modelApplied : undefined,
-          routing: typeof task.routing === "string" ? task.routing : undefined,
-          complexity: typeof task.complexity === "string" ? task.complexity : undefined,
           inputTokens: 0,
           outputTokens: 0,
           totalTokens: 0,
@@ -112,6 +110,8 @@ export async function loadSubagentMonitor(
           task: taskStr || undefined,
           source,
           openable: task.openable !== false,
+          spawnMode:
+            task.spawnMode === "session" ? "session" : task.spawnMode === "run" ? "run" : undefined,
         };
       })
       .filter((row): row is NonNullable<typeof row> => Boolean(row));

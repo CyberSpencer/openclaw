@@ -35,6 +35,7 @@ describe("gateway sessions.subagents contract", () => {
       parentRunId: "run-parent",
       subagentGroupId: "sg-1",
       taskId: "task-1",
+      spawnMode: "run",
       createdAt: 100,
       startedAt: 110,
     });
@@ -82,6 +83,7 @@ describe("gateway sessions.subagents contract", () => {
             parentRunId: "run-parent",
             subagentGroupId: "sg-1",
             taskPlanTaskId: "task-1",
+            spawnMode: "run",
           }),
         ],
       }),

@@ -86,6 +86,74 @@ async function probeHealth(
   }
 }
 
+// The NVIDIA router /health endpoint returns HTTP 200 even when degraded.
+// Callers must inspect the JSON body for {status|value: "degraded", reason?: string}.
+async function probeRouterHealth(
+  url: string,
+  context: DgxAccessContext | null,
+): Promise<{
+  healthy: boolean;
+  status?: number;
+  error?: string;
+}> {
+  const timeoutMs = 1500;
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    const response = await fetch(url, {
+      method: "GET",
+      headers: mergeDgxRequestHeaders(context, { accept: "application/json" }),
+      signal: controller.signal,
+    });
+    const base = {
+      healthy: response.ok,
+      status: response.status,
+      error: response.ok ? undefined : `HTTP ${response.status}`,
+    };
+    if (!response.ok) {
+      return base;
+    }
+    let parsed: unknown = null;
+    try {
+      parsed = (await response.json()) as unknown;
+    } catch {
+      return base;
+    }
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+      return base;
+    }
+    const record = parsed as Record<string, unknown>;
+    const rawStatus = record.status ?? record.value;
+    const statusText = typeof rawStatus === "string" ? rawStatus.trim().toLowerCase() : "";
+    const reason = typeof record.reason === "string" ? record.reason.trim() : "";
+    if (!statusText) {
+      return base;
+    }
+    if (statusText === "healthy" || statusText === "ok") {
+      return { healthy: true, status: response.status };
+    }
+    if (statusText === "degraded") {
+      return {
+        healthy: false,
+        status: response.status,
+        error: reason ? `degraded: ${reason}` : "degraded",
+      };
+    }
+    return {
+      healthy: false,
+      status: response.status,
+      error: reason ? `status=${statusText}: ${reason}` : `status=${statusText}`,
+    };
+  } catch (err) {
+    return {
+      healthy: false,
+      error: err instanceof Error ? err.message : String(err),
+    };
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
 function resolveDgxStatsPort(env: Record<string, string>): number {
   return resolvePort(
     parseStringLike(env.DGX_STATS_PORT) ?? parseStringLike(process.env.DGX_STATS_PORT),
@@ -526,7 +594,7 @@ export const sparkStatusHandlers: GatewayRequestHandlers = {
 
       const [routerProbe, ollamaProbe, qdrantProbe, voiceHealthProbe, sttProbe, ttsProbe] =
         await Promise.all([
-          routerHealthUrl ? probeHealth(routerHealthUrl, context) : Promise.resolve(null),
+          routerHealthUrl ? probeRouterHealth(routerHealthUrl, context) : Promise.resolve(null),
           ollamaHealthUrl ? probeHealth(ollamaHealthUrl, context) : Promise.resolve(null),
           qdrantHealthUrl ? probeHealth(qdrantHealthUrl, context) : Promise.resolve(null),
           voiceHealthUrl ? fetchVoiceHealth(voiceHealthUrl, context) : Promise.resolve(null),
