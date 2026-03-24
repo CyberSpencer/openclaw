@@ -1,5 +1,7 @@
 import type { AgentEvent } from "@mariozechner/pi-agent-core";
 import { emitAgentEvent } from "../infra/agent-events.js";
+import { isDiagnosticsEnabled } from "../infra/diagnostic-events.js";
+import { logToolCall } from "../logging/diagnostic.js";
 import { getGlobalHookRunner } from "../plugins/hook-runner-global.js";
 import type { PluginHookAfterToolCallEvent } from "../plugins/types.js";
 import { normalizeTextForComparison } from "./pi-embedded-helpers.js";
@@ -18,6 +20,7 @@ import {
   sanitizeToolResult,
 } from "./pi-embedded-subscribe.tools.js";
 import { inferToolMetaFromArgs } from "./pi-embedded-utils.js";
+import { summarizeToolArgs, summarizeToolResult } from "./runtime-observability.js";
 import { buildToolMutationState, isSameToolMutationAction } from "./tool-mutation.js";
 import { normalizeToolName } from "./tool-policy.js";
 
@@ -203,10 +206,22 @@ export async function handleToolExecutionStart(
   }
 
   const meta = extendExecMeta(toolName, args, inferToolMetaFromArgs(toolName, args));
+  const summary = summarizeToolArgs(toolName, args);
   ctx.state.toolMetaById.set(toolCallId, buildToolCallSummary(toolName, args, meta));
   ctx.log.debug(
     `embedded run tool start: runId=${ctx.params.runId} tool=${toolName} toolCallId=${toolCallId}`,
   );
+  if (isDiagnosticsEnabled(ctx.params.config)) {
+    logToolCall({
+      sessionKey: ctx.params.sessionKey,
+      runId: ctx.params.runId,
+      toolName,
+      toolCallId,
+      phase: "start",
+      summary,
+      meta,
+    });
+  }
 
   const shouldEmitToolEvents = ctx.shouldEmitToolResult();
   emitAgentEvent({
@@ -217,12 +232,14 @@ export async function handleToolExecutionStart(
       name: toolName,
       toolCallId,
       args: args as Record<string, unknown>,
+      summary,
+      status: "start",
     },
   });
   // Best-effort typing signal; do not block tool summaries on slow emitters.
   void ctx.params.onAgentEvent?.({
     stream: "tool",
-    data: { phase: "start", name: toolName, toolCallId },
+    data: { phase: "start", name: toolName, toolCallId, summary, status: "start" },
   });
 
   if (
@@ -307,6 +324,8 @@ export async function handleToolExecutionEnd(
   const sanitizedResult = sanitizeToolResult(result);
   const startData = toolStartData.get(toolCallId);
   toolStartData.delete(toolCallId);
+  const durationMs = startData?.startTime != null ? Date.now() - startData.startTime : undefined;
+  const resultSummary = summarizeToolResult(sanitizedResult);
   const callSummary = ctx.state.toolMetaById.get(toolCallId);
   const meta = callSummary?.meta;
   ctx.state.toolMetas.push({ toolName, meta });
@@ -382,6 +401,20 @@ export async function handleToolExecutionEnd(
     ctx.state.successfulCronAdds += 1;
   }
 
+  if (isDiagnosticsEnabled(ctx.params.config)) {
+    logToolCall({
+      sessionKey: ctx.params.sessionKey,
+      runId: ctx.params.runId,
+      toolName,
+      toolCallId,
+      phase: "result",
+      summary: resultSummary,
+      status: isToolError ? "error" : "ok",
+      durationMs,
+      meta,
+    });
+  }
+
   emitAgentEvent({
     runId: ctx.params.runId,
     stream: "tool",
@@ -391,6 +424,9 @@ export async function handleToolExecutionEnd(
       toolCallId,
       meta,
       isError: isToolError,
+      status: isToolError ? "error" : "ok",
+      durationMs,
+      summary: resultSummary,
       result: sanitizedResult,
     },
   });
@@ -402,6 +438,9 @@ export async function handleToolExecutionEnd(
       toolCallId,
       meta,
       isError: isToolError,
+      status: isToolError ? "error" : "ok",
+      durationMs,
+      summary: resultSummary,
     },
   });
 
@@ -414,7 +453,6 @@ export async function handleToolExecutionEnd(
   // Run after_tool_call plugin hook (fire-and-forget)
   const hookRunnerAfter = ctx.hookRunner ?? getGlobalHookRunner();
   if (hookRunnerAfter?.hasHooks("after_tool_call")) {
-    const durationMs = startData?.startTime != null ? Date.now() - startData.startTime : undefined;
     const toolArgs = startData?.args;
     const hookEvent: PluginHookAfterToolCallEvent = {
       toolName,

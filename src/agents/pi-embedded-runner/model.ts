@@ -39,6 +39,14 @@ export function buildInlineProviderModels(
   });
 }
 
+export type ModelResolutionSource =
+  | "registry"
+  | "inline-config"
+  | "forward-compat"
+  | "openrouter-pass-through"
+  | "provider-config"
+  | "provider-base-url-override";
+
 export function resolveModel(
   provider: string,
   modelId: string,
@@ -49,6 +57,7 @@ export function resolveModel(
   error?: string;
   authStorage: AuthStorage;
   modelRegistry: ModelRegistry;
+  resolution?: ModelResolutionSource;
 } {
   const resolvedAgentDir = agentDir ?? resolveOpenClawAgentDir();
   const authStorage = discoverAuthStorage(resolvedAgentDir);
@@ -68,13 +77,14 @@ export function resolveModel(
         model: normalized,
         authStorage,
         modelRegistry,
+        resolution: "inline-config",
       };
     }
     // Forward-compat fallbacks must be checked BEFORE the generic providerCfg fallback.
     // Otherwise, configured providers can default to a generic API and break specific transports.
     const forwardCompat = resolveForwardCompatModel(provider, modelId, modelRegistry);
     if (forwardCompat) {
-      return { model: forwardCompat, authStorage, modelRegistry };
+      return { model: forwardCompat, authStorage, modelRegistry, resolution: "forward-compat" };
     }
     // OpenRouter is a pass-through proxy — any model ID available on OpenRouter
     // should work without being pre-registered in the local catalog.
@@ -92,7 +102,12 @@ export function resolveModel(
         // Align with OPENROUTER_DEFAULT_MAX_TOKENS in models-config.providers.ts
         maxTokens: 8192,
       } as Model<Api>);
-      return { model: fallbackModel, authStorage, modelRegistry };
+      return {
+        model: fallbackModel,
+        authStorage,
+        modelRegistry,
+        resolution: "openrouter-pass-through",
+      };
     }
     const providerCfg = providers[provider];
     if (providerCfg || modelId.startsWith("mock-")) {
@@ -115,7 +130,12 @@ export function resolveModel(
           providerCfg?.models?.[0]?.maxTokens ??
           DEFAULT_CONTEXT_TOKENS,
       } as Model<Api>);
-      return { model: fallbackModel, authStorage, modelRegistry };
+      return {
+        model: fallbackModel,
+        authStorage,
+        modelRegistry,
+        resolution: "provider-config",
+      };
     }
     return {
       error: buildUnknownModelError(provider, modelId),
@@ -130,9 +150,15 @@ export function resolveModel(
       model: normalizeModelCompat({ ...model, baseUrl: overrideBaseUrl }),
       authStorage,
       modelRegistry,
+      resolution: "provider-base-url-override",
     };
   }
-  return { model: normalizeModelCompat(model), authStorage, modelRegistry };
+  return {
+    model: normalizeModelCompat(model),
+    authStorage,
+    modelRegistry,
+    resolution: "registry",
+  };
 }
 
 /**

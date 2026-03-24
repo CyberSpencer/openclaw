@@ -1,4 +1,5 @@
 import type { OpenClawConfig } from "../config/config.js";
+import { emitDiagnosticObservabilityEvent } from "../logging/observability.js";
 
 export type DiagnosticSessionState = "idle" | "processing" | "waiting";
 
@@ -122,6 +123,114 @@ export type DiagnosticRunAttemptEvent = DiagnosticBaseEvent & {
   attempt: number;
 };
 
+export type DiagnosticModelResolveEvent = DiagnosticBaseEvent & {
+  type: "model.resolve";
+  sessionKey?: string;
+  sessionId?: string;
+  runId?: string;
+  channel?: string;
+  provider: string;
+  requestedModel: string;
+  resolvedProvider?: string;
+  resolvedModel?: string;
+  resolution:
+    | "registry"
+    | "inline-config"
+    | "forward-compat"
+    | "openrouter-pass-through"
+    | "provider-config"
+    | "provider-base-url-override";
+  baseUrl?: string;
+};
+
+export type DiagnosticModelRequestEvent = DiagnosticBaseEvent & {
+  type: "model.request";
+  sessionKey?: string;
+  sessionId?: string;
+  runId?: string;
+  channel?: string;
+  provider: string;
+  model: string;
+  requestIndex?: number;
+  historyMessages?: number;
+  imageCount?: number;
+};
+
+export type DiagnosticModelResultEvent = DiagnosticBaseEvent & {
+  type: "model.result";
+  sessionKey?: string;
+  sessionId?: string;
+  runId?: string;
+  channel?: string;
+  provider?: string;
+  model?: string;
+  requestIndex?: number;
+  status: "ok" | "error";
+  durationMs?: number;
+  error?: string;
+  stopReason?: string;
+  usage?: {
+    input?: number;
+    output?: number;
+    cacheRead?: number;
+    cacheWrite?: number;
+    promptTokens?: number;
+    total?: number;
+  };
+};
+
+export type DiagnosticToolCallEvent = DiagnosticBaseEvent & {
+  type: "tool.call";
+  sessionKey?: string;
+  runId?: string;
+  toolName: string;
+  toolCallId: string;
+  phase: "start" | "result";
+  summary?: string;
+  status?: "ok" | "error";
+  durationMs?: number;
+  meta?: string;
+};
+
+export type DiagnosticSkillExecutionEvent = DiagnosticBaseEvent & {
+  type: "skill.execution";
+  sessionKey?: string;
+  sessionId?: string;
+  runId?: string;
+  channel?: string;
+  source: "snapshot" | "workspace" | "slash-command";
+  phase: "prepare" | "start" | "result";
+  status?: "ok" | "error";
+  skillCount?: number;
+  skillNames?: string[];
+  skillName?: string;
+  commandName?: string;
+  toolName?: string;
+  argChars?: number;
+  durationMs?: number;
+  error?: string;
+};
+
+export type DiagnosticSubagentLifecycleEvent = DiagnosticBaseEvent & {
+  type: "subagent.lifecycle";
+  requesterSessionKey?: string;
+  requesterSourceSessionKey?: string;
+  childSessionKey: string;
+  runId: string;
+  phase: "spawn_failed" | "registered" | "wait_started" | "wait_result";
+  status?: "ok" | "error" | "timeout";
+  cleanup?: "delete" | "keep";
+  mode?: "run" | "session";
+  label?: string;
+  model?: string;
+  modelApplied?: boolean;
+  routing?: string;
+  taskChars?: number;
+  runTimeoutSeconds?: number;
+  durationMs?: number;
+  error?: string;
+};
+
 export type DiagnosticHeartbeatEvent = DiagnosticBaseEvent & {
   type: "diagnostic.heartbeat";
   webhooks: {
@@ -159,6 +268,12 @@ export type DiagnosticEventPayload =
   | DiagnosticLaneEnqueueEvent
   | DiagnosticLaneDequeueEvent
   | DiagnosticRunAttemptEvent
+  | DiagnosticModelResolveEvent
+  | DiagnosticModelRequestEvent
+  | DiagnosticModelResultEvent
+  | DiagnosticToolCallEvent
+  | DiagnosticSkillExecutionEvent
+  | DiagnosticSubagentLifecycleEvent
   | DiagnosticHeartbeatEvent
   | DiagnosticToolLoopEvent;
 
@@ -206,6 +321,11 @@ export function emitDiagnosticEvent(event: DiagnosticEventInput) {
     seq: (state.seq += 1),
     ts: Date.now(),
   } satisfies DiagnosticEventPayload;
+  try {
+    emitDiagnosticObservabilityEvent(enriched);
+  } catch {
+    // Never block runtime event dispatch on observability sink failures.
+  }
   state.dispatchDepth += 1;
   for (const listener of state.listeners) {
     try {

@@ -35,6 +35,20 @@ You can override this in `~/.openclaw/openclaw.json`:
 }
 ```
 
+## Operator log directories
+
+OpenClaw now has two operator-facing file surfaces for the baseline observability contract:
+
+- **Gateway file log**: the main structured runtime log (`logging.file`, default `/tmp/openclaw/openclaw-YYYY-MM-DD.log`).
+- **Observability event sink**: the canonical NDJSON stream at `~/.openclaw/logs/events/YYYY-MM-DD.ndjson`.
+- **Daily rollups**: generated summaries at `~/.openclaw/logs/events/daily/YYYY-MM-DD.json`.
+
+Notes:
+
+- The daily NDJSON sink under `logs/events/` is the contract used by the new rollup and doctor checks.
+- If your install does not write that file yet, `openclaw doctor`, `pnpm observability:check`, and `pnpm observability:rollup` will warn instead of failing silently.
+- Source-checkout helpers accept explicit CLI path overrides (`--events-file`, `--output`) when you need to inspect a non-default file.
+
 ## How to read logs
 
 ### CLI: live tail (recommended)
@@ -183,6 +197,69 @@ Queue + session:
 - `session.stuck`: session stuck warning + age.
 - `run.attempt`: run retry/attempt metadata.
 - `diagnostic.heartbeat`: aggregate counters (webhooks/queue/session).
+- `tool.loop`: repeated-tool-loop warning or block events.
+
+Runtime lane details:
+
+- `model.resolve`: requested model to resolved model mapping and resolution source.
+- `model.request`: each model request boundary before the provider call.
+- `model.result`: per-request result, usage, status, and latency.
+- `tool.call`: tool start and result summaries with status and duration.
+- `skill.execution`: workspace, snapshot, and slash-command skill execution phases.
+- `subagent.lifecycle`: subagent registration, wait, timeout, and failure lifecycle.
+
+### Daily rollups and freshness checks
+
+For source checkouts, OpenClaw ships two small operator helpers:
+
+```bash
+pnpm observability:check
+pnpm observability:rollup -- --write
+```
+
+What they do:
+
+- `observability:check`: verifies that today's expected NDJSON sink exists and is not stale relative to the main gateway log.
+- `observability:rollup`: builds a per-day JSON summary from `logs/events/YYYY-MM-DD.ndjson` and writes it to `logs/events/daily/YYYY-MM-DD.json`.
+
+If the event sink is not wired on your install yet, the rollup output still creates a warning-bearing skeleton so the expected paths and JSON shape stay stable for operators.
+
+Sample rollup shape:
+
+```json
+{
+  "schema": "openclaw.observability.daily-rollup.v1",
+  "day": "2026-03-24",
+  "source": {
+    "eventsFile": "~/.openclaw/logs/events/2026-03-24.ndjson",
+    "exists": true,
+    "parsedEvents": 184
+  },
+  "totals": {
+    "events": 184,
+    "byType": {
+      "webhook.received": 44,
+      "message.processed": 42,
+      "model.usage": 38,
+      "tool.call": 51,
+      "session.stuck": 1
+    }
+  },
+  "runtime": {
+    "modelRequests": 38,
+    "modelResults": {
+      "ok": 37,
+      "error": 1
+    },
+    "tools": {
+      "starts": 51,
+      "results": 49,
+      "errors": 2
+    }
+  },
+  "warnings": []
+}
+```
 
 ### Enable diagnostics (no exporter)
 

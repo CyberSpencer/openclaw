@@ -7,6 +7,8 @@ import {
 } from "../config/sessions.js";
 import { callGateway } from "../gateway/call.js";
 import { onAgentEvent } from "../infra/agent-events.js";
+import { isDiagnosticsEnabled } from "../infra/diagnostic-events.js";
+import { logSubagentLifecycle } from "../logging/diagnostic.js";
 import { defaultRuntime } from "../runtime.js";
 import { type DeliveryContext, normalizeDeliveryContext } from "../utils/delivery-context.js";
 import { resetAnnounceQueuesForTests } from "./subagent-announce-queue.js";
@@ -972,6 +974,23 @@ export function registerSubagentRun(params: {
     archiveAtMs,
     cleanupHandled: false,
   });
+  if (isDiagnosticsEnabled(cfg)) {
+    logSubagentLifecycle({
+      requesterSessionKey: params.requesterSessionKey,
+      requesterSourceSessionKey: params.requesterSourceSessionKey,
+      childSessionKey: params.childSessionKey,
+      runId: params.runId,
+      phase: "registered",
+      cleanup: params.cleanup,
+      mode: spawnMode,
+      label: params.label,
+      model: params.model,
+      modelApplied: params.modelApplied,
+      routing: params.routing,
+      taskChars: params.task.length,
+      runTimeoutSeconds,
+    });
+  }
   ensureListener();
   persistSubagentRuns();
   if (archiveAtMs) {
@@ -983,8 +1002,29 @@ export function registerSubagentRun(params: {
 }
 
 async function waitForSubagentCompletion(runId: string, waitTimeoutMs: number) {
+  const cfg = loadConfig();
+  const diagnosticsEnabled = isDiagnosticsEnabled(cfg);
+  const startedAt = Date.now();
   try {
     const timeoutMs = Math.max(1, Math.floor(waitTimeoutMs));
+    const waitEntry = subagentRuns.get(runId);
+    if (diagnosticsEnabled && waitEntry) {
+      logSubagentLifecycle({
+        requesterSessionKey: waitEntry.requesterSessionKey,
+        requesterSourceSessionKey: waitEntry.requesterSourceSessionKey,
+        childSessionKey: waitEntry.childSessionKey,
+        runId,
+        phase: "wait_started",
+        cleanup: waitEntry.cleanup,
+        mode: waitEntry.spawnMode,
+        label: waitEntry.label,
+        model: waitEntry.model,
+        modelApplied: waitEntry.modelApplied,
+        routing: waitEntry.routing,
+        taskChars: waitEntry.task.length,
+        runTimeoutSeconds: waitEntry.runTimeoutSeconds,
+      });
+    }
     const wait = await callGateway<{
       status?: string;
       startedAt?: number;
@@ -1035,6 +1075,26 @@ async function waitForSubagentCompletion(runId: string, waitTimeoutMs: number) {
     if (mutated) {
       persistSubagentRuns();
     }
+    if (diagnosticsEnabled) {
+      logSubagentLifecycle({
+        requesterSessionKey: entry.requesterSessionKey,
+        requesterSourceSessionKey: entry.requesterSourceSessionKey,
+        childSessionKey: entry.childSessionKey,
+        runId,
+        phase: "wait_result",
+        status: outcome.status,
+        cleanup: entry.cleanup,
+        mode: entry.spawnMode,
+        label: entry.label,
+        model: entry.model,
+        modelApplied: entry.modelApplied,
+        routing: entry.routing,
+        taskChars: entry.task.length,
+        runTimeoutSeconds: entry.runTimeoutSeconds,
+        durationMs: Date.now() - startedAt,
+        error: waitError,
+      });
+    }
     await completeSubagentRun({
       runId,
       endedAt: entry.endedAt,
@@ -1045,8 +1105,30 @@ async function waitForSubagentCompletion(runId: string, waitTimeoutMs: number) {
       accountId: entry.requesterOrigin?.accountId,
       triggerCleanup: true,
     });
-  } catch {
-    // ignore
+  } catch (err) {
+    if (diagnosticsEnabled) {
+      const entry = subagentRuns.get(runId);
+      if (entry) {
+        logSubagentLifecycle({
+          requesterSessionKey: entry.requesterSessionKey,
+          requesterSourceSessionKey: entry.requesterSourceSessionKey,
+          childSessionKey: entry.childSessionKey,
+          runId,
+          phase: "wait_result",
+          status: "error",
+          cleanup: entry.cleanup,
+          mode: entry.spawnMode,
+          label: entry.label,
+          model: entry.model,
+          modelApplied: entry.modelApplied,
+          routing: entry.routing,
+          taskChars: entry.task.length,
+          runTimeoutSeconds: entry.runTimeoutSeconds,
+          durationMs: Date.now() - startedAt,
+          error: err instanceof Error ? err.message : String(err),
+        });
+      }
+    }
   }
 }
 

@@ -36,6 +36,7 @@ import {
 } from "./doctor-gateway-services.js";
 import { noteSourceInstallIssues } from "./doctor-install.js";
 import { noteMemorySearchHealth } from "./doctor-memory-search.js";
+import { noteObservabilityHealth } from "./doctor-observability.js";
 import {
   noteMacLaunchAgentOverrides,
   noteMacLaunchctlGatewayEnvOverrides,
@@ -190,6 +191,7 @@ export async function doctorCommand(
 
   await noteStateIntegrity(cfg, prompter, configResult.path ?? CONFIG_PATH);
   await noteSessionLockHealth({ shouldRepair: prompter.shouldRepair });
+  await noteObservabilityHealth({ cfg });
 
   cfg = await maybeRepairSandboxImages(cfg, runtime, prompter);
   noteSandboxScopeWarnings(cfg);

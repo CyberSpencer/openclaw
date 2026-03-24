@@ -1,5 +1,14 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
+vi.mock(
+  "@mariozechner/pi-ai/oauth",
+  () => ({
+    getOAuthApiKey: vi.fn(),
+    getOAuthProviders: vi.fn(() => []),
+  }),
+  { virtual: true },
+);
+
 vi.mock("../pi-model-discovery.js", () => ({
   discoverAuthStorage: vi.fn(() => ({ mocked: true })),
   discoverModels: vi.fn(() => ({ find: vi.fn(() => null) })),
@@ -169,6 +178,7 @@ describe("resolveModel", () => {
     expect(result.model?.baseUrl).toBe("http://localhost:9000");
     expect(result.model?.provider).toBe("custom");
     expect(result.model?.id).toBe("missing-model");
+    expect(result.resolution).toBe("provider-config");
   });
 
   it("prefers matching configured model metadata for fallback token limits", () => {
@@ -259,6 +269,43 @@ describe("resolveModel", () => {
         reasoning: true,
       },
     });
+    expect(resolveModel("anthropic", "claude-opus-4-6", "/tmp/agent").resolution).toBe(
+      "forward-compat",
+    );
+  });
+
+  it("marks openrouter fallback resolution", () => {
+    const result = resolveModel("openrouter", "moonshotai/kimi-k2", "/tmp/agent");
+
+    expect(result.resolution).toBe("openrouter-pass-through");
+    expect(result.model?.baseUrl).toBe("https://openrouter.ai/api/v1");
+  });
+
+  it("marks provider baseUrl overrides on discovered models", () => {
+    mockDiscoveredModel({
+      provider: "custom",
+      modelId: "model-1",
+      templateModel: {
+        ...makeModel("model-1"),
+        provider: "custom",
+        baseUrl: "http://old.example",
+      },
+    });
+    const cfg = {
+      models: {
+        providers: {
+          custom: {
+            baseUrl: "http://new.example",
+            models: [],
+          },
+        },
+      },
+    } as OpenClawConfig;
+
+    const result = resolveModel("custom", "model-1", "/tmp/agent", cfg);
+
+    expect(result.resolution).toBe("provider-base-url-override");
+    expect(result.model?.baseUrl).toBe("http://new.example");
   });
 
   it("builds an anthropic forward-compat fallback for claude-sonnet-4-6", () => {

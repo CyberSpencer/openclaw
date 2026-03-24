@@ -20,8 +20,8 @@ export type QdrantConfig = {
 };
 
 export type QdrantResolverLogger = {
-  warn: (message: string) => void;
-  debug: (message: string) => void;
+  warn: (message: string, meta?: Record<string, unknown>) => void;
+  debug: (message: string, meta?: Record<string, unknown>) => void;
 };
 
 const NOOP_LOGGER: QdrantResolverLogger = {
@@ -49,10 +49,19 @@ export async function checkQdrantEndpoint(
   const now = Date.now();
   const cached = qdrantHealthCache.get(cacheKey);
   if (cached && now - cached.checkedAt < ttlMs) {
+    logger.debug("qdrant health check cache hit", {
+      event: "memory.qdrant.resolver",
+      phase: "health-cache",
+      endpoint: endpoint.url,
+      healthUrl: url,
+      outcome: cached.ok ? "healthy" : "unhealthy",
+      ttlMs,
+    });
     return cached.ok;
   }
 
   let ok = false;
+  let status: number | undefined;
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), timeoutMs);
   try {
@@ -64,14 +73,33 @@ export async function checkQdrantEndpoint(
       headers["api-key"] = apiKey;
     }
     const res = await fetch(url, { method: "GET", headers, signal: controller.signal });
+    status = res.status;
     ok = res.status === 200;
   } catch (err) {
     ok = false;
-    logger.debug(`qdrant health check failed for ${endpoint.url}: ${String(err)}`);
+    logger.debug(`qdrant health check failed for ${endpoint.url}: ${String(err)}`, {
+      event: "memory.qdrant.resolver",
+      phase: "health-error",
+      endpoint: endpoint.url,
+      healthUrl: url,
+      timeoutMs,
+      error: err instanceof Error ? err.message : String(err),
+      outcome: "error",
+    });
   } finally {
     clearTimeout(timer);
   }
 
+  logger.debug("qdrant health check completed", {
+    event: "memory.qdrant.resolver",
+    phase: "health",
+    endpoint: endpoint.url,
+    healthUrl: url,
+    timeoutMs,
+    ttlMs,
+    status,
+    outcome: ok ? "healthy" : "unhealthy",
+  });
   qdrantHealthCache.set(cacheKey, { ok, checkedAt: now });
   return ok;
 }
@@ -93,12 +121,33 @@ async function resolveQdrantEndpoint(
 ): Promise<QdrantConfig | null> {
   const endpoints = (config.endpoints ?? []).filter((entry) => entry.url?.trim());
   if (endpoints.length === 0) {
+    logger.debug("qdrant resolver using base endpoint", {
+      event: "memory.qdrant.resolver",
+      phase: "selected",
+      endpoint: config.url,
+      collection: config.collection,
+      endpointCount: 1,
+      outcome: "selected",
+      failoverUsed: false,
+    });
     return config;
   }
 
   const ordered = sortQdrantEndpoints(endpoints);
-  for (const endpoint of ordered) {
+  for (let index = 0; index < ordered.length; index += 1) {
+    const endpoint = ordered[index];
     if (await checkQdrantEndpoint(endpoint, config.apiKey, logger)) {
+      logger.debug("qdrant resolver selected endpoint", {
+        event: "memory.qdrant.resolver",
+        phase: index > 0 ? "failover" : "selected",
+        endpoint: endpoint.url,
+        priority: endpoint.priority ?? 0,
+        collection: config.collection,
+        endpointCount: ordered.length,
+        attempt: index + 1,
+        failoverUsed: index > 0,
+        outcome: "selected",
+      });
       return {
         ...config,
         url: endpoint.url,
@@ -108,6 +157,14 @@ async function resolveQdrantEndpoint(
     }
   }
 
+  logger.warn("qdrant resolver found no healthy endpoints", {
+    event: "memory.qdrant.resolver",
+    phase: "unavailable",
+    collection: config.collection,
+    endpointCount: ordered.length,
+    endpoints: ordered.map((entry) => entry.url),
+    outcome: "unavailable",
+  });
   return null;
 }
 
@@ -132,7 +189,13 @@ export async function resolveStoreSettings(
   }
 
   if (settings.store.driver === "auto") {
-    logger.warn("qdrant unavailable, falling back to sqlite memory store");
+    logger.warn("qdrant unavailable, falling back to sqlite memory store", {
+      event: "memory.qdrant.resolver",
+      phase: "fallback-sqlite",
+      collection: (settings.store.qdrant as QdrantConfig).collection,
+      configuredDriver: settings.store.driver,
+      outcome: "fallback_sqlite",
+    });
     return {
       ...settings,
       store: {

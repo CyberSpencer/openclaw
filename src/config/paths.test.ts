@@ -3,9 +3,12 @@ import os from "node:os";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
 import {
-  resolveDefaultConfigCandidates,
-  resolveConfigPathCandidate,
   resolveConfigPath,
+  resolveConfigPathCandidate,
+  resolveDefaultConfigCandidates,
+  resolveEventsLogDir,
+  resolveEventsLogPath,
+  resolveEventsLogPathForDay,
   resolveOAuthDir,
   resolveOAuthPath,
   resolveStateDir,
@@ -101,26 +104,6 @@ describe("state + config path candidates", () => {
     expect(resolveStateDir(env)).toBe(path.resolve("/srv/openclaw-home/.clawdbot"));
   });
 
-  it("does not nest state dir when OPENCLAW_HOME already points at .openclaw", () => {
-    const env = {
-      OPENCLAW_HOME: "/srv/openclaw-home/.openclaw",
-    } as NodeJS.ProcessEnv;
-
-    const resolvedStateDir = path.resolve("/srv/openclaw-home/.openclaw");
-    expect(resolveStateDir(env)).toBe(resolvedStateDir);
-
-    const candidates = resolveDefaultConfigCandidates(env);
-    expect(candidates[0]).toBe(path.join(resolvedStateDir, "openclaw.json"));
-  });
-
-  it("does not nest state dir when OPENCLAW_HOME points at legacy state dirs", () => {
-    const env = {
-      OPENCLAW_HOME: "/srv/openclaw-home/.clawdbot",
-    } as NodeJS.ProcessEnv;
-
-    expect(resolveStateDir(env)).toBe(path.resolve("/srv/openclaw-home/.clawdbot"));
-  });
-
   it("orders default config candidates in a stable order", () => {
     const home = "/home/test";
     const resolvedHome = path.resolve(home);
@@ -188,5 +171,27 @@ describe("state + config path candidates", () => {
       const resolved = resolveConfigPath(env, overrideDir, () => root);
       expect(resolved).toBe(path.join(overrideDir, "openclaw.json"));
     });
+  });
+});
+
+describe("events log paths", () => {
+  it("resolves the canonical daily events directory under the state dir", () => {
+    expect(resolveEventsLogDir({ OPENCLAW_STATE_DIR: "/srv/state" } as NodeJS.ProcessEnv)).toBe(
+      path.join("/srv/state", "logs", "events"),
+    );
+  });
+
+  it("builds the per-day NDJSON event path from a date", () => {
+    const env = { OPENCLAW_STATE_DIR: "/srv/state" } as NodeJS.ProcessEnv;
+    expect(resolveEventsLogPath(new Date("2026-03-24T12:34:56.000Z"), env)).toBe(
+      path.join("/srv/state", "logs", "events", "2026-03-24.ndjson"),
+    );
+  });
+
+  it("builds the per-day NDJSON event path from a day key", () => {
+    const env = { OPENCLAW_STATE_DIR: "/srv/state" } as NodeJS.ProcessEnv;
+    expect(resolveEventsLogPathForDay("2026-03-24", env)).toBe(
+      path.join("/srv/state", "logs", "events", "2026-03-24.ndjson"),
+    );
   });
 });

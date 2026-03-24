@@ -309,6 +309,248 @@ export function logToolLoopAction(
   markActivity();
 }
 
+export function logModelResolve(params: {
+  sessionId?: string;
+  sessionKey?: string;
+  runId?: string;
+  channel?: string;
+  provider: string;
+  requestedModel: string;
+  resolvedProvider?: string;
+  resolvedModel?: string;
+  resolution:
+    | "registry"
+    | "inline-config"
+    | "forward-compat"
+    | "openrouter-pass-through"
+    | "provider-config"
+    | "provider-base-url-override";
+  baseUrl?: string;
+}) {
+  diag.debug(
+    `model resolve: sessionId=${params.sessionId ?? "unknown"} sessionKey=${
+      params.sessionKey ?? "unknown"
+    } runId=${params.runId ?? "unknown"} requested=${params.provider}/${params.requestedModel} resolved=${params.resolvedProvider ?? params.provider}/${params.resolvedModel ?? params.requestedModel} resolution=${params.resolution}`,
+  );
+  emitDiagnosticEvent({
+    type: "model.resolve",
+    sessionId: params.sessionId,
+    sessionKey: params.sessionKey,
+    runId: params.runId,
+    channel: params.channel,
+    provider: params.provider,
+    requestedModel: params.requestedModel,
+    resolvedProvider: params.resolvedProvider,
+    resolvedModel: params.resolvedModel,
+    resolution: params.resolution,
+    baseUrl: params.baseUrl,
+  });
+  markActivity();
+}
+
+export function logModelRequest(params: {
+  sessionId?: string;
+  sessionKey?: string;
+  runId?: string;
+  channel?: string;
+  provider: string;
+  model: string;
+  requestIndex?: number;
+  historyMessages?: number;
+  imageCount?: number;
+}) {
+  diag.debug(
+    `model request: sessionId=${params.sessionId ?? "unknown"} sessionKey=${
+      params.sessionKey ?? "unknown"
+    } runId=${params.runId ?? "unknown"} provider=${params.provider} model=${params.model} requestIndex=${params.requestIndex ?? "unknown"} historyMessages=${params.historyMessages ?? 0} imageCount=${params.imageCount ?? 0}`,
+  );
+  emitDiagnosticEvent({
+    type: "model.request",
+    sessionId: params.sessionId,
+    sessionKey: params.sessionKey,
+    runId: params.runId,
+    channel: params.channel,
+    provider: params.provider,
+    model: params.model,
+    requestIndex: params.requestIndex,
+    historyMessages: params.historyMessages,
+    imageCount: params.imageCount,
+  });
+  markActivity();
+}
+
+export function logModelResult(params: {
+  sessionId?: string;
+  sessionKey?: string;
+  runId?: string;
+  channel?: string;
+  provider?: string;
+  model?: string;
+  requestIndex?: number;
+  status: "ok" | "error";
+  durationMs?: number;
+  error?: string;
+  stopReason?: string;
+  usage?: {
+    input?: number;
+    output?: number;
+    cacheRead?: number;
+    cacheWrite?: number;
+    promptTokens?: number;
+    total?: number;
+  };
+}) {
+  const payload = `model result: sessionId=${params.sessionId ?? "unknown"} sessionKey=${
+    params.sessionKey ?? "unknown"
+  } runId=${params.runId ?? "unknown"} provider=${params.provider ?? "unknown"} model=${
+    params.model ?? "unknown"
+  } requestIndex=${params.requestIndex ?? "unknown"} status=${params.status} duration=${
+    params.durationMs ?? 0
+  }ms input=${params.usage?.input ?? 0} output=${params.usage?.output ?? 0}`;
+  if (params.status === "error") {
+    diag.warn(`${payload}${params.error ? ` error="${params.error}"` : ""}`);
+  } else {
+    diag.debug(payload);
+  }
+  emitDiagnosticEvent({
+    type: "model.result",
+    sessionId: params.sessionId,
+    sessionKey: params.sessionKey,
+    runId: params.runId,
+    channel: params.channel,
+    provider: params.provider,
+    model: params.model,
+    requestIndex: params.requestIndex,
+    status: params.status,
+    durationMs: params.durationMs,
+    error: params.error,
+    stopReason: params.stopReason,
+    usage: params.usage,
+  });
+  markActivity();
+}
+
+export function logToolCall(params: {
+  sessionKey?: string;
+  runId?: string;
+  toolName: string;
+  toolCallId: string;
+  phase: "start" | "result";
+  summary?: string;
+  status?: "ok" | "error";
+  durationMs?: number;
+  meta?: string;
+}) {
+  diag.debug(
+    `tool call: sessionKey=${params.sessionKey ?? "unknown"} runId=${params.runId ?? "unknown"} tool=${params.toolName} toolCallId=${params.toolCallId} phase=${params.phase}${params.status ? ` status=${params.status}` : ""}${params.durationMs != null ? ` duration=${params.durationMs}ms` : ""}${params.summary ? ` summary=${params.summary}` : ""}`,
+  );
+  emitDiagnosticEvent({
+    type: "tool.call",
+    sessionKey: params.sessionKey,
+    runId: params.runId,
+    toolName: params.toolName,
+    toolCallId: params.toolCallId,
+    phase: params.phase,
+    summary: params.summary,
+    status: params.status,
+    durationMs: params.durationMs,
+    meta: params.meta,
+  });
+  markActivity();
+}
+
+export function logSkillExecution(params: {
+  sessionId?: string;
+  sessionKey?: string;
+  runId?: string;
+  channel?: string;
+  source: "snapshot" | "workspace" | "slash-command";
+  phase: "prepare" | "start" | "result";
+  status?: "ok" | "error";
+  skillCount?: number;
+  skillNames?: string[];
+  skillName?: string;
+  commandName?: string;
+  toolName?: string;
+  argChars?: number;
+  durationMs?: number;
+  error?: string;
+}) {
+  const payload = `skill execution: sessionId=${params.sessionId ?? "unknown"} sessionKey=${
+    params.sessionKey ?? "unknown"
+  } runId=${params.runId ?? "unknown"} source=${params.source} phase=${params.phase}${params.status ? ` status=${params.status}` : ""}${params.skillName ? ` skill=${params.skillName}` : ""}${params.commandName ? ` command=${params.commandName}` : ""}${params.toolName ? ` tool=${params.toolName}` : ""}${params.skillCount != null ? ` skillCount=${params.skillCount}` : ""}${params.durationMs != null ? ` duration=${params.durationMs}ms` : ""}`;
+  if (params.status === "error") {
+    diag.warn(`${payload}${params.error ? ` error="${params.error}"` : ""}`);
+  } else {
+    diag.debug(payload);
+  }
+  emitDiagnosticEvent({
+    type: "skill.execution",
+    sessionId: params.sessionId,
+    sessionKey: params.sessionKey,
+    runId: params.runId,
+    channel: params.channel,
+    source: params.source,
+    phase: params.phase,
+    status: params.status,
+    skillCount: params.skillCount,
+    skillNames: params.skillNames,
+    skillName: params.skillName,
+    commandName: params.commandName,
+    toolName: params.toolName,
+    argChars: params.argChars,
+    durationMs: params.durationMs,
+    error: params.error,
+  });
+  markActivity();
+}
+
+export function logSubagentLifecycle(params: {
+  requesterSessionKey?: string;
+  requesterSourceSessionKey?: string;
+  childSessionKey: string;
+  runId: string;
+  phase: "spawn_failed" | "registered" | "wait_started" | "wait_result";
+  status?: "ok" | "error" | "timeout";
+  cleanup?: "delete" | "keep";
+  mode?: "run" | "session";
+  label?: string;
+  model?: string;
+  modelApplied?: boolean;
+  routing?: string;
+  taskChars?: number;
+  runTimeoutSeconds?: number;
+  durationMs?: number;
+  error?: string;
+}) {
+  const payload = `subagent lifecycle: requester=${params.requesterSessionKey ?? "unknown"} child=${params.childSessionKey} runId=${params.runId} phase=${params.phase}${params.status ? ` status=${params.status}` : ""}${params.mode ? ` mode=${params.mode}` : ""}${params.model ? ` model=${params.model}` : ""}${params.routing ? ` routing=${params.routing}` : ""}${params.durationMs != null ? ` duration=${params.durationMs}ms` : ""}`;
+  if (params.status === "error") {
+    diag.warn(`${payload}${params.error ? ` error="${params.error}"` : ""}`);
+  } else {
+    diag.debug(payload);
+  }
+  emitDiagnosticEvent({
+    type: "subagent.lifecycle",
+    requesterSessionKey: params.requesterSessionKey,
+    requesterSourceSessionKey: params.requesterSourceSessionKey,
+    childSessionKey: params.childSessionKey,
+    runId: params.runId,
+    phase: params.phase,
+    status: params.status,
+    cleanup: params.cleanup,
+    mode: params.mode,
+    label: params.label,
+    model: params.model,
+    modelApplied: params.modelApplied,
+    routing: params.routing,
+    taskChars: params.taskChars,
+    runTimeoutSeconds: params.runTimeoutSeconds,
+    durationMs: params.durationMs,
+    error: params.error,
+  });
+  markActivity();
+}
+
 export function logActiveRuns() {
   const activeSessions = Array.from(diagnosticSessionStates.entries())
     .filter(([, s]) => s.state === "processing")

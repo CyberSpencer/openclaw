@@ -4,6 +4,8 @@ import { DEFAULT_SUBAGENT_MAX_SPAWN_DEPTH } from "../config/agent-limits.js";
 import { loadConfig } from "../config/config.js";
 import { resolveAgentIdFromSessionKey, resolveMainSessionKey } from "../config/sessions.js";
 import { callGateway } from "../gateway/call.js";
+import { isDiagnosticsEnabled } from "../infra/diagnostic-events.js";
+import { logSubagentLifecycle } from "../logging/diagnostic.js";
 import { getGlobalHookRunner } from "../plugins/hook-runner-global.js";
 import {
   isCronSessionKey,
@@ -522,6 +524,25 @@ export async function spawnSubagentDirect(
       }
     }
     const messageText = summarizeError(err);
+    if (childRunId && childSessionKey && isDiagnosticsEnabled(cfg)) {
+      logSubagentLifecycle({
+        requesterSessionKey: requesterInternalKey,
+        requesterSourceSessionKey,
+        childSessionKey,
+        runId: childRunId,
+        phase: "spawn_failed",
+        status: "error",
+        cleanup,
+        mode: spawnMode,
+        label: label || undefined,
+        model: resolvedModel,
+        modelApplied: modelApplied || false,
+        routing: resolvedModelRoute,
+        taskChars: task.length,
+        runTimeoutSeconds,
+        error: messageText,
+      });
+    }
     return {
       status: "error",
       error: messageText,

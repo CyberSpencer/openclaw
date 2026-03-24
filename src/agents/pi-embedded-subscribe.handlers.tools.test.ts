@@ -1,5 +1,14 @@
 import type { AgentEvent } from "@mariozechner/pi-agent-core";
 import { describe, expect, it, vi } from "vitest";
+
+vi.mock(
+  "@mariozechner/pi-ai/oauth",
+  () => ({
+    getOAuthApiKey: vi.fn(),
+    getOAuthProviders: vi.fn(() => []),
+  }),
+  { virtual: true },
+);
 import type { MessagingToolSend } from "./pi-embedded-messaging.js";
 import {
   handleToolExecutionEnd,
@@ -17,15 +26,19 @@ function createTestContext(): {
   ctx: ToolHandlerContext;
   warn: ReturnType<typeof vi.fn>;
   onBlockReplyFlush: ReturnType<typeof vi.fn>;
+  onAgentEvent: ReturnType<typeof vi.fn>;
 } {
   const onBlockReplyFlush = vi.fn();
+  const onAgentEvent = vi.fn();
   const warn = vi.fn();
   const ctx: ToolHandlerContext = {
     params: {
       runId: "run-test",
       onBlockReplyFlush,
-      onAgentEvent: undefined,
+      onAgentEvent,
       onToolResult: undefined,
+      config: { diagnostics: { enabled: true } } as never,
+      sessionKey: "agent:main:webchat:test",
     },
     flushBlockReplyBuffer: vi.fn(),
     hookRunner: undefined,
@@ -53,7 +66,7 @@ function createTestContext(): {
     trimMessagingToolSent: vi.fn(),
   };
 
-  return { ctx, warn, onBlockReplyFlush };
+  return { ctx, warn, onBlockReplyFlush, onAgentEvent };
 }
 
 describe("handleToolExecutionStart read path checks", () => {
@@ -122,6 +135,62 @@ describe("handleToolExecutionStart read path checks", () => {
 });
 
 describe("handleToolExecutionEnd cron.add commitment tracking", () => {
+  it("emits safe summaries, status, and duration in tool events", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-03-24T18:00:00.000Z"));
+    const { ctx, onAgentEvent } = createTestContext();
+
+    await handleToolExecutionStart(
+      ctx as never,
+      {
+        type: "tool_execution_start",
+        toolName: "exec",
+        toolCallId: "tool-exec-1",
+        args: { command: "echo secret-token-value", timeout: 15 },
+      } as never,
+    );
+    vi.advanceTimersByTime(250);
+    await handleToolExecutionEnd(
+      ctx as never,
+      {
+        type: "tool_execution_end",
+        toolName: "exec",
+        toolCallId: "tool-exec-1",
+        isError: false,
+        result: { details: { status: "ok" }, text: "hello world" },
+      } as never,
+    );
+
+    expect(onAgentEvent).toHaveBeenNthCalledWith(
+      1,
+      expect.objectContaining({
+        stream: "tool",
+        data: expect.objectContaining({
+          phase: "start",
+          name: "exec",
+          toolCallId: "tool-exec-1",
+          summary: expect.stringContaining("commandChars="),
+          status: "start",
+        }),
+      }),
+    );
+    expect(onAgentEvent).toHaveBeenNthCalledWith(
+      2,
+      expect.objectContaining({
+        stream: "tool",
+        data: expect.objectContaining({
+          phase: "result",
+          name: "exec",
+          toolCallId: "tool-exec-1",
+          status: "ok",
+          durationMs: 250,
+          summary: expect.stringContaining("status=ok"),
+        }),
+      }),
+    );
+    vi.useRealTimers();
+  });
+
   it("increments successfulCronAdds when cron add succeeds", async () => {
     const { ctx } = createTestContext();
     await handleToolExecutionStart(

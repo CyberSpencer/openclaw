@@ -23,6 +23,11 @@ import {
   setLoggerOverride,
   toPinoLikeLogger,
 } from "./logging/logger.js";
+import type {
+  ObservabilityEventEnvelope,
+  ObservabilityEventInput,
+} from "./logging/observability.js";
+import { createObservabilityEvent, emitObservabilityEvent } from "./logging/observability.js";
 import type { SubsystemLogger } from "./logging/subsystem.js";
 import {
   createSubsystemLogger,
@@ -52,6 +57,8 @@ export {
   resetLogger,
   setLoggerOverride,
   toPinoLikeLogger,
+  createObservabilityEvent,
+  emitObservabilityEvent,
   createSubsystemLogger,
   createSubsystemRuntime,
   runtimeForLogger,
@@ -64,6 +71,8 @@ export type {
   LogLevel,
   LoggerResolvedSettings,
   LoggerSettings,
+  ObservabilityEventEnvelope,
+  ObservabilityEventInput,
   PinoLikeLogger,
   SubsystemLogger,
 };
