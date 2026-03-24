@@ -373,6 +373,10 @@ export async function startGatewayServer(
   const diagnosticsEnabled = isDiagnosticsEnabled(cfgAtStart);
   if (diagnosticsEnabled) {
     startDiagnosticHeartbeat();
+    // Bridge memory/DGX/reranker/Qdrant structured log events into the NDJSON sink.
+    const { registerStructuredEventObservabilityTransport } =
+      await import("../logging/observability.js");
+    registerStructuredEventObservabilityTransport();
   }
   setGatewaySigusr1RestartPolicy({ allowExternal: isRestartEnabled(cfgAtStart) });
   setPreRestartDeferralCheck(

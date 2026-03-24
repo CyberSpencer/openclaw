@@ -2,6 +2,67 @@ import { getQueuedFileWriter, type QueuedFileWriter } from "../agents/queued-fil
 import { resolveEventsLogPath } from "../config/paths.js";
 import { parseAgentSessionKey, resolveAgentIdFromSessionKey } from "../routing/session-key.js";
 import { safeJsonStringify } from "../utils/safe-json.js";
+import { registerLogTransport } from "./logger.js";
+
+/**
+ * Event name prefixes that are emitted as structured metadata on logger calls
+ * (e.g. logger.debug("msg", { event: "memory.search", ... })) and should be
+ * bridged into the canonical NDJSON observability sink.
+ */
+const STRUCTURED_LOG_EVENT_PREFIXES = ["memory.", "provider.endpoint."] as const;
+
+let structuredLogTransportRegistered = false;
+
+/**
+ * Register a one-time log transport that intercepts any structured logger call
+ * that carries a recognised `event` field and mirrors it into the NDJSON sink.
+ * This bridges memory/DGX/reranker/Qdrant events without touching each call site.
+ * Safe to call multiple times — installs at most once per process.
+ */
+export function registerStructuredEventObservabilityTransport(): void {
+  if (structuredLogTransportRegistered) {
+    return;
+  }
+  structuredLogTransportRegistered = true;
+
+  registerLogTransport((logObj) => {
+    const event = logObj["event"];
+    if (typeof event !== "string") {
+      return;
+    }
+    const matched = STRUCTURED_LOG_EVENT_PREFIXES.some((prefix) => event.startsWith(prefix));
+    if (!matched) {
+      return;
+    }
+
+    // Extract envelope fields that may be present on the log object, then put
+    // everything else (except tslog internals) into `data`.
+    const {
+      event: _event,
+      phase,
+      status,
+      durationMs,
+      error,
+      agentId,
+      sessionKey,
+      // tslog internals — exclude from data blob
+      _meta,
+      date: _date,
+      ...rest
+    } = logObj as Record<string, unknown>;
+
+    emitObservabilityEvent({
+      event,
+      component: event.startsWith("memory.") ? "memory" : "provider",
+      agentId: typeof agentId === "string" ? agentId : undefined,
+      sessionKey: typeof sessionKey === "string" ? sessionKey : undefined,
+      status: typeof status === "string" ? status : typeof phase === "string" ? phase : undefined,
+      durationMs: typeof durationMs === "number" ? durationMs : undefined,
+      error: typeof error === "string" ? error : undefined,
+      data: { phase, ...rest },
+    });
+  });
+}
 
 type ObservabilityEventData = Record<string, unknown>;
 
