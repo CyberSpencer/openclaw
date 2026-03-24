@@ -99,6 +99,7 @@ import { renderSettings } from "./views/settings.ts";
 import { renderSkills } from "./views/skills.ts";
 import { renderUsage } from "./views/usage.ts";
 import { renderVoiceBar } from "./views/voice-bar.ts";
+import "./components/dashboard-header.ts";
 
 const CRON_THINKING_SUGGESTIONS = ["off", "minimal", "low", "medium", "high"];
 const COMMUNICATION_SECTION_KEYS = ["channels", "messages", "broadcast", "talk", "audio"] as const;
@@ -286,9 +287,20 @@ function classifyModelSource(provider: string | null): {
 }
 
 function renderModelPill(state: AppViewState) {
+  // Prefer active stream selection (real-time routing info)
   const selection = state.chatModelSelection;
-  const provider = selection?.provider ?? null;
-  const modelId = selection?.model ?? null;
+  let provider = selection?.provider ?? null;
+  let modelId = selection?.model ?? null;
+
+  // Fall back to the session's configured model when not actively streaming
+  if (!provider && !modelId && state.tab === "chat") {
+    const row = state.sessionsResult?.sessions?.find((s) => s.key === state.sessionKey);
+    if (row?.modelProvider || row?.model) {
+      provider = row.modelProvider ?? null;
+      modelId = row.model ?? null;
+    }
+  }
+
   if (!provider && !modelId) {
     return nothing;
   }
@@ -306,10 +318,15 @@ function renderModelPill(state: AppViewState) {
     : "";
   const title = provider && modelId ? `${provider}/${modelId}` : (provider ?? modelId ?? "");
 
+  // Use a cloud icon for remote providers, server icon for local/DGX
+  const modelIcon =
+    source.cssClass === "model-spark" || source.cssClass === "model-local"
+      ? icons.server
+      : icons.cloud;
+
   return html`
     <div class="pill pill--model ${source.cssClass}" title="${title}">
-      <span class="statusDot ${source.cssClass}"></span>
-      <span>${source.label}</span>
+      <span class="pill-icon">${modelIcon}</span>
       ${shortModel ? html`<span class="mono">${shortModel}</span>` : nothing}
     </div>
   `;
@@ -326,49 +343,35 @@ export function renderApp(state: AppViewState) {
   const assistantAvatarUrl = resolveAssistantAvatarUrl(state);
   const chatAvatarUrl = state.chatAvatarUrl ?? assistantAvatarUrl ?? null;
   const topbarLogoSrc = `${state.basePath}/favicon.svg`;
-  const cmdKey = (() => {
-    if (typeof navigator === "undefined") {
-      return "Ctrl K";
-    }
-    const platform = navigator.platform || "";
-    return /mac|iphone|ipad|ipod/i.test(platform) ? "Cmd K" : "Ctrl K";
-  })();
   const sparkEnabled = state.sparkStatus?.enabled;
-  const sparkActive = state.sparkStatus?.active;
   const sparkKnown = Boolean(state.sparkStatus);
   const sparkHost = typeof state.sparkStatus?.host === "string" ? state.sparkStatus.host : null;
-  const sparkServices = state.sparkStatus?.services as
-    | Record<string, { error?: unknown }>
-    | undefined;
-  const sparkRouterError =
-    typeof sparkServices?.router?.error === "string" ? sparkServices.router.error : null;
-  const sparkRouterDegraded = Boolean(sparkRouterError?.startsWith("degraded"));
+  const sparkOverall =
+    typeof state.sparkStatus?.overall === "string" ? state.sparkStatus.overall : null;
   const sparkLabel = state.sparkBusy
     ? "..."
     : !sparkKnown
       ? "..."
       : sparkEnabled === false
         ? "Off"
-        : sparkRouterDegraded
+        : sparkOverall === "degraded"
           ? "Degraded"
-          : sparkActive
-            ? "On"
-            : "Fallback";
+          : "";
   const sparkDotClass =
     !sparkKnown || sparkEnabled === false
       ? "neutral"
-      : sparkRouterDegraded
-        ? ""
-        : sparkActive
-          ? "ok"
-          : "";
+      : sparkOverall === "healthy"
+        ? "ok"
+        : sparkOverall === "degraded"
+          ? "warn"
+          : sparkOverall === "down"
+            ? "err"
+            : "";
   const sparkTitle = !sparkKnown
-    ? "DGX Spark status unavailable"
+    ? "DGX status unavailable"
     : sparkEnabled === false
-      ? "DGX Spark disabled"
-      : sparkActive
-        ? `DGX Spark active${sparkHost ? ` (${sparkHost})` : ""}${sparkRouterError ? ` · router ${sparkRouterError}` : ""}`
-        : `DGX Spark fallback${sparkHost ? ` (${sparkHost})` : ""}${sparkRouterError ? ` · router ${sparkRouterError}` : ""}`;
+      ? "DGX disabled"
+      : `DGX ${sparkOverall ?? "unknown"}${sparkHost ? ` (${sparkHost})` : ""}`;
   const configValue =
     state.configForm ?? (state.configSnapshot?.config as Record<string, unknown> | null);
   const resolvedAgentId =
@@ -501,16 +504,6 @@ export function renderApp(state: AppViewState) {
             <span class="mono">${state.connected ? "OK" : "Offline"}</span>
           </div>
           <button
-            class="pill topbar-action-btn"
-            @click=${() => state.openCommandPalette()}
-            title=${`Search (${cmdKey})`}
-            aria-label="Search (Command palette)"
-          >
-            <span class="pill-icon">${icons.search}</span>
-            <span>Search</span>
-            <span class="mono">${cmdKey}</span>
-          </button>
-          <button
             class="pill topbar-action-btn topbar-action-btn--status"
             ?disabled=${!state.connected || state.memorySearchBusy}
             @click=${() => state.handleMemorySearchToggle()}
@@ -539,38 +532,14 @@ export function renderApp(state: AppViewState) {
           </button>
           <button
             class="pill topbar-action-btn topbar-action-btn--status"
-            ?disabled=${!state.connected || state.nvidiaRouterBusy}
-            @click=${() => state.handleNvidiaRouterToggle()}
-            title=${
-              state.nvidiaRouterEnabled === false
-                ? "Enable NVIDIA Router"
-                : state.nvidiaRouterHealthy === false
-                  ? `NVIDIA Router degraded${state.nvidiaRouterError ? `: ${state.nvidiaRouterError}` : ""}`
-                  : "Disable NVIDIA Router"
-            }
-            aria-label="${state.nvidiaRouterEnabled === false ? "Enable NVIDIA Router" : "Disable NVIDIA Router"}"
-          >
-            <span class="statusDot ${state.nvidiaRouterHealthy ? "ok" : ""}"></span>
-            <span>NVIDIA Router</span>
-          </button>
-          <button
-            class="pill topbar-action-btn topbar-action-btn--status"
             ?disabled=${!state.connected || state.sparkBusy}
             @click=${() => state.setTab("dgx")}
             title=${sparkTitle}
             aria-label="DGX Spark status"
           >
             <span class="statusDot ${sparkDotClass}"></span>
-            <span>DGX Spark</span>
+            <span>DGX</span>
             <span class="mono">${sparkLabel}</span>
-          </button>
-          <button
-            class="voice-toggle-btn ${state.voiceBarVisible ? "voice-toggle-btn--active" : ""}"
-            @click=${() => state.toggleVoiceBar()}
-            title="${state.voiceBarVisible ? "Hide voice mode" : "Show voice mode"}"
-            aria-label="${state.voiceBarVisible ? "Hide voice mode" : "Show voice mode"}"
-          >
-            ${icons.mic || "🎤"}
           </button>
           ${renderThemeToggle(state)}
         </div>
@@ -1821,6 +1790,12 @@ export function renderApp(state: AppViewState) {
                   onStopSpeaking: () => state.handleStopSpeaking?.(),
                   codexUsageNotes: state.codexUsageNotes,
                   anthropicUsageNotes: state.anthropicUsageNotes,
+                  onSubagentStop: async (sessionKey: string) => {
+                    if (!state.client) {
+                      return;
+                    }
+                    await state.client.request("chat.abort", { sessionKey });
+                  },
                 })}
               `
             : nothing

@@ -542,8 +542,6 @@
   margin-top: 4px;
   display: flex;
   flex-direction: column;
-  flex: 1 1 0;
-  min-height: 0;
 }
 
 .agent-subagents__header {
@@ -584,67 +582,105 @@
 .agent-subagents__list {
   display: grid;
   gap: 6px;
-  overflow: auto;
-  flex: 1 1 0;
-  min-height: 0;
+  overflow-y: auto;
+  overflow-x: hidden;
+  max-height: 300px;
   padding-right: 2px;
 }
 
 .agent-subagent {
   display: flex;
   align-items: stretch;
-  justify-content: space-between;
-  gap: 12px;
-  padding: 10px 10px;
+  gap: 10px;
+  padding: 12px;
   border-radius: var(--radius-lg);
-  border: 1px solid transparent;
-  cursor: pointer;
+  border: 1px solid color-mix(in srgb, var(--border) 88%, transparent);
+  background: linear-gradient(
+    180deg,
+    color-mix(in srgb, var(--panel-strong) 90%, transparent),
+    color-mix(in srgb, var(--panel) 100%, transparent)
+  );
+  box-shadow:
+    inset 0 1px 0 var(--card-highlight),
+    0 1px 2px rgba(0, 0, 0, 0.12);
   user-select: none;
-  background: transparent;
   color: inherit;
-  text-align: left;
+  overflow: hidden;
   transition:
     background var(--duration-fast) var(--ease-out),
     border-color var(--duration-fast) var(--ease-out),
-    transform var(--duration-fast) var(--ease-out);
+    box-shadow var(--duration-fast) var(--ease-out);
 }
 
 .agent-subagent:hover {
-  background: var(--bg-hover);
-  border-color: var(--border);
-  transform: translateY(-1px);
+  border-color: color-mix(in srgb, var(--border-strong) 68%, var(--border));
+  background: linear-gradient(
+    180deg,
+    color-mix(in srgb, var(--panel-strong) 94%, transparent),
+    color-mix(in srgb, var(--panel) 100%, transparent)
+  );
+  box-shadow:
+    inset 0 1px 0 var(--card-highlight),
+    0 6px 16px rgba(0, 0, 0, 0.14);
 }
 
-.agent-subagent--static {
+.agent-subagent__body {
+  flex: 1 1 0;
+  min-width: 0;
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 14px;
+  cursor: pointer;
+}
+
+.agent-subagent__body:focus-visible {
+  outline: none;
+  border-radius: var(--radius-md);
+  box-shadow: var(--focus-glow);
+}
+
+.agent-subagent--static .agent-subagent__body {
   cursor: default;
 }
 
 .agent-subagent--static:hover {
-  transform: none;
-}
-
-.agent-subagent:active {
-  transform: translateY(0);
-}
-
-.agent-subagent:focus-visible {
-  outline: none;
-  border-color: var(--accent);
-  box-shadow: var(--focus-glow);
+  border-color: color-mix(in srgb, var(--border) 88%, transparent);
+  background: linear-gradient(
+    180deg,
+    color-mix(in srgb, var(--panel-strong) 90%, transparent),
+    color-mix(in srgb, var(--panel) 100%, transparent)
+  );
+  box-shadow:
+    inset 0 1px 0 var(--card-highlight),
+    0 1px 2px rgba(0, 0, 0, 0.12);
 }
 
 .agent-subagent--running {
-  border-color: color-mix(in srgb, var(--accent) 40%, var(--border));
-  background: var(--accent-subtle);
+  border-color: color-mix(in srgb, var(--accent) 36%, var(--border));
+  background: linear-gradient(
+    180deg,
+    color-mix(in srgb, var(--accent-subtle) 72%, var(--panel-strong)),
+    color-mix(in srgb, var(--panel) 100%, transparent)
+  );
+  box-shadow:
+    inset 0 1px 0 var(--card-highlight),
+    0 0 0 1px color-mix(in srgb, var(--accent) 12%, transparent);
 }
 
 .agent-subagent--running:hover {
-  border-color: color-mix(in srgb, var(--accent) 55%, var(--border));
+  border-color: color-mix(in srgb, var(--accent) 50%, var(--border));
+  background: linear-gradient(
+    180deg,
+    color-mix(in srgb, var(--accent-subtle) 84%, var(--panel-strong)),
+    color-mix(in srgb, var(--panel) 100%, transparent)
+  );
 }
 
 .agent-subagent__main {
   flex: 1 1 0;
   min-width: 0;
+  overflow: hidden;
 }
 
 .agent-subagent__title {
@@ -719,20 +755,33 @@
 }
 
 .agent-subagent__sub {
-  margin-top: 4px;
+  margin-top: 6px;
+  min-width: 0;
+  display: grid;
+  gap: 8px;
+}
+
+.agent-subagent__subMeta {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
   min-width: 0;
 }
 
 .agent-subagent__preview {
   font-size: 11px;
-  color: var(--muted);
-  white-space: nowrap;
+  line-height: 1.4;
+  color: color-mix(in srgb, var(--text) 74%, var(--muted));
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
   overflow: hidden;
-  text-overflow: ellipsis;
 }
 
 .agent-subagent__preview--empty {
-  opacity: 0.6;
+  color: var(--muted);
+  opacity: 0.72;
 }
 
 .agent-subagent__meta {
@@ -740,8 +789,28 @@
   display: flex;
   align-items: flex-end;
   flex-direction: column;
-  gap: 4px;
-  min-width: 0;
+  justify-content: flex-start;
+  gap: 6px;
+  min-width: 78px;
+  max-width: 92px;
+  padding-left: 10px;
+  border-left: 1px solid color-mix(in srgb, var(--border) 82%, transparent);
+}
+
+.agent-subagent__time,
+.agent-subagent__runtime {
+  display: inline-flex;
+  align-items: center;
+  justify-content: flex-end;
+  min-height: 20px;
+  padding: 0 8px;
+  border-radius: var(--radius-full);
+  border: 1px solid color-mix(in srgb, var(--border-strong) 24%, var(--border));
+  background: color-mix(in srgb, var(--panel-strong) 82%, transparent);
+  text-align: right;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .agent-subagent__time {
@@ -751,10 +820,44 @@
 
 .agent-subagent__runtime {
   font-size: 10px;
+  color: color-mix(in srgb, var(--accent) 78%, var(--text));
+  border-color: color-mix(in srgb, var(--accent) 22%, var(--border));
+  background: color-mix(in srgb, var(--accent-subtle) 40%, var(--panel-strong));
+}
+
+.agent-subagent__model,
+.agent-subagent__lane {
+  font-size: 10px;
+  border-radius: var(--radius-full);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.agent-subagent__model {
+  max-width: 100%;
+  width: fit-content;
+  padding: 2px 8px;
+  color: color-mix(in srgb, var(--text) 88%, var(--muted));
+  border: 1px solid color-mix(in srgb, var(--border-strong) 26%, var(--border));
+  background: color-mix(in srgb, var(--panel-strong) 84%, transparent);
+  margin-top: 0;
+}
+
+.agent-subagent__lane {
+  max-width: 100%;
+  padding: 2px 7px;
   color: var(--muted);
-  text-align: right;
-  max-width: 220px;
-  white-space: normal;
+  border: 1px solid color-mix(in srgb, var(--border-strong) 18%, var(--border));
+  background: color-mix(in srgb, var(--secondary) 86%, transparent);
+  text-transform: lowercase;
+}
+
+.agent-subagent__stop {
+  flex-shrink: 0;
+  align-self: center;
+  padding: 4px 8px;
+  font-size: 11px;
 }
 
 /* =============================================
@@ -782,13 +885,6 @@
   color: var(--warning, #b07800);
 }
 
-.agent-subagent__runtime {
-  font-size: 10px;
-  color: var(--muted);
-  max-width: 220px;
-  white-space: normal;
-  text-align: right;
-}
 
 /* =============================================
    Terminal Card
@@ -826,6 +922,16 @@
 
 .agent-terminal__compose {
   margin-top: 10px;
+}
+
+.agent-terminal__stop {
+  color: var(--danger, #e85555);
+  border-color: color-mix(in srgb, var(--danger, #e85555) 35%, var(--border));
+}
+
+.agent-terminal__stop:hover {
+  background: color-mix(in srgb, var(--danger, #e85555) 12%, var(--bg-hover));
+  border-color: color-mix(in srgb, var(--danger, #e85555) 55%, var(--border));
 }
 
 /* Spark voice mic button */

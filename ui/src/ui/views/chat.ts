@@ -58,6 +58,7 @@ export type ChatProps = {
   subagentMonitorResult?: SessionsListResult | null;
   subagentMonitorError?: string | null;
   onSubagentRefresh?: () => void;
+  onSubagentStop?: (sessionKey: string) => void;
   // Provider usage chips (Anthropic quota + suppression status)
   anthropicUsageNotes?: string[] | null;
   // Provider usage chips (Codex quota + suppression status)
@@ -263,23 +264,9 @@ function formatSubagentRuntime(session: {
 }): string {
   const provider = typeof session.modelProvider === "string" ? session.modelProvider.trim() : "";
   const modelValue = typeof session.model === "string" ? session.model.trim() : "";
-
-  const runtime =
-    provider && !modelValue.includes("/")
-      ? `${provider}/${modelValue}`
-      : modelValue || "runtime:unknown";
-
-  const tags: string[] = [runtime, "lane:subagent"];
-  if (typeof session.routing === "string" && session.routing.trim()) {
-    tags.push(`route:${session.routing.trim()}`);
-  }
-  if (typeof session.complexity === "string" && session.complexity.trim()) {
-    tags.push(`complexity:${session.complexity.trim()}`);
-  }
-  if (typeof session.modelApplied === "boolean") {
-    tags.push(session.modelApplied ? "model:applied" : "model:fallback");
-  }
-  return tags.filter(Boolean).join(" • ");
+  return provider && !modelValue.includes("/")
+    ? `${provider}/${modelValue}`
+    : modelValue || "unknown";
 }
 
 function extractImages(message: unknown): ImageBlock[] {
@@ -1053,6 +1040,167 @@ function renderOrchestrationCard(props: ChatProps) {
         <span class="agent-orchestration__subagents-badge">Subagents ${subagents.length}</span>
       </div>
 
+      <div class="agent-subagents">
+        <div class="agent-subagents__header">
+          <div class="agent-subagents__title">
+            Subagents & runs
+            <span class="agent-subagents__count mono">${subagents.length}</span>
+          </div>
+          ${
+            subagents.length > 0
+              ? html`
+                  <div class="agent-subagents__hint muted">
+                    thread sessions, one-shot runs, and background coding agents spawned by this thread
+                  </div>
+                `
+              : nothing
+          }
+        </div>
+
+        ${subagentError ? html`<div class="callout danger">${subagentError}</div>` : nothing}
+
+        ${
+          !props.connected
+            ? html`
+                <div class="muted agent-subagents__empty">Connect to see subagents.</div>
+              `
+            : subagentLoading && subagents.length === 0
+              ? html`
+                  <div class="muted agent-subagents__empty">Loading…</div>
+                `
+              : subagents.length === 0
+                ? nothing
+                : html`
+                    <div class="agent-subagents__list">
+                      ${repeat(
+                        subagents,
+                        (s) => s.key,
+                        (s) => {
+                          const label =
+                            s.label?.trim() ||
+                            s.derivedTitle?.trim() ||
+                            s.displayName?.trim() ||
+                            s.key;
+                          const updatedAt = typeof s.updatedAt === "number" ? s.updatedAt : null;
+                          const isOpenable = s.openable !== false;
+                          const st = s.runStatus || subagentStatusByKey.get(s.key);
+                          const status =
+                            st === "running"
+                              ? "running"
+                              : st === "error"
+                                ? "blocked"
+                                : st === "done"
+                                  ? "done"
+                                  : subagentStatusByKey.get(s.key);
+                          const dotStatus =
+                            status === "running"
+                              ? "running"
+                              : status === "blocked"
+                                ? "blocked"
+                                : status === "done" || status === "skipped"
+                                  ? "done"
+                                  : status === "todo"
+                                    ? "todo"
+                                    : "neutral";
+                          const taskStr = (s.task ?? s.derivedTitle ?? "").trim();
+                          const outcomeErr = s.outcome?.error?.trim();
+                          const preview =
+                            (s.lastMessagePreview ?? "").trim() ||
+                            (status === "blocked"
+                              ? `Failed: ${outcomeErr || taskStr || "subagent task"}`
+                              : taskStr);
+                          const hasPreview = Boolean(preview);
+                          const laneLabel =
+                            s.source === "background-exec"
+                              ? "background"
+                              : s.spawnMode === "run"
+                                ? "one-shot"
+                                : s.spawnMode === "session"
+                                  ? "thread"
+                                  : "subagent";
+                          const runtimeDisplay = formatSubagentRuntime(s);
+                          const isRunning = s.runStatus === "running";
+                          const canStop = isRunning && isOpenable && Boolean(props.onSubagentStop);
+                          const openTitle = isOpenable
+                            ? "Open subagent session"
+                            : "Background coding agent";
+                          // Compute elapsed/runtime for display
+                          const startedAt = typeof s.startedAt === "number" ? s.startedAt : null;
+                          const runtimeMs = typeof s.runtimeMs === "number" ? s.runtimeMs : null;
+                          const elapsedMs = isRunning && startedAt ? Date.now() - startedAt : null;
+                          const displayRuntimeMs = elapsedMs ?? runtimeMs;
+                          const runtimeLabel =
+                            displayRuntimeMs && displayRuntimeMs > 0
+                              ? formatDurationCompact(displayRuntimeMs, { spaced: true })
+                              : null;
+                          return html`
+                          <div class="agent-subagent agent-subagent--${dotStatus} ${isOpenable ? "" : "agent-subagent--static"}">
+                            <div
+                              class="agent-subagent__body"
+                              role=${isOpenable ? "button" : "presentation"}
+                              tabindex=${isOpenable ? "0" : "-1"}
+                              title=${openTitle}
+                              @click=${() => isOpenable && props.onSessionKeyChange(s.key)}
+                              @keydown=${(e: KeyboardEvent) => {
+                                if (isOpenable && (e.key === "Enter" || e.key === " ")) {
+                                  e.preventDefault();
+                                  props.onSessionKeyChange(s.key);
+                                }
+                              }}
+                            >
+                              <div class="agent-subagent__main">
+                                <div class="agent-subagent__title">
+                                  <span
+                                    class="agent-subagent__dot agent-subagent__dot--${dotStatus}"
+                                    aria-hidden="true"
+                                  ></span>
+                                  <span class="agent-subagent__titleText">${label}</span>
+                                </div>
+                                <div class="agent-subagent__sub">
+                                  <div class="agent-subagent__subMeta">
+                                    <div class="agent-subagent__model mono" title=${runtimeDisplay}>
+                                      ${runtimeDisplay}
+                                    </div>
+                                    <div class="agent-subagent__lane">${laneLabel}</div>
+                                  </div>
+                                  <div
+                                    class="agent-subagent__preview ${hasPreview ? "" : "agent-subagent__preview--empty"}"
+                                  >
+                                    ${hasPreview ? preview : "No messages yet"}
+                                  </div>
+                                </div>
+                              </div>
+                              <div class="agent-subagent__meta">
+                                <div class="agent-subagent__time mono">${formatAge(updatedAt)}</div>
+                                ${runtimeLabel ? html`<div class="agent-subagent__runtime mono">${isRunning ? "⏱" : ""}${runtimeLabel}</div>` : nothing}
+                              </div>
+                            </div>
+                            ${
+                              canStop
+                                ? html`
+                                    <button
+                                      class="btn btn--sm agent-subagent__stop"
+                                      type="button"
+                                      title="Stop this subagent"
+                                      @click=${(e: MouseEvent) => {
+                                        e.stopPropagation();
+                                        props.onSubagentStop?.(s.key);
+                                      }}
+                                    >
+                                      Stop
+                                    </button>
+                                  `
+                                : nothing
+                            }
+                          </div>
+                        `;
+                        },
+                      )}
+                    </div>
+                  `
+        }
+      </div>
+
       <div class="agent-orchestration__meta">
         ${renderModelAttribution(props.modelSelection)}
         ${renderAnthropicUsageChips(props.anthropicUsageNotes ?? null)}
@@ -1217,141 +1365,6 @@ function renderOrchestrationCard(props: ChatProps) {
             `
           : nothing
       }
-
-      <div class="agent-subagents">
-        <div class="agent-subagents__header">
-          <div class="agent-subagents__title">
-            Subagents & runs
-            <span class="agent-subagents__count mono">${subagents.length}</span>
-          </div>
-          ${
-            subagents.length > 0
-              ? html`
-                  <div class="agent-subagents__hint muted">
-                    thread sessions, one-shot runs, and background coding agents spawned by this thread
-                  </div>
-                `
-              : nothing
-          }
-        </div>
-
-        ${subagentError ? html`<div class="callout danger">${subagentError}</div>` : nothing}
-
-        ${
-          !props.connected
-            ? html`
-                <div class="muted agent-subagents__empty">Connect to see subagents.</div>
-              `
-            : subagentLoading && subagents.length === 0
-              ? html`
-                  <div class="muted agent-subagents__empty">Loading…</div>
-                `
-              : subagents.length === 0
-                ? nothing
-                : html`
-                    <div class="agent-subagents__list">
-                      ${subagents.map((s) => {
-                        const label =
-                          s.label?.trim() ||
-                          s.derivedTitle?.trim() ||
-                          s.displayName?.trim() ||
-                          s.key;
-                        const updatedAt = typeof s.updatedAt === "number" ? s.updatedAt : null;
-                        const isOpenable = s.openable !== false;
-                        const st = s.runStatus || subagentStatusByKey.get(s.key);
-                        const status =
-                          st === "running"
-                            ? "running"
-                            : st === "error"
-                              ? "blocked"
-                              : st === "done"
-                                ? "done"
-                                : subagentStatusByKey.get(s.key);
-                        const dotStatus =
-                          status === "running"
-                            ? "running"
-                            : status === "blocked"
-                              ? "blocked"
-                              : status === "done" || status === "skipped"
-                                ? "done"
-                                : status === "todo"
-                                  ? "todo"
-                                  : "neutral";
-                        const taskStr = (s.task ?? s.derivedTitle ?? "").trim();
-                        const outcomeErr = s.outcome?.error?.trim();
-                        const preview =
-                          (s.lastMessagePreview ?? "").trim() ||
-                          (status === "blocked"
-                            ? `Failed: ${outcomeErr || taskStr || "subagent task"}`
-                            : taskStr);
-                        const hasPreview = Boolean(preview);
-                        const metaParts: string[] = [];
-                        const laneLabel =
-                          s.source === "background-exec"
-                            ? "background agent"
-                            : s.spawnMode === "run"
-                              ? "one-shot run"
-                              : s.spawnMode === "session"
-                                ? "thread session"
-                                : "subagent";
-                        metaParts.push(laneLabel);
-                        if (typeof s.runtimeMs === "number" && s.runtimeMs > 0) {
-                          const runtimeLabel = formatDurationCompact(s.runtimeMs, { spaced: true });
-                          if (runtimeLabel) {
-                            metaParts.push(runtimeLabel);
-                          }
-                        }
-                        const age = formatRelativeTimestamp(updatedAt, { fallback: "" });
-                        if (age) {
-                          metaParts.push(age);
-                        }
-                        const title = isOpenable
-                          ? "Open subagent session"
-                          : "Background coding agent";
-                        return html`
-                          <button
-                            class="agent-subagent agent-subagent--${dotStatus} ${isOpenable ? "" : "agent-subagent--static"}"
-                            type="button"
-                            ?disabled=${!isOpenable}
-                            @click=${() => {
-                              if (!isOpenable) {
-                                return;
-                              }
-                              props.onSessionKeyChange(s.key);
-                            }}
-                            title=${title}
-                          >
-                            <div class="agent-subagent__main">
-                              <div class="agent-subagent__title">
-                                <span
-                                  class="agent-subagent__dot agent-subagent__dot--${dotStatus}"
-                                  aria-hidden="true"
-                                ></span>
-                                <span class="agent-subagent__titleText">${label}</span>
-                              </div>
-                              <div class="agent-subagent__sub">
-                                <div
-                                  class="agent-subagent__preview ${hasPreview ? "" : "agent-subagent__preview--empty"}"
-                                >
-                                  ${hasPreview ? preview : "No messages yet"}
-                                </div>
-                              </div>
-                            </div>
-                            <div class="agent-subagent__meta">
-                              <div class="agent-subagent__time mono">${formatAge(updatedAt)}</div>
-                              ${
-                                s.model || s.modelProvider || s.routing || s.modelApplied != null
-                                  ? html`<div class="agent-subagent__runtime mono">${formatSubagentRuntime(s)}</div>`
-                                  : nothing
-                              }
-                            </div>
-                          </button>
-                        `;
-                      })}
-                    </div>
-                  `
-        }
-      </div>
       </div>
     </section>
   `;
@@ -1440,13 +1453,24 @@ function renderTerminalCard(props: ChatProps) {
           ${props.error ? html`<div class="agent-terminal__run-status" role="alert">Run failed: ${props.error}</div>` : nothing}
         </div>
         <div class="agent-terminal__actions">
+          ${
+            canAbort
+              ? html`<button
+                  class="btn btn--sm agent-terminal__stop"
+                  type="button"
+                  @click=${props.onAbort}
+                >
+                  Stop
+                </button>`
+              : nothing
+          }
           <button
             class="btn btn--sm"
             type="button"
-            ?disabled=${!props.connected || (!canAbort && props.sending)}
-            @click=${canAbort ? props.onAbort : props.onNewChat}
+            ?disabled=${!props.connected || props.sending}
+            @click=${props.onNewChat}
           >
-            ${canAbort ? "Stop" : "New chat"}
+            New chat
           </button>
           <button
             class="btn btn--sm"
