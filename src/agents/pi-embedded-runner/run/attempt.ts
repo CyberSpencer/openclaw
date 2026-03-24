@@ -10,7 +10,9 @@ import {
 import { resolveHeartbeatPrompt } from "../../../auto-reply/heartbeat.js";
 import { resolveChannelCapabilities } from "../../../config/channel-capabilities.js";
 import type { OpenClawConfig } from "../../../config/config.js";
+import { isDiagnosticsEnabled } from "../../../infra/diagnostic-events.js";
 import { getMachineDisplayName } from "../../../infra/machine-name.js";
+import { logModelRequest, logModelResult, logSkillExecution } from "../../../logging/diagnostic.js";
 import { MAX_IMAGE_BYTES } from "../../../media/constants.js";
 import { getGlobalHookRunner } from "../../../plugins/hook-runner-global.js";
 import type {
@@ -530,6 +532,21 @@ export async function runEmbeddedAttempt(
       config: params.config,
       workspaceDir: effectiveWorkspace,
     });
+    if (isDiagnosticsEnabled(params.config)) {
+      const resolvedSkills =
+        params.skillsSnapshot?.resolvedSkills ?? skillEntries?.map((entry) => entry.skill) ?? [];
+      logSkillExecution({
+        sessionId: params.sessionId,
+        sessionKey: params.sessionKey,
+        runId: params.runId,
+        channel: params.messageChannel,
+        source: params.skillsSnapshot ? "snapshot" : "workspace",
+        phase: "prepare",
+        status: "ok",
+        skillCount: resolvedSkills.length,
+        skillNames: resolvedSkills.slice(0, 5).map((skill) => skill.name),
+      });
+    }
 
     const sessionLabel = params.sessionKey ?? params.sessionId;
     const { bootstrapFiles: hookAdjustedBootstrapFiles, contextFiles } =
@@ -1046,6 +1063,34 @@ export async function runEmbeddedAttempt(
         );
       }
 
+      const pendingModelRequests: Array<{ requestIndex: number; startedAt: number }> = [];
+      if (isDiagnosticsEnabled(params.config)) {
+        const inner = activeSession.agent.streamFn;
+        let modelRequestIndex = 0;
+        activeSession.agent.streamFn = (model, context, options) => {
+          modelRequestIndex += 1;
+          const startedAt = Date.now();
+          pendingModelRequests.push({ requestIndex: modelRequestIndex, startedAt });
+          const contextMessages = (context as unknown as { messages?: unknown })?.messages;
+          const historyMessages = Array.isArray(contextMessages)
+            ? contextMessages.length
+            : undefined;
+          const optionImages = (options as { images?: unknown } | undefined)?.images;
+          logModelRequest({
+            sessionId: params.sessionId,
+            sessionKey: params.sessionKey,
+            runId: params.runId,
+            channel: params.messageChannel,
+            provider: params.provider,
+            model: params.modelId,
+            requestIndex: modelRequestIndex,
+            historyMessages,
+            imageCount: Array.isArray(optionImages) ? optionImages.length : undefined,
+          });
+          return inner(model, context, options);
+        };
+      }
+
       try {
         const prior = await sanitizeSessionHistory({
           messages: activeSession.messages,
@@ -1161,7 +1206,12 @@ export async function runEmbeddedAttempt(
         onAgentEvent: params.onAgentEvent,
         enforceFinalTag: params.enforceFinalTag,
         config: params.config,
+        sessionId: params.sessionId,
         sessionKey: params.sessionKey ?? params.sessionId,
+        modelProvider: params.provider,
+        modelId: params.modelId,
+        messageChannel: params.messageChannel,
+        claimPendingModelRequest: () => pendingModelRequests.shift(),
       });
 
       const {
@@ -1398,6 +1448,22 @@ export async function runEmbeddedAttempt(
         } catch (err) {
           promptError = err;
           promptErrorSource = "prompt";
+          if (isDiagnosticsEnabled(params.config)) {
+            const pendingRequest = pendingModelRequests.shift();
+            const message = err instanceof Error ? err.message : String(err);
+            logModelResult({
+              sessionId: params.sessionId,
+              sessionKey: params.sessionKey,
+              runId: params.runId,
+              channel: params.messageChannel,
+              provider: params.provider,
+              model: params.modelId,
+              requestIndex: pendingRequest?.requestIndex,
+              status: "error",
+              durationMs: pendingRequest ? Date.now() - pendingRequest.startedAt : undefined,
+              error: message,
+            });
+          }
         } finally {
           log.debug(
             `embedded run prompt end: runId=${params.runId} sessionId=${params.sessionId} durationMs=${Date.now() - promptStartedAt}`,

@@ -80,6 +80,7 @@ cat ~/.openclaw/openclaw.json
 - Gateway auth warnings when no `gateway.auth.token` is set (local mode; offers token generation).
 - systemd linger check on Linux.
 - Source install checks (pnpm workspace mismatch, missing UI assets, missing tsx binary).
+- Observability freshness warning when the expected daily event sink is missing or stale.
 - Writes updated config + wizard metadata.
 
 ## Detailed behavior and rationale
@@ -184,6 +185,21 @@ Doctor checks:
   it on the remote host (the state lives there).
 - **Config file permissions**: warns if `~/.openclaw/openclaw.json` is
   group/world readable and offers to tighten to `600`.
+
+### 4b) Observability freshness
+
+Doctor compares the main gateway log against the expected daily observability
+sink at `~/.openclaw/logs/events/YYYY-MM-DD.ndjson`.
+
+It warns when:
+
+- the gateway log is active but the daily event sink file is missing
+- the event sink exists but has gone stale
+- the gateway log is advancing while the event sink lags behind beyond the
+  staleness window
+
+This is intentionally a warning, not a hard failure. The goal is to catch
+silent observability drift before operators depend on empty daily rollups.
 
 ### 5) Model auth health (OAuth expiry)
 

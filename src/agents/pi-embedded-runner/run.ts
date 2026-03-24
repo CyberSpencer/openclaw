@@ -1,7 +1,9 @@
 import { randomBytes } from "node:crypto";
 import fs from "node:fs/promises";
 import type { ThinkLevel } from "../../auto-reply/thinking.js";
+import { isDiagnosticsEnabled } from "../../infra/diagnostic-events.js";
 import { generateSecureToken } from "../../infra/secure-random.js";
+import { logModelResolve } from "../../logging/diagnostic.js";
 import { getGlobalHookRunner } from "../../plugins/hook-runner-global.js";
 import type { PluginHookBeforeAgentStartResult } from "../../plugins/types.js";
 import { enqueueCommandInLane } from "../../process/command-queue.js";
@@ -302,7 +304,7 @@ export async function runEmbeddedPiAgent(
         log.info(`[hooks] model overridden to ${modelId}`);
       }
 
-      const { model, error, authStorage, modelRegistry } = resolveModel(
+      const { model, error, authStorage, modelRegistry, resolution } = resolveModel(
         provider,
         modelId,
         agentDir,
@@ -313,6 +315,21 @@ export async function runEmbeddedPiAgent(
           reason: "model_not_found",
           provider,
           model: modelId,
+        });
+      }
+
+      if (isDiagnosticsEnabled(params.config) && resolution) {
+        logModelResolve({
+          sessionId: params.sessionId,
+          sessionKey: params.sessionKey,
+          runId: params.runId,
+          channel: params.messageChannel,
+          provider,
+          requestedModel: modelId,
+          resolvedProvider: model.provider,
+          resolvedModel: model.id,
+          resolution,
+          baseUrl: typeof model.baseUrl === "string" ? model.baseUrl : undefined,
         });
       }
 

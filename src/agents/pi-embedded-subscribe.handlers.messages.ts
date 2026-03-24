@@ -2,6 +2,8 @@ import type { AgentEvent, AgentMessage } from "@mariozechner/pi-agent-core";
 import { parseReplyDirectives } from "../auto-reply/reply/reply-directives.js";
 import { SILENT_REPLY_TOKEN } from "../auto-reply/tokens.js";
 import { emitAgentEvent } from "../infra/agent-events.js";
+import { isDiagnosticsEnabled } from "../infra/diagnostic-events.js";
+import { logModelResult } from "../logging/diagnostic.js";
 import { createInlineCodeState } from "../markdown/code-spans.js";
 import {
   isMessagingToolDuplicateNormalized,
@@ -17,6 +19,7 @@ import {
   formatReasoningMessage,
   promoteThinkingTagsToBlocks,
 } from "./pi-embedded-utils.js";
+import { normalizeUsage } from "./usage.js";
 
 const stripTrailingDirective = (text: string): string => {
   const openIndex = text.lastIndexOf("[[");
@@ -260,7 +263,30 @@ export function handleMessageEnd(
 
   const assistantMessage = msg;
   ctx.noteLastAssistant(assistantMessage);
-  ctx.recordAssistantUsage((assistantMessage as { usage?: unknown }).usage);
+  const usage = normalizeUsage((assistantMessage as { usage?: unknown }).usage);
+  ctx.recordAssistantUsage(usage);
+  if (isDiagnosticsEnabled(ctx.params.config)) {
+    const pendingRequest = ctx.params.claimPendingModelRequest?.();
+    const stopReason =
+      typeof (assistantMessage as { stopReason?: unknown }).stopReason === "string"
+        ? ((assistantMessage as { stopReason?: string }).stopReason ?? undefined)
+        : typeof (assistantMessage as { stop_reason?: unknown }).stop_reason === "string"
+          ? ((assistantMessage as { stop_reason?: string }).stop_reason ?? undefined)
+          : undefined;
+    logModelResult({
+      sessionId: ctx.params.sessionId,
+      sessionKey: ctx.params.sessionKey,
+      runId: ctx.params.runId,
+      channel: ctx.params.messageChannel,
+      provider: ctx.params.modelProvider,
+      model: ctx.params.modelId,
+      requestIndex: pendingRequest?.requestIndex,
+      status: "ok",
+      durationMs: pendingRequest ? Date.now() - pendingRequest.startedAt : undefined,
+      stopReason,
+      usage,
+    });
+  }
   promoteThinkingTagsToBlocks(assistantMessage);
 
   const rawText = extractAssistantText(assistantMessage);

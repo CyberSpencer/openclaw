@@ -32,11 +32,22 @@ export type MemoryRerankClient = {
   rerank(request: MemoryRerankRequest): Promise<MemoryRerankResponse>;
 };
 
+type MemoryRerankLogger = {
+  debug: (message: string, meta?: Record<string, unknown>) => void;
+  info: (message: string, meta?: Record<string, unknown>) => void;
+  warn: (message: string, meta?: Record<string, unknown>) => void;
+};
+
 const DEFAULT_ENDPOINT_TIMEOUT_MS = 500;
 const DEFAULT_HEALTH_TIMEOUT_MS = 1200;
 const DEFAULT_HEALTH_CACHE_TTL_MS = 10_000;
 
 const endpointHealthCache = new Map<string, { ok: boolean; checkedAt: number }>();
+const NOOP_LOGGER: MemoryRerankLogger = {
+  debug: () => undefined,
+  info: () => undefined,
+  warn: () => undefined,
+};
 
 function normalizeBaseUrl(raw: string | undefined): string | null {
   const value = raw?.trim();
@@ -69,18 +80,30 @@ async function fetchWithOptionalTimeout(
   }
 }
 
-async function checkEndpointHealth(endpoint: RerankEndpoint): Promise<boolean> {
+async function checkEndpointHealth(
+  endpoint: RerankEndpoint,
+  logger: MemoryRerankLogger,
+): Promise<boolean> {
   const url = endpoint.healthUrl?.trim() || `${endpoint.baseUrl}/health`;
   const ttlMs = endpoint.healthCacheTtlMs ?? DEFAULT_HEALTH_CACHE_TTL_MS;
   const now = Date.now();
   const cacheKey = endpointHealthCacheKey(endpoint);
   const cached = endpointHealthCache.get(cacheKey);
   if (cached && now - cached.checkedAt < ttlMs) {
+    logger.debug("memory reranker: health cache hit", {
+      event: "memory.rerank.endpoint",
+      phase: "health-cache",
+      endpoint: endpoint.baseUrl,
+      healthUrl: url,
+      outcome: cached.ok ? "healthy" : "unhealthy",
+      ttlMs,
+    });
     return cached.ok;
   }
 
   const timeoutMs = endpoint.healthTimeoutMs ?? DEFAULT_HEALTH_TIMEOUT_MS;
   let ok = false;
+  let status: number | undefined;
   try {
     const res = await fetchWithOptionalTimeout(
       url,
@@ -90,11 +113,31 @@ async function checkEndpointHealth(endpoint: RerankEndpoint): Promise<boolean> {
       },
       timeoutMs,
     );
+    status = res.status;
     ok = res.status === 200;
-  } catch {
+  } catch (err) {
     ok = false;
+    logger.debug("memory reranker: health check failed", {
+      event: "memory.rerank.endpoint",
+      phase: "health-error",
+      endpoint: endpoint.baseUrl,
+      healthUrl: url,
+      timeoutMs,
+      error: err instanceof Error ? err.message : String(err),
+      outcome: "error",
+    });
   }
   endpointHealthCache.set(cacheKey, { ok, checkedAt: now });
+  logger.debug("memory reranker: health check completed", {
+    event: "memory.rerank.endpoint",
+    phase: "health",
+    endpoint: endpoint.baseUrl,
+    healthUrl: url,
+    timeoutMs,
+    ttlMs,
+    status,
+    outcome: ok ? "healthy" : "unhealthy",
+  });
   return ok;
 }
 
@@ -128,6 +171,7 @@ function normalizeRerankResponse(payload: unknown): string[] {
 
 export function createMemoryRerankClient(
   config: ResolvedMemorySearchConfig["rerank"],
+  logger: MemoryRerankLogger = NOOP_LOGGER,
 ): MemoryRerankClient | null {
   const remote = config.remote;
   if (!remote) {
@@ -206,6 +250,16 @@ export function createMemoryRerankClient(
     return null;
   }
 
+  logger.info("memory reranker: configured", {
+    event: "memory.rerank.endpoint",
+    phase: "configured",
+    endpointCount: endpoints.length,
+    endpoints: endpoints.map((endpoint) => endpoint.baseUrl),
+    timeoutMs: config.timeoutMs,
+    failOpen: config.failOpen,
+    model: config.model,
+  });
+
   const client: MemoryRerankClient = {
     endpoints,
     activeEndpoint: endpoints[0]?.baseUrl,
@@ -221,6 +275,7 @@ export function createMemoryRerankClient(
         };
       }
 
+      const previousEndpoint = this.activeEndpoint;
       const preferred = this.activeEndpoint;
       const ordered = preferred
         ? [
@@ -231,10 +286,19 @@ export function createMemoryRerankClient(
       const firstAttemptBase = ordered[0]?.baseUrl;
       const endpointErrors: string[] = [];
 
-      for (const endpoint of ordered) {
-        const healthy = await checkEndpointHealth(endpoint);
+      for (let index = 0; index < ordered.length; index += 1) {
+        const endpoint = ordered[index];
+        const healthy = await checkEndpointHealth(endpoint, logger);
         if (!healthy) {
           endpointErrors.push(`${endpoint.baseUrl}: unhealthy`);
+          logger.debug("memory reranker: endpoint unhealthy", {
+            event: "memory.rerank.endpoint",
+            phase: "health-skip",
+            endpoint: endpoint.baseUrl,
+            attempt: index + 1,
+            endpointCount: ordered.length,
+            outcome: "unhealthy",
+          });
           continue;
         }
 
@@ -261,11 +325,33 @@ export function createMemoryRerankClient(
             if (shouldFailoverStatus(res.status)) {
               markEndpointHealth(endpoint, false);
               endpointErrors.push(detail);
+              logger.warn("memory reranker: request failed, trying next endpoint", {
+                event: "memory.rerank.request",
+                phase: "failover",
+                endpoint: endpoint.baseUrl,
+                status: res.status,
+                error: detail,
+                attempt: index + 1,
+                endpointCount: ordered.length,
+                nextEndpoint: ordered[index + 1]?.baseUrl,
+                outcome: "retrying",
+              });
               continue;
             }
             this.lastEndpointErrors = endpointErrors.concat(detail).slice(-3);
             this.lastFallbackUsed = endpoint.baseUrl !== firstAttemptBase;
             this.lastError = detail;
+            logger.warn("memory reranker: request failed", {
+              event: "memory.rerank.request",
+              phase: "error",
+              endpoint: endpoint.baseUrl,
+              status: res.status,
+              error: detail,
+              attempt: index + 1,
+              endpointCount: ordered.length,
+              failoverUsed: this.lastFallbackUsed,
+              outcome: "error",
+            });
             throw new Error(`reranker request failed: ${detail}`);
           }
 
@@ -276,6 +362,17 @@ export function createMemoryRerankClient(
           this.lastEndpointErrors = [];
           this.lastFallbackUsed = endpoint.baseUrl !== firstAttemptBase;
           this.lastError = undefined;
+          logger.info("memory reranker: endpoint selected", {
+            event: "memory.rerank.endpoint",
+            phase: this.lastFallbackUsed ? "failover" : "selected",
+            endpoint: endpoint.baseUrl,
+            previousEndpoint,
+            attempt: index + 1,
+            endpointCount: ordered.length,
+            failoverUsed: this.lastFallbackUsed,
+            resultIds: ids.length,
+            outcome: "selected",
+          });
           return {
             ids,
             endpoint: endpoint.baseUrl,
@@ -288,12 +385,29 @@ export function createMemoryRerankClient(
           markEndpointHealth(endpoint, false);
           const message = err instanceof Error ? err.message : String(err);
           endpointErrors.push(`${endpoint.baseUrl}: ${message}`);
+          logger.warn("memory reranker: request error, trying next endpoint", {
+            event: "memory.rerank.request",
+            phase: "failover",
+            endpoint: endpoint.baseUrl,
+            error: message,
+            attempt: index + 1,
+            endpointCount: ordered.length,
+            nextEndpoint: ordered[index + 1]?.baseUrl,
+            outcome: "retrying",
+          });
         }
       }
 
       this.lastEndpointErrors = endpointErrors.slice(-3);
       this.lastFallbackUsed = true;
       this.lastError = this.lastEndpointErrors.join("; ");
+      logger.warn("memory reranker: all endpoints failed", {
+        event: "memory.rerank.request",
+        phase: "error",
+        endpointCount: ordered.length,
+        errors: this.lastEndpointErrors,
+        outcome: "error",
+      });
       throw new Error(`reranker failed across all endpoints: ${this.lastError}`);
     },
   };

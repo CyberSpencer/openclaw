@@ -16,6 +16,10 @@ function cacheKey(providerId: string, endpoint: ModelProviderEndpointConfig): st
   return `${providerId}:${id}`;
 }
 
+function endpointId(endpoint: ModelProviderEndpointConfig): string {
+  return endpoint.id?.trim() || endpoint.baseUrl.trim();
+}
+
 function resolveSuccessStatuses(endpoint: ModelProviderEndpointConfig): Set<number> {
   const statuses = endpoint.health?.successStatus;
   if (Array.isArray(statuses) && statuses.length > 0) {
@@ -29,6 +33,14 @@ async function checkHealth(
   endpoint: ModelProviderEndpointConfig,
 ): Promise<boolean> {
   if (!endpoint.health) {
+    log.debug("provider endpoint has no health probe; treating as healthy", {
+      event: "provider.endpoint.health",
+      phase: "implicit-healthy",
+      providerId,
+      endpointId: endpointId(endpoint),
+      baseUrl: endpoint.baseUrl,
+      outcome: "healthy",
+    });
     return true;
   }
   const now = Date.now();
@@ -36,6 +48,16 @@ async function checkHealth(
   const key = cacheKey(providerId, endpoint);
   const cached = healthCache.get(key);
   if (cached && now - cached.checkedAt < ttl) {
+    log.debug("provider endpoint health cache hit", {
+      event: "provider.endpoint.health",
+      phase: "cache",
+      providerId,
+      endpointId: endpointId(endpoint),
+      baseUrl: endpoint.baseUrl,
+      healthUrl: endpoint.health.url?.trim() || endpoint.baseUrl.trim(),
+      outcome: cached.ok ? "healthy" : "unhealthy",
+      cacheTtlMs: ttl,
+    });
     return cached.ok;
   }
 
@@ -48,6 +70,7 @@ async function checkHealth(
   const successStatuses = resolveSuccessStatuses(endpoint);
 
   let ok = false;
+  let status: number | undefined;
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), timeoutMs);
   try {
@@ -56,14 +79,37 @@ async function checkHealth(
       body: method === "POST" ? (endpoint.health.body ?? "") : undefined,
       signal: controller.signal,
     });
+    status = res.status;
     ok = successStatuses.has(res.status);
   } catch (err) {
     ok = false;
-    log.debug(`provider endpoint health check failed for ${providerId}: ${String(err)}`);
+    log.debug(`provider endpoint health check failed for ${providerId}: ${String(err)}`, {
+      event: "provider.endpoint.health",
+      phase: "error",
+      providerId,
+      endpointId: endpointId(endpoint),
+      baseUrl: endpoint.baseUrl,
+      healthUrl: url,
+      timeoutMs,
+      error: err instanceof Error ? err.message : String(err),
+      outcome: "error",
+    });
   } finally {
     clearTimeout(timer);
   }
 
+  log.debug("provider endpoint health check completed", {
+    event: "provider.endpoint.health",
+    phase: "checked",
+    providerId,
+    endpointId: endpointId(endpoint),
+    baseUrl: endpoint.baseUrl,
+    healthUrl: url,
+    method,
+    timeoutMs,
+    status,
+    outcome: ok ? "healthy" : "unhealthy",
+  });
   healthCache.set(key, { ok, checkedAt: now });
   return ok;
 }
@@ -114,17 +160,51 @@ export async function resolveProviderEndpoint(params: {
     if (!endpoint) {
       return { provider };
     }
+    log.info("provider endpoint selected", {
+      event: "provider.endpoint.selection",
+      phase: "selected",
+      providerId,
+      strategy,
+      endpointId: endpointId(endpoint),
+      baseUrl: endpoint.baseUrl,
+      endpointCount: ordered.length,
+      failoverUsed: false,
+      outcome: "selected",
+    });
     return { provider: applyEndpoint(provider, endpoint), endpoint };
   }
 
-  for (const endpoint of ordered) {
+  for (let index = 0; index < ordered.length; index += 1) {
+    const endpoint = ordered[index];
     if (await checkHealth(providerId, endpoint)) {
+      log.info("provider endpoint selected", {
+        event: "provider.endpoint.selection",
+        phase: index > 0 ? "failover" : "selected",
+        providerId,
+        strategy,
+        endpointId: endpointId(endpoint),
+        baseUrl: endpoint.baseUrl,
+        endpointCount: ordered.length,
+        attempt: index + 1,
+        failoverUsed: index > 0,
+        outcome: "selected",
+      });
       return { provider: applyEndpoint(provider, endpoint), endpoint };
     }
   }
 
   log.warn(
     `provider endpoint health checks failed for ${providerId}, falling back to base provider`,
+    {
+      event: "provider.endpoint.selection",
+      phase: "fallback-base",
+      providerId,
+      strategy,
+      endpointCount: ordered.length,
+      endpoints: ordered.map((endpoint) => endpointId(endpoint)),
+      baseUrl: provider.baseUrl,
+      outcome: "fallback_base",
+    },
   );
   return { provider };
 }

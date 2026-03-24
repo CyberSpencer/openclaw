@@ -6,7 +6,9 @@ import { getChannelDock } from "../../channels/dock.js";
 import type { OpenClawConfig } from "../../config/config.js";
 import type { SessionEntry } from "../../config/sessions.js";
 import { logVerbose } from "../../globals.js";
+import { isDiagnosticsEnabled } from "../../infra/diagnostic-events.js";
 import { generateSecureToken } from "../../infra/secure-random.js";
+import { logSkillExecution } from "../../logging/diagnostic.js";
 import { resolveGatewayMessageChannel } from "../../utils/message-channel.js";
 import {
   listReservedChatSlashCommandNames,
@@ -218,6 +220,20 @@ export async function handleInlineActions(params: {
       }
 
       const toolCallId = `cmd_${generateSecureToken(8)}`;
+      const startedAt = Date.now();
+      if (isDiagnosticsEnabled(cfg)) {
+        logSkillExecution({
+          sessionId: sessionCtx.SessionId,
+          sessionKey,
+          channel,
+          source: "slash-command",
+          phase: "start",
+          skillName: skillInvocation.command.skillName,
+          commandName: skillInvocation.command.name,
+          toolName: dispatch.toolName,
+          argChars: rawArgs.length,
+        });
+      }
       try {
         const result = await tool.execute(toolCallId, {
           command: rawArgs,
@@ -225,11 +241,42 @@ export async function handleInlineActions(params: {
           skillName: skillInvocation.command.skillName,
           // oxlint-disable-next-line typescript/no-explicit-any
         } as any);
+        if (isDiagnosticsEnabled(cfg)) {
+          logSkillExecution({
+            sessionId: sessionCtx.SessionId,
+            sessionKey,
+            channel,
+            source: "slash-command",
+            phase: "result",
+            status: "ok",
+            skillName: skillInvocation.command.skillName,
+            commandName: skillInvocation.command.name,
+            toolName: dispatch.toolName,
+            argChars: rawArgs.length,
+            durationMs: Date.now() - startedAt,
+          });
+        }
         const text = extractTextFromToolResult(result) ?? "✅ Done.";
         typing.cleanup();
         return { kind: "reply", reply: { text } };
       } catch (err) {
         const message = err instanceof Error ? err.message : String(err);
+        if (isDiagnosticsEnabled(cfg)) {
+          logSkillExecution({
+            sessionId: sessionCtx.SessionId,
+            sessionKey,
+            channel,
+            source: "slash-command",
+            phase: "result",
+            status: "error",
+            skillName: skillInvocation.command.skillName,
+            commandName: skillInvocation.command.name,
+            toolName: dispatch.toolName,
+            argChars: rawArgs.length,
+            durationMs: Date.now() - startedAt,
+            error: message,
+          });
+        }
         typing.cleanup();
         return { kind: "reply", reply: { text: `❌ ${message}` } };
       }

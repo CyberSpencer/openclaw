@@ -268,8 +268,8 @@ export class MemoryIndexManager {
       return null;
     }
     const resolvedSettings = await resolveStoreSettings(settings, {
-      warn: (message) => log.warn(message),
-      debug: (message) => log.debug(message),
+      warn: (message, meta) => log.warn(message, meta),
+      debug: (message, meta) => log.debug(message, meta),
     });
     const workspaceDir = resolveAgentWorkspaceDir(cfg, agentId);
     const key = `${agentId}:${workspaceDir}:${JSON.stringify(resolvedSettings)}`;
@@ -298,6 +298,23 @@ export class MemoryIndexManager {
         });
         return null;
       }
+      log.info("memory embeddings: provider resolved", {
+        event: "memory.embeddings.provider",
+        phase: "resolved",
+        agentId,
+        requestedProvider: providerResult.requestedProvider,
+        provider: providerResult.provider.id,
+        model: providerResult.provider.model,
+        fallbackFrom: providerResult.fallbackFrom,
+        fallbackReason: providerResult.fallbackReason,
+        remoteEndpoint:
+          providerResult.openAi?.baseUrl ??
+          providerResult.gemini?.baseUrl ??
+          providerResult.voyage?.baseUrl ??
+          providerResult.mistral?.baseUrl,
+        storeDriver:
+          resolvedSettings.store.driver === "auto" ? "sqlite" : resolvedSettings.store.driver,
+      });
       const manager = new MemoryIndexManager({
         cacheKey: key,
         cfg,
@@ -371,11 +388,29 @@ export class MemoryIndexManager {
     this.dirty = this.sources.has("memory");
     this.batch = this.resolveBatchConfig();
     this.reranker = this.settings.rerank.enabled
-      ? createMemoryRerankClient(this.settings.rerank)
+      ? createMemoryRerankClient(this.settings.rerank, log)
       : null;
     if (this.settings.rerank.enabled && !this.reranker) {
       this.rerankLastError = "reranker enabled but no remote endpoint is configured";
     }
+    if (this.settings.rerank.enabled) {
+      log.info("memory reranker: runtime configured", {
+        event: "memory.rerank.runtime",
+        phase: "configured",
+        enabled: Boolean(this.reranker),
+        endpointCount: this.reranker?.endpoints.length ?? 0,
+        activeEndpoint: this.reranker?.activeEndpoint,
+        timeoutMs: this.settings.rerank.timeoutMs,
+        failOpen: this.settings.rerank.failOpen,
+        model: this.settings.rerank.model,
+      });
+    }
+  }
+
+  private activeEmbeddingEndpoint(): string | undefined {
+    return (
+      this.openAi?.baseUrl ?? this.gemini?.baseUrl ?? this.voyage?.baseUrl ?? this.mistral?.baseUrl
+    );
   }
 
   async warmSession(sessionKey?: string): Promise<void> {
@@ -420,6 +455,24 @@ export class MemoryIndexManager {
       200,
       Math.max(1, Math.floor(maxResults * hybrid.candidateMultiplier)),
     );
+    const searchStartedAt = Date.now();
+    log.debug("memory search: start", {
+      event: "memory.search",
+      phase: "start",
+      queryChars: cleaned.length,
+      maxResults,
+      minScore,
+      candidates,
+      hybridEnabled: hybrid.enabled,
+      rerankEnabled: this.settings.rerank.enabled,
+      storeDriver: this.storeDriver,
+      provider: this.provider.id,
+      model: this.provider.model,
+      remoteEndpoint: this.activeEmbeddingEndpoint(),
+      dirty: this.dirty,
+      sessionsDirty: this.sessionsDirty,
+      sources: Array.from(this.sources),
+    });
 
     const keywordResults =
       hybrid.enabled || this.settings.degraded.mode === "keyword-only"
@@ -461,7 +514,22 @@ export class MemoryIndexManager {
               this.degradedActiveCode = "embedding_unavailable_keyword_only";
             }
             this.degradedActiveReason = `keyword-only: embedding unavailable (${retryMessage})`;
-            return this.keywordOnlyResults(keywordResults, minScore, maxResults);
+            const degradedResults = this.keywordOnlyResults(keywordResults, minScore, maxResults);
+            log.debug("memory search: complete", {
+              event: "memory.search",
+              phase: "complete",
+              durationMs: Date.now() - searchStartedAt,
+              resultCount: degradedResults.length,
+              keywordResults: keywordResults.length,
+              vectorResults: 0,
+              rerankFallbackUsed: this.rerankFallbackUsed,
+              degradedActiveReason: this.degradedActiveReason,
+              degradedReasonCode: this.degradedActiveCode,
+              storeDriver: this.storeDriver,
+              provider: this.provider.id,
+              remoteEndpoint: this.activeEmbeddingEndpoint(),
+            });
+            return degradedResults;
           }
           throw retryErr;
         }
@@ -470,7 +538,22 @@ export class MemoryIndexManager {
           this.degradedActiveCode = "embedding_unavailable_keyword_only";
         }
         this.degradedActiveReason = `keyword-only: embedding unavailable (${message})`;
-        return this.keywordOnlyResults(keywordResults, minScore, maxResults);
+        const degradedResults = this.keywordOnlyResults(keywordResults, minScore, maxResults);
+        log.debug("memory search: complete", {
+          event: "memory.search",
+          phase: "complete",
+          durationMs: Date.now() - searchStartedAt,
+          resultCount: degradedResults.length,
+          keywordResults: keywordResults.length,
+          vectorResults: 0,
+          rerankFallbackUsed: this.rerankFallbackUsed,
+          degradedActiveReason: this.degradedActiveReason,
+          degradedReasonCode: this.degradedActiveCode,
+          storeDriver: this.storeDriver,
+          provider: this.provider.id,
+          remoteEndpoint: this.activeEmbeddingEndpoint(),
+        });
+        return degradedResults;
       } else {
         throw err;
       }
@@ -489,7 +572,7 @@ export class MemoryIndexManager {
         })
       : vectorResults;
     const rerankedCandidates = await this.maybeRerankCandidates(cleaned, baselineCandidates);
-    return rerankedCandidates
+    const results = rerankedCandidates
       .map((entry) => ({
         path: entry.path,
         startLine: entry.startLine,
@@ -501,6 +584,23 @@ export class MemoryIndexManager {
       }))
       .filter((entry) => entry.score >= minScore)
       .slice(0, maxResults);
+    log.debug("memory search: complete", {
+      event: "memory.search",
+      phase: "complete",
+      durationMs: Date.now() - searchStartedAt,
+      resultCount: results.length,
+      keywordResults: keywordResults.length,
+      vectorResults: vectorResults.length,
+      baselineCandidates: baselineCandidates.length,
+      rerankedCandidates: rerankedCandidates.length,
+      rerankFallbackUsed: this.rerankFallbackUsed,
+      degradedActiveReason: this.degradedActiveReason,
+      degradedReasonCode: this.degradedActiveCode,
+      storeDriver: this.storeDriver,
+      provider: this.provider.id,
+      remoteEndpoint: this.activeEmbeddingEndpoint(),
+    });
+    return results;
   }
 
   private keywordOnlyResults(
@@ -524,7 +624,15 @@ export class MemoryIndexManager {
         this.vector.available = false;
         this.vector.loadError = message;
         this.warnSqliteFallback(message);
-        log.warn(`qdrant search failed, falling back to local embeddings: ${message}`);
+        log.warn(`qdrant search failed, falling back to local embeddings: ${message}`, {
+          event: "memory.qdrant.request",
+          phase: "fallback-sqlite",
+          operation: "search",
+          collection: this.qdrant?.collection,
+          endpoint: this.lastSuccessfulQdrantEndpoint?.url ?? this.qdrant?.url,
+          error: message,
+          outcome: "fallback_sqlite",
+        });
         return (await searchVector({
           db: this.db,
           vectorTable: VECTOR_TABLE,
@@ -972,8 +1080,14 @@ export class MemoryIndexManager {
           lastEndpointErrors?: string[];
         })
       | undefined;
-    if (openAiStatus?.activeEndpoint) {
-      custom.remoteEndpoint = openAiStatus.activeEndpoint;
+    const remoteEndpoint =
+      openAiStatus?.activeEndpoint ??
+      this.openAi?.baseUrl ??
+      this.gemini?.baseUrl ??
+      this.voyage?.baseUrl ??
+      this.mistral?.baseUrl;
+    if (remoteEndpoint) {
+      custom.remoteEndpoint = remoteEndpoint;
     }
     if (openAiStatus?.lastEndpointErrors && openAiStatus.lastEndpointErrors.length > 0) {
       custom.remoteEndpointErrors = openAiStatus.lastEndpointErrors;
@@ -1233,6 +1347,7 @@ export class MemoryIndexManager {
     },
   ): Promise<T | null> {
     const cfg = this.getQdrantConfig();
+    const method = options?.method ?? "GET";
     const hasExplicitEndpoints = (cfg.endpoints ?? []).length > 0;
     const endpoints: QdrantEndpointConfig[] = hasExplicitEndpoints
       ? sortQdrantEndpoints((cfg.endpoints ?? []).filter((entry) => entry.url?.trim()))
@@ -1269,15 +1384,27 @@ export class MemoryIndexManager {
     })();
 
     const errors: string[] = [];
-    for (const endpoint of orderedEndpoints) {
+    const previousEndpoint = this.lastSuccessfulQdrantEndpoint?.url;
+    for (const [index, endpoint] of orderedEndpoints.entries()) {
       // Prefer Spark whenever it is healthy (priority order + health cache TTL).
       if (hasExplicitEndpoints) {
         const ok = await checkQdrantEndpoint(endpoint, cfg.apiKey, {
-          warn: (message) => log.warn(message),
-          debug: (message) => log.debug(message),
+          warn: (message, meta) => log.warn(message, meta),
+          debug: (message, meta) => log.debug(message, meta),
         });
         if (!ok) {
           errors.push(`${endpoint.url}: unhealthy`);
+          log.debug("memory qdrant: endpoint unhealthy", {
+            event: "memory.qdrant.endpoint",
+            phase: "health-skip",
+            operation: pathname,
+            method,
+            endpoint: endpoint.url,
+            collection: cfg.collection,
+            attempt: index + 1,
+            endpointCount: orderedEndpoints.length,
+            outcome: "unhealthy",
+          });
           continue;
         }
       }
@@ -1287,7 +1414,7 @@ export class MemoryIndexManager {
       const timeout = setTimeout(() => controller.abort(), timeoutMs);
       try {
         const res = await fetch(this.qdrantUrlFor(endpoint.url, pathname), {
-          method: options?.method ?? "GET",
+          method,
           headers: this.qdrantHeadersFor(endpoint.apiKey ?? cfg.apiKey, endpoint.headers),
           body: options?.body ? JSON.stringify(options.body) : undefined,
           signal: controller.signal,
@@ -1300,6 +1427,19 @@ export class MemoryIndexManager {
             apiKey: endpoint.apiKey ?? cfg.apiKey,
             timeoutMs: endpoint.timeoutMs ?? cfg.timeoutMs,
           };
+          log.info("memory qdrant: endpoint selected", {
+            event: "memory.qdrant.endpoint",
+            phase: index > 0 ? "failover" : "selected",
+            operation: pathname,
+            method,
+            endpoint: endpoint.url,
+            previousEndpoint,
+            collection: cfg.collection,
+            attempt: index + 1,
+            endpointCount: orderedEndpoints.length,
+            failoverUsed: index > 0,
+            outcome: "not_found",
+          });
           return null;
         }
 
@@ -1308,6 +1448,20 @@ export class MemoryIndexManager {
           const detail = `Qdrant ${res.status}: ${text.slice(0, 200)}`;
           if (this.shouldFailoverQdrantStatus(res.status)) {
             errors.push(`${endpoint.url}: ${detail}`);
+            log.warn("memory qdrant: request failed, trying next endpoint", {
+              event: "memory.qdrant.request",
+              phase: "failover",
+              operation: pathname,
+              method,
+              endpoint: endpoint.url,
+              collection: cfg.collection,
+              attempt: index + 1,
+              endpointCount: orderedEndpoints.length,
+              status: res.status,
+              error: detail,
+              nextEndpoint: orderedEndpoints[index + 1]?.url,
+              outcome: "retrying",
+            });
             continue;
           }
           const nonFailoverError = Object.assign(new Error(detail), {
@@ -1321,6 +1475,21 @@ export class MemoryIndexManager {
           apiKey: endpoint.apiKey ?? cfg.apiKey,
           timeoutMs: endpoint.timeoutMs ?? cfg.timeoutMs,
         };
+        if (!previousEndpoint || previousEndpoint !== endpoint.url || index > 0) {
+          log.info("memory qdrant: endpoint selected", {
+            event: "memory.qdrant.endpoint",
+            phase: index > 0 ? "failover" : "selected",
+            operation: pathname,
+            method,
+            endpoint: endpoint.url,
+            previousEndpoint,
+            collection: cfg.collection,
+            attempt: index + 1,
+            endpointCount: orderedEndpoints.length,
+            failoverUsed: index > 0,
+            outcome: "selected",
+          });
+        }
 
         const data = (await res.json()) as T;
         return data;
@@ -1348,12 +1517,36 @@ export class MemoryIndexManager {
         const message =
           err instanceof Error ? err.message : typeof err === "string" ? err : "unknown";
         errors.push(`${endpoint.url}: ${message}`);
+        log.warn("memory qdrant: request error, trying next endpoint", {
+          event: "memory.qdrant.request",
+          phase: "failover",
+          operation: pathname,
+          method,
+          endpoint: endpoint.url,
+          collection: cfg.collection,
+          attempt: index + 1,
+          endpointCount: orderedEndpoints.length,
+          error: message,
+          nextEndpoint: orderedEndpoints[index + 1]?.url,
+          outcome: "retrying",
+        });
       } finally {
         clearTimeout(timeout);
       }
     }
 
     const summary = errors.slice(-3).join("; ");
+    log.warn("memory qdrant: all endpoints failed", {
+      event: "memory.qdrant.request",
+      phase: "error",
+      operation: pathname,
+      method,
+      collection: cfg.collection,
+      endpointCount: orderedEndpoints.length,
+      previousEndpoint,
+      errors: errors.slice(-3),
+      outcome: "error",
+    });
     throw new Error(`Qdrant request failed for all endpoints: ${summary}`);
   }
 
@@ -2035,7 +2228,13 @@ export class MemoryIndexManager {
       files.map(async (file) => buildFileEntry(file, this.workspaceDir)),
     );
     const fileEntries = fileEntriesRaw.filter((entry): entry is MemoryFileEntry => entry !== null);
+    let indexed = 0;
+    let skipped = 0;
+    let staleDeleted = 0;
     log.debug("memory sync: indexing memory files", {
+      event: "memory.sync.files",
+      phase: "plan",
+      source: "memory",
       files: fileEntries.length,
       needsFullReindex: params.needsFullReindex,
       batch: this.batch.enabled,
@@ -2056,6 +2255,7 @@ export class MemoryIndexManager {
         .prepare(`SELECT hash FROM files WHERE path = ? AND source = ?`)
         .get(entry.path, "memory") as { hash: string } | undefined;
       if (!params.needsFullReindex && record?.hash === entry.hash) {
+        skipped += 1;
         if (params.progress) {
           params.progress.completed += 1;
           params.progress.report({
@@ -2066,6 +2266,7 @@ export class MemoryIndexManager {
         return;
       }
       await this.indexFile(entry, { source: "memory" });
+      indexed += 1;
       if (params.progress) {
         params.progress.completed += 1;
         params.progress.report({
@@ -2100,6 +2301,7 @@ export class MemoryIndexManager {
           .run(stale.path, "memory");
       } catch {}
       this.db.prepare(`DELETE FROM chunks WHERE path = ? AND source = ?`).run(stale.path, "memory");
+      staleDeleted += 1;
       if (this.fts.enabled && this.fts.available) {
         try {
           this.db
@@ -2108,6 +2310,16 @@ export class MemoryIndexManager {
         } catch {}
       }
     }
+    log.debug("memory sync: indexed memory files", {
+      event: "memory.sync.files",
+      phase: "complete",
+      source: "memory",
+      files: fileEntries.length,
+      indexed,
+      skipped,
+      staleDeleted,
+      needsFullReindex: params.needsFullReindex,
+    });
   }
 
   private async syncSessionFiles(params: {
@@ -2117,7 +2329,14 @@ export class MemoryIndexManager {
     const files = await this.listSessionFiles();
     const activePaths = new Set(files.map((file) => this.sessionPathForFile(file)));
     const indexAll = params.needsFullReindex || this.sessionsDirtyFiles.size === 0;
+    let indexed = 0;
+    let skipped = 0;
+    let missing = 0;
+    let staleDeleted = 0;
     log.debug("memory sync: indexing session files", {
+      event: "memory.sync.files",
+      phase: "plan",
+      source: "sessions",
       files: files.length,
       indexAll,
       dirtyFiles: this.sessionsDirtyFiles.size,
@@ -2135,6 +2354,7 @@ export class MemoryIndexManager {
 
     const tasks = files.map((absPath) => async () => {
       if (!indexAll && !this.sessionsDirtyFiles.has(absPath)) {
+        skipped += 1;
         if (params.progress) {
           params.progress.completed += 1;
           params.progress.report({
@@ -2146,6 +2366,7 @@ export class MemoryIndexManager {
       }
       const entry = await this.buildSessionEntry(absPath);
       if (!entry) {
+        missing += 1;
         if (params.progress) {
           params.progress.completed += 1;
           params.progress.report({
@@ -2159,6 +2380,7 @@ export class MemoryIndexManager {
         .prepare(`SELECT hash FROM files WHERE path = ? AND source = ?`)
         .get(entry.path, "sessions") as { hash: string } | undefined;
       if (!params.needsFullReindex && record?.hash === entry.hash) {
+        skipped += 1;
         if (params.progress) {
           params.progress.completed += 1;
           params.progress.report({
@@ -2170,6 +2392,7 @@ export class MemoryIndexManager {
         return;
       }
       await this.indexFile(entry, { source: "sessions", content: entry.content });
+      indexed += 1;
       this.resetSessionDelta(absPath, entry.size);
       if (params.progress) {
         params.progress.completed += 1;
@@ -2209,6 +2432,7 @@ export class MemoryIndexManager {
       this.db
         .prepare(`DELETE FROM chunks WHERE path = ? AND source = ?`)
         .run(stale.path, "sessions");
+      staleDeleted += 1;
       if (this.fts.enabled && this.fts.available) {
         try {
           this.db
@@ -2217,6 +2441,18 @@ export class MemoryIndexManager {
         } catch {}
       }
     }
+    log.debug("memory sync: indexed session files", {
+      event: "memory.sync.files",
+      phase: "complete",
+      source: "sessions",
+      files: files.length,
+      indexed,
+      skipped,
+      missing,
+      staleDeleted,
+      indexAll,
+      dirtyFiles: this.sessionsDirtyFiles.size,
+    });
   }
 
   private createSyncProgress(
@@ -2249,6 +2485,19 @@ export class MemoryIndexManager {
     force?: boolean;
     progress?: (update: MemorySyncProgressUpdate) => void;
   }) {
+    const syncStartedAt = Date.now();
+    log.debug("memory sync: start", {
+      event: "memory.sync",
+      phase: "start",
+      syncReason: params?.reason ?? "manual",
+      force: Boolean(params?.force),
+      dirty: this.dirty,
+      sessionsDirty: this.sessionsDirty,
+      storeDriver: this.storeDriver,
+      provider: this.provider.id,
+      model: this.provider.model,
+      sources: Array.from(this.sources),
+    });
     const progress = params?.progress ? this.createSyncProgress(params.progress) : undefined;
     if (progress) {
       progress.report({
@@ -2282,6 +2531,17 @@ export class MemoryIndexManager {
       const shouldSyncMemory =
         this.sources.has("memory") && (params?.force || needsFullReindex || this.dirty);
       const shouldSyncSessions = this.shouldSyncSessions(params, needsFullReindex);
+      log.debug("memory sync: plan", {
+        event: "memory.sync",
+        phase: needsFullReindex ? "reindex" : "plan",
+        syncReason: params?.reason ?? "manual",
+        force: Boolean(params?.force),
+        needsFullReindex,
+        shouldSyncMemory,
+        shouldSyncSessions,
+        dirty: this.dirty,
+        sessionsDirty: this.sessionsDirty,
+      });
 
       if (shouldSyncMemory) {
         await this.syncMemoryFiles({ needsFullReindex, progress: progress ?? undefined });
@@ -2297,8 +2557,26 @@ export class MemoryIndexManager {
       } else {
         this.sessionsDirty = false;
       }
+      log.debug("memory sync: complete", {
+        event: "memory.sync",
+        phase: "complete",
+        syncReason: params?.reason ?? "manual",
+        force: Boolean(params?.force),
+        needsFullReindex,
+        durationMs: Date.now() - syncStartedAt,
+        dirty: this.dirty,
+        sessionsDirty: this.sessionsDirty,
+      });
     } catch (err) {
       const reason = err instanceof Error ? err.message : String(err);
+      log.warn("memory sync: failed", {
+        event: "memory.sync",
+        phase: "error",
+        syncReason: params?.reason ?? "manual",
+        force: Boolean(params?.force),
+        durationMs: Date.now() - syncStartedAt,
+        error: reason,
+      });
       const activated =
         this.shouldFallbackOnError(reason) && (await this.activateFallbackProvider(reason));
       if (activated) {
@@ -2592,6 +2870,16 @@ export class MemoryIndexManager {
     force?: boolean;
     progress?: MemorySyncProgressState;
   }): Promise<void> {
+    const reindexStartedAt = Date.now();
+    log.info("memory sync: reindex start", {
+      event: "memory.sync.reindex",
+      phase: "start",
+      syncReason: params.reason ?? "manual",
+      force: Boolean(params.force),
+      storeDriver: this.storeDriver,
+      provider: this.provider.id,
+      model: this.provider.model,
+    });
     const dbPath = resolveUserPath(this.settings.store.path);
     const tempDbPath = `${dbPath}.tmp-${randomUUID()}`;
     const tempDb = this.openDatabaseAtPath(tempDbPath);
@@ -2681,12 +2969,33 @@ export class MemoryIndexManager {
       this.vector.loadError = undefined;
       this.ensureSchema();
       this.vector.dims = nextMeta.vectorDims;
+      log.info("memory index: flush complete", {
+        event: "memory.index.flush",
+        phase: "complete",
+        syncReason: params.reason ?? "manual",
+        force: Boolean(params.force),
+        durationMs: Date.now() - reindexStartedAt,
+        dbPath,
+        vectorDims: nextMeta.vectorDims,
+        provider: nextMeta.provider,
+        model: nextMeta.model,
+        chunkTokens: nextMeta.chunkTokens,
+        chunkOverlap: nextMeta.chunkOverlap,
+      });
     } catch (err) {
       try {
         this.db.close();
       } catch {}
       await this.removeIndexFiles(tempDbPath);
       restoreOriginalState();
+      log.warn("memory sync: reindex failed", {
+        event: "memory.sync.reindex",
+        phase: "error",
+        syncReason: params.reason ?? "manual",
+        force: Boolean(params.force),
+        durationMs: Date.now() - reindexStartedAt,
+        error: err instanceof Error ? err.message : String(err),
+      });
       throw err;
     }
   }
@@ -3310,17 +3619,43 @@ export class MemoryIndexManager {
       try {
         const timeoutMs = this.resolveEmbeddingTimeout("batch");
         log.debug("memory embeddings: batch start", {
+          event: "memory.embeddings.batch",
+          phase: "start",
           provider: this.provider.id,
+          model: this.provider.model,
           items: texts.length,
           timeoutMs,
+          remoteEndpoint: this.activeEmbeddingEndpoint(),
         });
-        return await this.withTimeout(
+        const vectors = await this.withTimeout(
           this.provider.embedBatch(texts),
           timeoutMs,
           `memory embeddings batch timed out after ${Math.round(timeoutMs / 1000)}s`,
         );
+        log.debug("memory embeddings: batch complete", {
+          event: "memory.embeddings.batch",
+          phase: "complete",
+          provider: this.provider.id,
+          model: this.provider.model,
+          items: texts.length,
+          timeoutMs,
+          vectorCount: vectors.length,
+          remoteEndpoint: this.activeEmbeddingEndpoint(),
+        });
+        return vectors;
       } catch (err) {
         const message = err instanceof Error ? err.message : String(err);
+        log.warn("memory embeddings: batch failed", {
+          event: "memory.embeddings.batch",
+          phase: "error",
+          provider: this.provider.id,
+          model: this.provider.model,
+          items: texts.length,
+          timeoutMs: this.resolveEmbeddingTimeout("batch"),
+          remoteEndpoint: this.activeEmbeddingEndpoint(),
+          error: message,
+          attempt: attempt + 1,
+        });
         if (!this.isRetryableEmbeddingError(message) || attempt >= EMBEDDING_RETRY_MAX_ATTEMPTS) {
           throw err;
         }
@@ -3352,12 +3687,45 @@ export class MemoryIndexManager {
 
   private async embedQueryWithTimeout(text: string): Promise<number[]> {
     const timeoutMs = this.resolveEmbeddingTimeout("query");
-    log.debug("memory embeddings: query start", { provider: this.provider.id, timeoutMs });
-    return await this.withTimeout(
-      this.provider.embedQuery(text),
+    log.debug("memory embeddings: query start", {
+      event: "memory.embeddings.query",
+      phase: "start",
+      provider: this.provider.id,
+      model: this.provider.model,
       timeoutMs,
-      `memory embeddings query timed out after ${Math.round(timeoutMs / 1000)}s`,
-    );
+      queryChars: text.length,
+      remoteEndpoint: this.activeEmbeddingEndpoint(),
+    });
+    try {
+      const vector = await this.withTimeout(
+        this.provider.embedQuery(text),
+        timeoutMs,
+        `memory embeddings query timed out after ${Math.round(timeoutMs / 1000)}s`,
+      );
+      log.debug("memory embeddings: query complete", {
+        event: "memory.embeddings.query",
+        phase: "complete",
+        provider: this.provider.id,
+        model: this.provider.model,
+        timeoutMs,
+        queryChars: text.length,
+        vectorDims: vector.length,
+        remoteEndpoint: this.activeEmbeddingEndpoint(),
+      });
+      return vector;
+    } catch (err) {
+      log.warn("memory embeddings: query failed", {
+        event: "memory.embeddings.query",
+        phase: "error",
+        provider: this.provider.id,
+        model: this.provider.model,
+        timeoutMs,
+        queryChars: text.length,
+        remoteEndpoint: this.activeEmbeddingEndpoint(),
+        error: err instanceof Error ? err.message : String(err),
+      });
+      throw err;
+    }
   }
 
   private async withTimeout<T>(
@@ -3659,5 +4027,20 @@ export class MemoryIndexManager {
            size=excluded.size`,
       )
       .run(entry.path, options.source, entry.hash, entry.mtimeMs, entry.size);
+    log.debug("memory index: file write complete", {
+      event: "memory.index.write",
+      phase: "complete",
+      path: entry.path,
+      source: options.source,
+      chunks: chunks.length,
+      embeddingCount: embeddings.length,
+      sizeBytes: entry.size,
+      useSqliteVector,
+      useQdrant,
+      qdrantPoints: qdrantPoints.length,
+      qdrantUpsertOk: useQdrant ? qdrantUpsertOk : undefined,
+      provider: this.provider.id,
+      model: this.provider.model,
+    });
   }
 }

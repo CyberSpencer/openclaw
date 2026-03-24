@@ -30,7 +30,12 @@ export type SubscribeEmbeddedPiSessionParams = {
   onAgentEvent?: (evt: { stream: string; data: Record<string, unknown> }) => void | Promise<void>;
   enforceFinalTag?: boolean;
   config?: OpenClawConfig;
+  sessionId?: string;
   sessionKey?: string;
+  modelProvider?: string;
+  modelId?: string;
+  messageChannel?: string;
+  claimPendingModelRequest?: () => { requestIndex: number; startedAt: number } | undefined;
 };
 
 export type { BlockReplyChunking } from "./pi-embedded-block-chunker.js";
