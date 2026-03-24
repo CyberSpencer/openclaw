@@ -263,7 +263,9 @@ export function handleMessageEnd(
 
   const assistantMessage = msg;
   ctx.noteLastAssistant(assistantMessage);
-  const usage = normalizeUsage((assistantMessage as { usage?: unknown }).usage);
+  const usage = normalizeUsage(
+    (assistantMessage as { usage?: import("./usage.js").UsageLike | null }).usage,
+  );
   ctx.recordAssistantUsage(usage);
   if (isDiagnosticsEnabled(ctx.params.config)) {
     const pendingRequest = ctx.params.claimPendingModelRequest?.();

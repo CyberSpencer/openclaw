@@ -511,7 +511,7 @@ export function logSubagentLifecycle(params: {
   childSessionKey: string;
   runId: string;
   phase: "spawn_failed" | "registered" | "wait_started" | "wait_result";
-  status?: "ok" | "error" | "timeout";
+  status?: "ok" | "error" | "timeout" | "unknown";
   cleanup?: "delete" | "keep";
   mode?: "run" | "session";
   label?: string;
