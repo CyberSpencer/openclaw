@@ -56,8 +56,28 @@ function resetChatStateForSessionSwitch(state: AppViewState, sessionKey: string)
   });
 }
 
+function resolveDgxNavDotClass(state: AppViewState): string {
+  const spark = state.sparkStatus;
+  if (!spark?.enabled) {
+    return "";
+  }
+  // Derive from the 4 core services: binary red/green, no yellow
+  const CORE_KEYS = new Set(["vllm_nemotron", "qdrant", "embeddings", "reranker", "embed"]);
+  const services = spark.services as Record<string, { healthy?: boolean }> | undefined;
+  if (services) {
+    const coreEntries = Object.entries(services).filter(([name]) => CORE_KEYS.has(name));
+    if (coreEntries.length > 0) {
+      const allHealthy = coreEntries.every(([, s]) => s.healthy);
+      return allHealthy ? "ok" : "err";
+    }
+  }
+  // Fallback: use overall
+  return spark.overall === "healthy" ? "ok" : spark.overall === "down" ? "err" : "";
+}
+
 export function renderTab(state: AppViewState, tab: Tab) {
   const href = pathForTab(tab, state.basePath);
+  const dgxDotClass = tab === "dgx" ? resolveDgxNavDotClass(state) : "";
   return html`
     <a
       href=${href}
@@ -87,6 +107,7 @@ export function renderTab(state: AppViewState, tab: Tab) {
     >
       <span class="nav-item__icon" aria-hidden="true">${icons[iconForTab(tab)]}</span>
       <span class="nav-item__text">${titleForTab(tab)}</span>
+      ${dgxDotClass ? html`<span class="statusDot ${dgxDotClass}" style="margin-left:auto;flex-shrink:0"></span>` : ""}
     </a>
   `;
 }
@@ -450,25 +471,6 @@ async function switchChatModel(state: AppViewState, nextModel: string) {
     state.chatModelOverrides = { ...state.chatModelOverrides, [targetSessionKey]: prevOverride };
     state.lastError = `Failed to set model: ${String(err)}`;
   }
-}
-
-function resolveMainSessionKey(
-  hello: AppViewState["hello"],
-  sessions: SessionsListResult | null,
-): string | null {
-  const snapshot = hello?.snapshot as { sessionDefaults?: SessionDefaultsSnapshot } | undefined;
-  const mainSessionKey = snapshot?.sessionDefaults?.mainSessionKey?.trim();
-  if (mainSessionKey) {
-    return mainSessionKey;
-  }
-  const mainKey = snapshot?.sessionDefaults?.mainKey?.trim();
-  if (mainKey) {
-    return mainKey;
-  }
-  if (sessions?.sessions?.some((row) => row.key === "main")) {
-    return "main";
-  }
-  return null;
 }
 
 /* ── Channel display labels ────────────────────────────── */

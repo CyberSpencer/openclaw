@@ -14,8 +14,8 @@ function makeMissingScopeResponse() {
   });
 }
 
-function expectMissingScopeError(result: Awaited<ReturnType<typeof fetchClaudeUsage>>) {
-  expect(result.error).toBe(`HTTP 403: ${MISSING_SCOPE_MESSAGE}`);
+function expectMissingScopeSuppressed(result: Awaited<ReturnType<typeof fetchClaudeUsage>>) {
+  expect(result.error).toBe("No token");
   expect(result.windows).toHaveLength(0);
 }
 
@@ -38,7 +38,7 @@ async function expectMissingScopeWithoutFallback(mockFetch: ScopeFallbackFetch) 
   vi.stubEnv("CLAUDE_WEB_COOKIE", "foo=bar");
 
   const result = await fetchClaudeUsage("token", 5000, mockFetch);
-  expectMissingScopeError(result);
+  expectMissingScopeSuppressed(result);
   const calledUrls = mockFetch.mock.calls.map(([input]) => toRequestUrl(input));
   expect(calledUrls.length).toBeGreaterThan(0);
   expect(calledUrls.every((url) => url.includes("/api/oauth/usage"))).toBe(true);
@@ -142,7 +142,7 @@ describe("fetchClaudeUsage", () => {
     expect(mockFetch).toHaveBeenCalledTimes(3);
   });
 
-  it("keeps oauth error when fallback session key is unavailable", async () => {
+  it("suppresses the oauth scope error when fallback session key is unavailable", async () => {
     const mockFetch = createScopeFallbackFetch(async (url) => {
       if (url.endsWith("/api/organizations")) {
         return makeResponse(200, [{ uuid: "org-missing-session" }]);
@@ -175,7 +175,7 @@ describe("fetchClaudeUsage", () => {
       usageResponse: () => makeResponse(200, {}),
     },
   ])(
-    "returns oauth error when web fallback is unavailable: $name",
+    "suppresses the oauth scope error when web fallback is unavailable: $name",
     async ({ orgResponse, usageResponse }) => {
       vi.stubEnv("CLAUDE_AI_SESSION_KEY", "sk-ant-fallback");
 
@@ -190,7 +190,7 @@ describe("fetchClaudeUsage", () => {
       });
 
       const result = await fetchClaudeUsage("token", 5000, mockFetch);
-      expectMissingScopeError(result);
+      expectMissingScopeSuppressed(result);
     },
   );
 });

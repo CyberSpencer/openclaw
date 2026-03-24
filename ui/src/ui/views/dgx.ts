@@ -33,17 +33,25 @@ function asServiceEntry(value: unknown): ServiceEntry | null {
 
 /** Human-friendly service names and descriptions. */
 const SERVICE_META: Record<string, { label: string; sub: string; port?: number }> = {
-  ollama: { label: "Ollama", sub: "LLM Runtime", port: 11434 },
-  router: { label: "Router", sub: "Intent Routing", port: 8001 },
+  router: { label: "vLLM Nemotron", sub: "Intent Routing", port: 8001 },
   qdrant: { label: "Qdrant", sub: "Vector DB", port: 6333 },
   embeddings: { label: "Embeddings", sub: "Qwen3 8B GPU", port: 8081 },
+  reranker: { label: "Reranker", sub: "Result Ranking", port: 8011 },
+  // fallback path keys
+  vllm_nemotron: { label: "vLLM Nemotron", sub: "Nemotron Inference", port: 8004 },
+  embed: { label: "Embeddings", sub: "Qwen3 8B GPU", port: 8010 },
+  // additional services
+  ollama: { label: "Ollama", sub: "LLM Runtime", port: 11434 },
   personaplex: { label: "PersonaPlex", sub: "S2S Wrapper", port: 8998 },
   moshi: { label: "Moshi", sub: "Voice GPU", port: 8999 },
+  // voice pipeline
   voice_health: { label: "Voice Health", sub: "Aggregator", port: 9000 },
   voice_stt: { label: "Voice STT", sub: "Qwen3-ASR 1.7B", port: 9001 },
   voice_tts: { label: "Voice TTS", sub: "Qwen3-TTS 1.7B", port: 9002 },
 };
 
+// The 4 required core services (vllm_nemotron probed directly at port 8004)
+const CORE_KEYS = new Set(["vllm_nemotron", "qdrant", "embeddings", "reranker", "embed"]);
 const VOICE_KEYS = new Set(["voice_health", "voice_stt", "voice_tts"]);
 
 function formatLatency(ms: number | undefined | null): string {
@@ -234,11 +242,12 @@ export function renderDgx(props: DgxProps): TemplateResult {
     `;
   }
 
-  // Parse services
+  // Parse services into core (4 required), voice, and additional
   const services = spark?.services ?? {};
   const serviceEntries = Object.entries(services);
   const coreServices: [string, ServiceEntry][] = [];
   const voiceServices: [string, ServiceEntry][] = [];
+  const additionalServices: [string, ServiceEntry][] = [];
 
   for (const [name, raw] of serviceEntries) {
     const svc = asServiceEntry(raw);
@@ -247,13 +256,23 @@ export function renderDgx(props: DgxProps): TemplateResult {
     }
     if (VOICE_KEYS.has(name)) {
       voiceServices.push([name, svc]);
-    } else {
+    } else if (CORE_KEYS.has(name)) {
       coreServices.push([name, svc]);
+    } else {
+      additionalServices.push([name, svc]);
     }
   }
 
-  const overall = spark?.overall ?? (spark?.active ? "healthy" : "down");
-  const counts = spark?.counts;
+  // Derive overall from the 4 core services only (binary: green = all healthy, red = any down)
+  const coreHealthy = coreServices.filter(([, s]) => s.healthy).length;
+  const coreTotal = coreServices.length;
+  const coreAllHealthy = coreTotal > 0 && coreHealthy === coreTotal;
+  const overall =
+    coreTotal > 0
+      ? coreAllHealthy
+        ? "healthy"
+        : "down"
+      : (spark?.overall ?? (spark?.active ? "healthy" : "down"));
   const routing = props.routingStatus ?? null;
   const checkedAt = spark?.checkedAt;
   const checkedLabel = checkedAt
@@ -297,7 +316,11 @@ export function renderDgx(props: DgxProps): TemplateResult {
         </div>
         <div class="dgx-header__right">
           <span class="dgx-badge ${overallBadgeClass(overall)}">
-            ${overall.toUpperCase()}${counts ? html` &mdash; ${counts.healthy}/${counts.total} services` : nothing}
+            ${
+              coreTotal > 0
+                ? html`${coreHealthy}/${coreTotal} core services`
+                : html`${overall.toUpperCase()}`
+            }
           </span>
           ${checkedLabel ? html`<span class="muted">Updated: ${checkedLabel}</span>` : nothing}
           <button class="btn dgx-refresh-btn" @click=${() => props.onRefresh()} title="Refresh DGX status">
@@ -307,7 +330,7 @@ export function renderDgx(props: DgxProps): TemplateResult {
         </div>
       </div>
 
-      <!-- Core Services -->
+      <!-- Core Services (the 4 required: Router, Qdrant, Embeddings, Reranker) -->
       ${
         coreServices.length > 0
           ? html`
@@ -346,6 +369,20 @@ export function renderDgx(props: DgxProps): TemplateResult {
                 ${hasGpu ? renderGpu(spark.gpu!) : nothing}
                 ${hasContainers ? renderContainers(spark.containers!) : nothing}
               </div>
+            `
+          : nothing
+      }
+
+      <!-- Additional Services (non-core: Ollama, PersonaPlex, Moshi, etc.) -->
+      ${
+        additionalServices.length > 0
+          ? html`
+              <section class="dgx-section">
+                <div class="dgx-section__title">Additional Services</div>
+                <div class="dgx-services-grid">
+                  ${additionalServices.map(([name, svc]) => renderServiceCard(name, svc))}
+                </div>
+              </section>
             `
           : nothing
       }

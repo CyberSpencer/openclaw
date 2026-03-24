@@ -13,8 +13,9 @@ import {
 } from "./dgx-access.js";
 import type { GatewayRequestHandlers } from "./types.js";
 
-const DEFAULT_OLLAMA_PORT = 11434;
 const DEFAULT_QDRANT_PORT = 6333;
+const DEFAULT_EMBED_PORT = 8010;
+const DEFAULT_RERANK_PORT = 8011;
 const DEFAULT_DGX_STATS_PORT = 9090;
 const DEFAULT_VOICE_HEALTH_PORT = 9000;
 const DEFAULT_STT_PORT = 9001;
@@ -24,6 +25,12 @@ const DGX_STATS_TIMEOUT_MS = 5000;
 const CACHE_TTL_MS = 5000;
 let lastCachedAt = 0;
 let lastCachedResult: Record<string, unknown> | null = null;
+
+function asRecord(value: unknown): Record<string, unknown> | null {
+  return value && typeof value === "object" && !Array.isArray(value)
+    ? (value as Record<string, unknown>)
+    : null;
+}
 
 function resolveUrlFromEnv(raw: string | undefined): string | undefined {
   const value = parseStringLike(raw);
@@ -40,18 +47,6 @@ function resolveUrlFromEnv(raw: string | undefined): string | undefined {
 function resolvePort(raw: string | undefined, fallback: number): number {
   const parsed = raw ? Number(raw) : fallback;
   return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback;
-}
-
-function deriveRouterHealthUrl(url: string): string {
-  try {
-    const parsed = new URL(url);
-    parsed.pathname = "/health";
-    parsed.search = "";
-    parsed.hash = "";
-    return parsed.toString();
-  } catch {
-    return url;
-  }
 }
 
 async function probeHealth(
@@ -86,74 +81,6 @@ async function probeHealth(
   }
 }
 
-// The NVIDIA router /health endpoint returns HTTP 200 even when degraded.
-// Callers must inspect the JSON body for {status|value: "degraded", reason?: string}.
-async function probeRouterHealth(
-  url: string,
-  context: DgxAccessContext | null,
-): Promise<{
-  healthy: boolean;
-  status?: number;
-  error?: string;
-}> {
-  const timeoutMs = 1500;
-  const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), timeoutMs);
-  try {
-    const response = await fetch(url, {
-      method: "GET",
-      headers: mergeDgxRequestHeaders(context, { accept: "application/json" }),
-      signal: controller.signal,
-    });
-    const base = {
-      healthy: response.ok,
-      status: response.status,
-      error: response.ok ? undefined : `HTTP ${response.status}`,
-    };
-    if (!response.ok) {
-      return base;
-    }
-    let parsed: unknown = null;
-    try {
-      parsed = (await response.json()) as unknown;
-    } catch {
-      return base;
-    }
-    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
-      return base;
-    }
-    const record = parsed as Record<string, unknown>;
-    const rawStatus = record.status ?? record.value;
-    const statusText = typeof rawStatus === "string" ? rawStatus.trim().toLowerCase() : "";
-    const reason = typeof record.reason === "string" ? record.reason.trim() : "";
-    if (!statusText) {
-      return base;
-    }
-    if (statusText === "healthy" || statusText === "ok") {
-      return { healthy: true, status: response.status };
-    }
-    if (statusText === "degraded") {
-      return {
-        healthy: false,
-        status: response.status,
-        error: reason ? `degraded: ${reason}` : "degraded",
-      };
-    }
-    return {
-      healthy: false,
-      status: response.status,
-      error: reason ? `status=${statusText}: ${reason}` : `status=${statusText}`,
-    };
-  } catch (err) {
-    return {
-      healthy: false,
-      error: err instanceof Error ? err.message : String(err),
-    };
-  } finally {
-    clearTimeout(timer);
-  }
-}
-
 function resolveDgxStatsPort(env: Record<string, string>): number {
   return resolvePort(
     parseStringLike(env.DGX_STATS_PORT) ?? parseStringLike(process.env.DGX_STATS_PORT),
@@ -161,45 +88,36 @@ function resolveDgxStatsPort(env: Record<string, string>): number {
   );
 }
 
-function resolveRouterHealthUrl(
+const DEFAULT_VLLM_PORT = 8004;
+
+function resolveVllmHealthUrl(
   env: Record<string, string>,
   context: DgxAccessContext | null,
 ): string | null {
   if (context?.mode === "wan") {
-    const wanBase = resolveWanServiceBaseUrl(context, "router");
+    const wanBase = resolveWanServiceBaseUrl(context, "vllm");
     return wanBase ? appendUrlPath(wanBase, "health") : null;
   }
-  const explicit = resolveUrlFromEnv(env.DGX_ROUTER_URL ?? process.env.DGX_ROUTER_URL);
-  if (explicit) {
-    return deriveRouterHealthUrl(explicit);
-  }
-  const fallback = resolveUrlFromEnv(
-    env.OPENCLAW_NVIDIA_ROUTER_URL ?? process.env.OPENCLAW_NVIDIA_ROUTER_URL,
+  // SPARK_VLLM_HEALTH_URL takes priority (matches spark-vllm-coldstart.ts logic)
+  const explicit = resolveUrlFromEnv(
+    env.SPARK_VLLM_HEALTH_URL ?? process.env.SPARK_VLLM_HEALTH_URL,
   );
-  return fallback ? deriveRouterHealthUrl(fallback) : null;
-}
-
-function resolveOllamaBaseUrl(
-  env: Record<string, string>,
-  context: DgxAccessContext | null,
-): string | undefined {
-  if (context?.mode === "wan") {
-    return resolveWanServiceBaseUrl(context, "ollama");
-  }
-
-  const explicit = resolveUrlFromEnv(env.DGX_OLLAMA_URL ?? process.env.DGX_OLLAMA_URL);
   if (explicit) {
     return explicit;
   }
+  const base = resolveUrlFromEnv(env.DGX_VLLM_URL ?? process.env.DGX_VLLM_URL);
+  if (base) {
+    return appendUrlPath(new URL(base).origin, "health");
+  }
   const host = context?.lanHost ?? resolveDgxHost(env);
   if (!host) {
-    return undefined;
+    return null;
   }
   const port = resolvePort(
-    parseStringLike(env.OLLAMA_PORT) ?? parseStringLike(process.env.OLLAMA_PORT),
-    DEFAULT_OLLAMA_PORT,
+    parseStringLike(env.DGX_VLLM_PORT) ?? parseStringLike(process.env.DGX_VLLM_PORT),
+    DEFAULT_VLLM_PORT,
   );
-  return `http://${host}:${port}`;
+  return `http://${host}:${port}/health`;
 }
 
 function resolveQdrantBaseUrl(
@@ -223,6 +141,48 @@ function resolveQdrantBaseUrl(
     DEFAULT_QDRANT_PORT,
   );
   return `http://${host}:${port}`;
+}
+
+function resolveEmbedHealthUrl(
+  env: Record<string, string>,
+  context: DgxAccessContext | null,
+): string | null {
+  if (context?.mode === "wan") {
+    const wanBase = resolveWanServiceBaseUrl(context, "embeddings");
+    return wanBase ? appendUrlPath(wanBase, "health") : null;
+  }
+  const explicit = resolveUrlFromEnv(env.DGX_EMBED_URL ?? process.env.DGX_EMBED_URL);
+  if (explicit) {
+    return appendUrlPath(new URL(explicit).origin, "health");
+  }
+  const host = context?.lanHost ?? resolveDgxHost(env);
+  if (!host) {
+    return null;
+  }
+  const port = resolvePort(
+    parseStringLike(env.DGX_EMBED_PORT) ?? parseStringLike(process.env.DGX_EMBED_PORT),
+    DEFAULT_EMBED_PORT,
+  );
+  return `http://${host}:${port}/health`;
+}
+
+function resolveRerankHealthUrl(
+  env: Record<string, string>,
+  context: DgxAccessContext | null,
+): string | null {
+  const explicit = resolveUrlFromEnv(env.DGX_RERANK_URL ?? process.env.DGX_RERANK_URL);
+  if (explicit) {
+    return appendUrlPath(new URL(explicit).origin, "health");
+  }
+  const host = context?.lanHost ?? resolveDgxHost(env);
+  if (!host) {
+    return null;
+  }
+  const port = resolvePort(
+    parseStringLike(env.DGX_RERANK_PORT) ?? parseStringLike(process.env.DGX_RERANK_PORT),
+    DEFAULT_RERANK_PORT,
+  );
+  return `http://${host}:${port}/health`;
 }
 
 function resolveSttHealthUrl(
@@ -482,7 +442,22 @@ export function mapDgxStatsPayload(
       ? voice.available
       : Boolean(vStt?.healthy && vTts?.healthy);
 
-  const active = overall !== "down";
+  // Override overall: only the 4 required DGX services determine health
+  const CORE_SERVICES = ["vllm_nemotron", "qdrant", "embeddings", "reranker"];
+  const coreStatuses = CORE_SERVICES.map((name) => {
+    const svc = services[name] as { healthy?: boolean } | undefined;
+    return svc ? { healthy: Boolean(svc.healthy) } : null;
+  }).filter((s): s is { healthy: boolean } => s !== null);
+  const derivedOverall: SparkOverall =
+    coreStatuses.length === 0
+      ? (overall as SparkOverall)
+      : coreStatuses.every((s) => s.healthy)
+        ? "healthy"
+        : coreStatuses.some((s) => s.healthy)
+          ? "degraded"
+          : "down";
+
+  const active = derivedOverall !== "down";
 
   return {
     enabled: true,
@@ -491,7 +466,7 @@ export function mapDgxStatsPayload(
     host: hostLabel,
     checkedAt,
     voiceAvailable,
-    overall,
+    overall: derivedOverall,
     counts,
     services,
     gpu: data.gpu ?? null,
@@ -553,9 +528,45 @@ export const sparkStatusHandlers: GatewayRequestHandlers = {
       if (statsUrl) {
         const stats = await fetchDgxStats(statsUrl, context);
         if (stats) {
-          // When voice pipeline (STT/TTS) is up, treat Spark as active even if PersonaPlex or Moshi are down.
+          const mappedServices = mapDgxServices(stats);
+
+          // vLLM Nemotron health: DGX stats only reports the NVIDIA router (8001), not vLLM
+          // directly. Derive vLLM health from whether VLLM::EngineCore appears in GPU processes
+          // (authoritative — no WAN proxy path needed). Fall back to a direct probe on LAN.
+          const vllmFromGpu = Array.isArray(stats.gpu?.processes)
+            ? stats.gpu.processes.some(
+                (p) => typeof p.process === "string" && /vllm/i.test(p.process),
+              )
+            : null;
+          if (vllmFromGpu !== null) {
+            mappedServices.vllm_nemotron = { healthy: vllmFromGpu };
+          } else {
+            // No GPU data — fall back to direct probe (LAN only; WAN has no vllm path)
+            const vllmHealthUrl =
+              context?.mode !== "wan" ? resolveVllmHealthUrl(env, context) : null;
+            const vllmProbe = vllmHealthUrl ? await probeHealth(vllmHealthUrl, context) : null;
+            if (vllmHealthUrl && vllmProbe) {
+              mappedServices.vllm_nemotron = { url: vllmHealthUrl, ...vllmProbe };
+            }
+          }
+
+          // Overall health requires the 4 core DGX services only — not the full DGX aggregate.
+          // Core = vLLM Nemotron (GPU process check), Qdrant, Embeddings, Reranker.
+          const CORE_STATS_SERVICES = ["vllm_nemotron", "qdrant", "embeddings", "reranker"];
+          const coreStatProbes = CORE_STATS_SERVICES.map((name) => {
+            const svc = mappedServices[name] as { healthy?: boolean } | undefined;
+            return svc ? { healthy: Boolean(svc.healthy) } : null;
+          }).filter((s): s is { healthy: boolean } => s !== null);
+          const derivedOverall: SparkOverall =
+            coreStatProbes.length === 0
+              ? stats.overall
+              : coreStatProbes.every((s) => s.healthy)
+                ? "healthy"
+                : coreStatProbes.some((s) => s.healthy)
+                  ? "degraded"
+                  : "down";
           const voiceAvailable = stats.voice?.available ?? false;
-          const active = stats.overall !== "down" || voiceAvailable;
+          const active = derivedOverall !== "down" || voiceAvailable;
           const payload = {
             enabled: true,
             active,
@@ -563,9 +574,9 @@ export const sparkStatusHandlers: GatewayRequestHandlers = {
             checkedAt,
             source: "dgx-stats" as const,
             voiceAvailable,
-            overall: stats.overall,
+            overall: derivedOverall,
             counts: stats.counts ?? null,
-            services: mapDgxServices(stats),
+            services: mappedServices,
             gpu: stats.gpu ?? null,
             containers: stats.containers ?? null,
           };
@@ -578,38 +589,48 @@ export const sparkStatusHandlers: GatewayRequestHandlers = {
 
       const services: Record<string, unknown> = {};
 
-      const routerHealthUrl = resolveRouterHealthUrl(env, context);
-      const ollamaBase = resolveOllamaBaseUrl(env, context);
+      const vllmHealthUrl = resolveVllmHealthUrl(env, context);
       const qdrantBase = resolveQdrantBaseUrl(env, context);
+      const embedHealthUrl = resolveEmbedHealthUrl(env, context);
+      const rerankHealthUrl = resolveRerankHealthUrl(env, context);
       const voiceHealthUrl = resolveVoiceHealthUrl(env, context);
       const sttHealthUrl = resolveSttHealthUrl(env, context);
       const ttsHealthUrl = resolveTtsHealthUrl(env, context);
 
-      const ollamaHealthUrl = ollamaBase
-        ? appendUrlPath(normalizeBaseUrl(ollamaBase), "api/tags")
-        : null;
       const qdrantHealthUrl = qdrantBase
         ? appendUrlPath(normalizeBaseUrl(qdrantBase), "collections")
         : null;
 
-      const [routerProbe, ollamaProbe, qdrantProbe, voiceHealthProbe, sttProbe, ttsProbe] =
-        await Promise.all([
-          routerHealthUrl ? probeRouterHealth(routerHealthUrl, context) : Promise.resolve(null),
-          ollamaHealthUrl ? probeHealth(ollamaHealthUrl, context) : Promise.resolve(null),
-          qdrantHealthUrl ? probeHealth(qdrantHealthUrl, context) : Promise.resolve(null),
-          voiceHealthUrl ? fetchVoiceHealth(voiceHealthUrl, context) : Promise.resolve(null),
-          sttHealthUrl ? probeHealth(sttHealthUrl, context) : Promise.resolve(null),
-          ttsHealthUrl ? probeHealth(ttsHealthUrl, context) : Promise.resolve(null),
-        ]);
+      // The 4 required DGX services: vLLM Nemotron (port 8004), Qdrant, Embed, Reranker
+      const [
+        vllmProbe,
+        qdrantProbe,
+        embedProbe,
+        rerankProbe,
+        voiceHealthProbe,
+        sttProbe,
+        ttsProbe,
+      ] = await Promise.all([
+        vllmHealthUrl ? probeHealth(vllmHealthUrl, context) : Promise.resolve(null),
+        qdrantHealthUrl ? probeHealth(qdrantHealthUrl, context) : Promise.resolve(null),
+        embedHealthUrl ? probeHealth(embedHealthUrl, context) : Promise.resolve(null),
+        rerankHealthUrl ? probeHealth(rerankHealthUrl, context) : Promise.resolve(null),
+        voiceHealthUrl ? fetchVoiceHealth(voiceHealthUrl, context) : Promise.resolve(null),
+        sttHealthUrl ? probeHealth(sttHealthUrl, context) : Promise.resolve(null),
+        ttsHealthUrl ? probeHealth(ttsHealthUrl, context) : Promise.resolve(null),
+      ]);
 
-      if (routerHealthUrl && routerProbe) {
-        services.router = { url: routerHealthUrl, ...routerProbe };
-      }
-      if (ollamaHealthUrl && ollamaProbe) {
-        services.ollama = { url: ollamaHealthUrl, ...ollamaProbe };
+      if (vllmHealthUrl && vllmProbe) {
+        services.vllm_nemotron = { url: vllmHealthUrl, ...vllmProbe };
       }
       if (qdrantHealthUrl && qdrantProbe) {
         services.qdrant = { url: qdrantHealthUrl, ...qdrantProbe };
+      }
+      if (embedHealthUrl && embedProbe) {
+        services.embed = { url: embedHealthUrl, ...embedProbe };
+      }
+      if (rerankHealthUrl && rerankProbe) {
+        services.reranker = { url: rerankHealthUrl, ...rerankProbe };
       }
       if (voiceHealthUrl && voiceHealthProbe) {
         services.voice_health = { url: voiceHealthUrl, ...voiceHealthProbe };
@@ -625,14 +646,8 @@ export const sparkStatusHandlers: GatewayRequestHandlers = {
         (voiceHealthProbe?.healthy && voiceHealthProbe?.stt && voiceHealthProbe?.tts) ||
         (sttProbe?.healthy && ttsProbe?.healthy),
       );
-      const overall = deriveOverallFromFallback([
-        routerProbe,
-        ollamaProbe,
-        qdrantProbe,
-        voiceHealthProbe,
-        sttProbe,
-        ttsProbe,
-      ]);
+      // Overall health requires the 4 core DGX services: vLLM Nemotron, Qdrant, Embed, Reranker
+      const overall = deriveOverallFromFallback([vllmProbe, qdrantProbe, embedProbe, rerankProbe]);
       const active = overall === "healthy" || overall === "degraded";
 
       const payload = {

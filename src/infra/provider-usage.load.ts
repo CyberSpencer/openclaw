@@ -1,6 +1,10 @@
 import { existsSync, readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
+import {
+  loadCodexRateLimitSnapshot,
+  resolveCodexRateLimitSnapshotPath,
+} from "../agents/codex-rate-limits.js";
 import { resolveFetch } from "./fetch.js";
 import { type ProviderAuth, resolveProviderAuths } from "./provider-usage.auth.js";
 import {
@@ -174,6 +178,80 @@ function resolveSuppressionNotes(provider: UsageProviderId, now: number): string
   }
 }
 
+const CODEX_RATE_LIMIT_STALE_MS = 5 * 60_000;
+
+function labelFromDurationMins(durationMins: number): string {
+  if (durationMins >= 7 * 24 * 60) {
+    return "7d";
+  }
+  if (durationMins >= 24 * 60) {
+    return `${Math.round(durationMins / 60 / 24)}d`;
+  }
+  return `${Math.round(durationMins / 60)}h`;
+}
+
+function modelShortName(modelRef: string): string {
+  const lower = modelRef.toLowerCase();
+  if (lower.includes("spark")) {
+    return "Spark";
+  }
+  if (lower.includes("mini")) {
+    return "Mini";
+  }
+  const tail = modelRef.split("/").pop() ?? modelRef;
+  // "gpt-5.4" → "5.4", "gpt-5.3-codex-spark" → already handled above
+  return tail.replace(/^gpt-/i, "");
+}
+
+function mergeCodexModelBuckets(
+  snapshot: ProviderUsageSnapshot,
+  snapshotPath: string,
+  now: number,
+): ProviderUsageSnapshot {
+  const rls = loadCodexRateLimitSnapshot(snapshotPath);
+  if (!rls || !rls.checkedAt || now - rls.checkedAt > CODEX_RATE_LIMIT_STALE_MS) {
+    return snapshot;
+  }
+  const modelBuckets = rls.buckets.filter((b) => b.scope === "model_specific");
+  if (modelBuckets.length === 0) {
+    return snapshot;
+  }
+  // Group by the first modelRef (the model these buckets are specific to)
+  const byModel = new Map<string, typeof modelBuckets>();
+  for (const bucket of modelBuckets) {
+    const modelRef = bucket.modelRefs[0];
+    if (!modelRef) {
+      continue;
+    }
+    const list = byModel.get(modelRef) ?? [];
+    list.push(bucket);
+    byModel.set(modelRef, list);
+  }
+  const additionalWindows: ProviderUsageSnapshot["windows"] = [];
+  for (const [modelRef, buckets] of byModel) {
+    const shortName = modelShortName(modelRef);
+    // Sort shortest window first (primary then secondary)
+    const sorted = [...buckets].toSorted(
+      (a, b) => (a.windowDurationMins ?? 0) - (b.windowDurationMins ?? 0),
+    );
+    for (const bucket of sorted) {
+      if (bucket.usedPercent === undefined || !bucket.windowDurationMins) {
+        continue;
+      }
+      additionalWindows.push({
+        label: `${shortName} ${labelFromDurationMins(bucket.windowDurationMins)}`,
+        usedPercent: bucket.usedPercent,
+        // resetsAt in snapshot is already in ms (unlike /wham/usage which returns seconds)
+        resetAt: bucket.resetsAt ?? undefined,
+      });
+    }
+  }
+  if (additionalWindows.length === 0) {
+    return snapshot;
+  }
+  return { ...snapshot, windows: [...snapshot.windows, ...additionalWindows] };
+}
+
 function withSuppressionNotes(snapshot: ProviderUsageSnapshot, now: number): ProviderUsageSnapshot {
   const notes = [...(snapshot.notes ?? []), ...resolveSuppressionNotes(snapshot.provider, now)];
   if (notes.length === 0) {
@@ -220,6 +298,7 @@ export async function loadProviderUsageSummary(
             break;
           case "openai-codex":
             snapshot = await fetchCodexUsage(auth.token, auth.accountId, timeoutMs, fetchFn);
+            snapshot = mergeCodexModelBuckets(snapshot, resolveCodexRateLimitSnapshotPath(), now);
             break;
           case "minimax":
             snapshot = await fetchMinimaxUsage(auth.token, timeoutMs, fetchFn);

@@ -1,4 +1,8 @@
-import { buildUsageHttpErrorSnapshot, fetchJson } from "./provider-usage.fetch.shared.js";
+import {
+  buildUsageErrorSnapshot,
+  buildUsageHttpErrorSnapshot,
+  fetchJson,
+} from "./provider-usage.fetch.shared.js";
 import { clampPercent, PROVIDER_LABELS } from "./provider-usage.shared.js";
 import type { ProviderUsageSnapshot, UsageWindow } from "./provider-usage.types.js";
 
@@ -156,14 +160,39 @@ export async function fetchClaudeUsage(
     // Claude Code CLI setup-token yields tokens that can be used for inference, but may not
     // include user:profile scope required by the OAuth usage endpoint. When a claude.ai
     // browser sessionKey is available, fall back to the web API.
-    if (res.status === 403 && message?.includes("scope requirement user:profile")) {
+    //
+    // Also fall back on 429 (rate limited on the OAuth usage endpoint) — the web API
+    // uses a different quota so it may still respond successfully.
+    const shouldTryWebFallback =
+      (res.status === 403 && message?.includes("scope requirement user:profile")) ||
+      res.status === 429;
+    if (shouldTryWebFallback) {
+      // Try the OAuth token itself first — claude.ai accepts sk-ant-... tokens as session keys
+      if (token.startsWith("sk-ant-")) {
+        const web = await fetchClaudeWebUsage(token, timeoutMs, fetchFn);
+        if (web) {
+          return web;
+        }
+      }
+      // Fall back to any explicitly configured web session key
       const sessionKey = resolveClaudeWebSessionKey();
-      if (sessionKey) {
+      if (sessionKey && sessionKey !== token) {
         const web = await fetchClaudeWebUsage(sessionKey, timeoutMs, fetchFn);
         if (web) {
           return web;
         }
       }
+    }
+
+    // For rate limit errors, return a cleaner message without the full HTTP body
+    if (res.status === 429) {
+      return buildUsageErrorSnapshot("anthropic", "Rate limited");
+    }
+
+    // 403 scope errors are a known limitation of CLI-provisioned tokens — suppress
+    // the raw HTTP error so no misleading chip is shown in the UI.
+    if (res.status === 403 && message?.includes("scope requirement user:profile")) {
+      return buildUsageErrorSnapshot("anthropic", "No token");
     }
 
     return buildUsageHttpErrorSnapshot({
