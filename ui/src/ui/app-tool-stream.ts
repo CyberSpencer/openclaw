@@ -1,5 +1,5 @@
 import { truncateText } from "./format.ts";
-import type { TaskPlan } from "./ui-types.ts";
+import type { TaskPlan, TaskPlanStatus, TaskPlanTask } from "./ui-types.ts";
 
 const TOOL_STREAM_LIMIT = 50;
 const TOOL_STREAM_THROTTLE_MS = 80;
@@ -337,6 +337,75 @@ function resolveAcceptedSession(
   return { accepted: true, sessionKey };
 }
 
+function normalizeTaskPlanStatus(value: unknown): TaskPlanStatus {
+  const status = toTrimmedString(value)?.toLowerCase();
+  if (status === "running" || status === "done" || status === "blocked" || status === "skipped") {
+    return status;
+  }
+  return "todo";
+}
+
+function taskPlanTaskLookupKey(task: TaskPlanTask): string {
+  return toTrimmedString(task.id) ?? `title:${toTrimmedString(task.title) ?? ""}`;
+}
+
+function mergeIdleTaskPlan(
+  existing: TaskPlan | null | undefined,
+  incoming: TaskPlan | null,
+): TaskPlan | null {
+  if (!incoming || !existing) {
+    return incoming;
+  }
+  const incomingId = toTrimmedString(incoming.id);
+  const existingId = toTrimmedString(existing.id);
+  if (!incomingId || !existingId || incomingId !== existingId) {
+    return incoming;
+  }
+
+  const existingTasks = new Map(existing.tasks.map((task) => [taskPlanTaskLookupKey(task), task]));
+  const tasks = incoming.tasks.map((task) => {
+    const previous = existingTasks.get(taskPlanTaskLookupKey(task));
+    if (!previous) {
+      return task;
+    }
+
+    const previousAssignedSessionKey = toTrimmedString(previous.assignedSessionKey);
+    const previousAssignedRunId = toTrimmedString(previous.assignedRunId);
+    const nextAssignedSessionKey = toTrimmedString(task.assignedSessionKey);
+    const nextAssignedRunId = toTrimmedString(task.assignedRunId);
+    const previousStatus = normalizeTaskPlanStatus(previous.status);
+    const nextStatus = normalizeTaskPlanStatus(task.status);
+
+    const merged: TaskPlanTask = { ...task };
+    if (!nextAssignedSessionKey && previousAssignedSessionKey) {
+      merged.assignedSessionKey = previousAssignedSessionKey;
+    }
+    if (!nextAssignedRunId && previousAssignedRunId) {
+      merged.assignedRunId = previousAssignedRunId;
+    }
+    if (
+      (previousAssignedSessionKey || previousAssignedRunId) &&
+      nextStatus === "todo" &&
+      previousStatus !== "todo"
+    ) {
+      merged.status = previousStatus;
+    }
+    if (!toTrimmedString(merged.resultSummary) && toTrimmedString(previous.resultSummary)) {
+      merged.resultSummary = previous.resultSummary;
+    }
+    if (!toTrimmedString(merged.failureReason) && toTrimmedString(previous.failureReason)) {
+      merged.failureReason = previous.failureReason;
+    }
+    return merged;
+  });
+
+  return {
+    ...incoming,
+    goal: toTrimmedString(incoming.goal) ?? existing.goal,
+    tasks,
+  };
+}
+
 function maybeHandleSpawnToolResult(
   host: ToolStreamHost,
   name: string,
@@ -442,7 +511,7 @@ export function handleAgentEvent(host: ToolStreamHost, payload?: AgentEventPaylo
       return;
     }
     const plan = (data.plan as TaskPlan | null | undefined) ?? null;
-    host.chatTaskPlan = plan;
+    host.chatTaskPlan = host.chatRunId ? plan : mergeIdleTaskPlan(host.chatTaskPlan, plan);
     return;
   }
 

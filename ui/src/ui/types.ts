@@ -440,6 +440,9 @@ export type GatewaySessionRow = {
   complexity?: string;
   contextTokens?: number;
   runStatus?: string;
+  createdAt?: number;
+  startedAt?: number;
+  endedAt?: number;
   runtimeMs?: number;
   outcome?: { status?: string; error?: string };
   task?: string;

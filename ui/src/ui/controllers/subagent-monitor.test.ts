@@ -59,6 +59,7 @@ describe("loadSubagentMonitor", () => {
         modelApplied: false,
         routing: "explicit",
         complexity: "simple",
+        startedAt: 110,
         spawnMode: "run",
       }),
     ]);
@@ -167,6 +168,133 @@ describe("loadSubagentMonitor", () => {
       limit: 5,
     });
     expect(state.subagentMonitorResult?.sessions[0]?.key).toBe("agent:main:subagent:legacy");
+  });
+
+  it("preserves live subagent status when a later poll degrades to sessions.list", async () => {
+    const request = vi.fn(async (method: string) => {
+      if (method === "sessions.subagents") {
+        if (request.mock.calls.filter(([name]) => name === "sessions.subagents").length === 1) {
+          return {
+            ts: 123,
+            tasks: [
+              {
+                childSessionKey: "agent:main:subagent:abc",
+                label: "Task A",
+                task: "Do A",
+                runId: "run-a",
+                status: "running",
+                createdAt: 100,
+                startedAt: 110,
+                runtimeMs: 2_000,
+              },
+            ],
+          };
+        }
+        throw new Error("transient sessions.subagents failure");
+      }
+      return {
+        ts: 456,
+        path: "(legacy)",
+        count: 1,
+        total: 1,
+        limit: 5,
+        offset: 0,
+        hasMore: false,
+        nextOffset: null,
+        defaults: { modelProvider: null, model: null, contextTokens: null },
+        sessions: [
+          {
+            key: "agent:main:subagent:abc",
+            kind: "direct",
+            updatedAt: 210,
+            lastMessagePreview: "Still working",
+          },
+        ],
+      };
+    });
+    const state = createState({
+      client: { request } as unknown as SubagentMonitorState["client"],
+      sessionKey: "agent:main:main",
+    });
+
+    await loadSubagentMonitor(state, { limit: 5 });
+    await loadSubagentMonitor(state, { limit: 5, quiet: true });
+
+    expect(state.subagentMonitorResult?.sessions).toEqual([
+      expect.objectContaining({
+        key: "agent:main:subagent:abc",
+        runStatus: "running",
+        startedAt: 110,
+        runtimeMs: 2_000,
+        lastMessagePreview: "Still working",
+      }),
+    ]);
+    expect(state.subagentMonitorError).toBeNull();
+  });
+
+  it("keeps a running row through a brief successful omission", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-03-24T04:10:00.000Z"));
+    try {
+      let subagentPoll = 0;
+      const request = vi.fn(async (method: string) => {
+        if (method === "sessions.subagents") {
+          subagentPoll += 1;
+          if (subagentPoll === 1) {
+            return {
+              ts: Date.now(),
+              tasks: [
+                {
+                  childSessionKey: "agent:main:subagent:abc",
+                  label: "Task A",
+                  task: "Do A",
+                  runId: "run-a",
+                  status: "running",
+                  createdAt: 100,
+                  startedAt: 110,
+                  runtimeMs: 2_000,
+                },
+              ],
+            };
+          }
+          return {
+            ts: Date.now(),
+            tasks: [],
+          };
+        }
+        return {
+          ts: Date.now(),
+          path: "(legacy)",
+          count: 0,
+          total: 0,
+          limit: 5,
+          offset: 0,
+          hasMore: false,
+          nextOffset: null,
+          defaults: { modelProvider: null, model: null, contextTokens: null },
+          sessions: [],
+        };
+      });
+      const state = createState({
+        client: { request } as unknown as SubagentMonitorState["client"],
+        sessionKey: "agent:main:main",
+      });
+
+      await loadSubagentMonitor(state, { limit: 5 });
+      vi.advanceTimersByTime(1_000);
+      await loadSubagentMonitor(state, { limit: 5, quiet: true });
+
+      expect(state.subagentMonitorResult?.sessions).toEqual([
+        expect.objectContaining({
+          key: "agent:main:subagent:abc",
+          runStatus: "running",
+          startedAt: 110,
+          runtimeMs: 2_000,
+        }),
+      ]);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it("skips when disconnected", async () => {

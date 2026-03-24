@@ -36,6 +36,111 @@ describe("app-tool-stream fallback lifecycle handling", () => {
     }
   });
 
+  it("preserves delegated task assignments when an idle session receives a stale partial plan", () => {
+    const host = createHost({
+      chatTaskPlan: {
+        id: "plan-1",
+        goal: "Ship the fix",
+        tasks: [
+          {
+            id: "task-1",
+            title: "Fix the bug",
+            status: "running",
+            assignedSessionKey: "agent:main:subagent:worker",
+            assignedRunId: "run-child",
+          },
+        ],
+      },
+    });
+
+    handleAgentEvent(host, {
+      runId: "run-main",
+      seq: 3,
+      stream: "orchestration",
+      ts: Date.now(),
+      sessionKey: "main",
+      data: {
+        type: "task_plan",
+        plan: {
+          id: "plan-1",
+          goal: "Ship the fix",
+          tasks: [
+            {
+              id: "task-1",
+              title: "Fix the bug",
+              status: "todo",
+            },
+          ],
+        },
+      },
+    });
+
+    expect(host.chatTaskPlan).toEqual({
+      id: "plan-1",
+      goal: "Ship the fix",
+      tasks: [
+        {
+          id: "task-1",
+          title: "Fix the bug",
+          status: "running",
+          assignedSessionKey: "agent:main:subagent:worker",
+          assignedRunId: "run-child",
+        },
+      ],
+    });
+  });
+
+  it("still replaces the plan when the idle session receives a genuinely new plan id", () => {
+    const host = createHost({
+      chatTaskPlan: {
+        id: "plan-1",
+        goal: "Old goal",
+        tasks: [
+          {
+            id: "task-1",
+            title: "Fix the bug",
+            status: "running",
+            assignedSessionKey: "agent:main:subagent:worker",
+          },
+        ],
+      },
+    });
+
+    handleAgentEvent(host, {
+      runId: "run-main",
+      seq: 4,
+      stream: "orchestration",
+      ts: Date.now(),
+      sessionKey: "main",
+      data: {
+        type: "task_plan",
+        plan: {
+          id: "plan-2",
+          goal: "New goal",
+          tasks: [
+            {
+              id: "task-2",
+              title: "Verify the fix",
+              status: "todo",
+            },
+          ],
+        },
+      },
+    });
+
+    expect(host.chatTaskPlan).toEqual({
+      id: "plan-2",
+      goal: "New goal",
+      tasks: [
+        {
+          id: "task-2",
+          title: "Verify the fix",
+          status: "todo",
+        },
+      ],
+    });
+  });
+
   it("accepts session-scoped fallback lifecycle events when no run is active", () => {
     vi.useFakeTimers();
     const host = createHost();
