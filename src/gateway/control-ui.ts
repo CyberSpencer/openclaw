@@ -22,6 +22,7 @@ import {
   resolveAssistantAvatarUrl,
 } from "./control-ui-shared.js";
 import { resolveGatewayCredentialsFromConfig } from "./credentials.js";
+import { isLoopbackHost } from "./net.js";
 
 const ROOT_PREFIX = "/";
 
@@ -270,6 +271,17 @@ function isSafeRelativePath(relPath: string) {
   return true;
 }
 
+function isLoopbackRequest(req: IncomingMessage): boolean {
+  const host = req.headers?.host;
+  if (host) {
+    // Strip port from host header
+    const hostWithoutPort = host.replace(/:\d+$/, "");
+    return isLoopbackHost(hostWithoutPort);
+  }
+  // No host header — treat as loopback (local request without Host header)
+  return true;
+}
+
 function resolveBootstrapGatewayAuthToken(config?: OpenClawConfig): string | undefined {
   if (!config) {
     return undefined;
@@ -358,7 +370,10 @@ export function handleControlUiHttpRequest(
       assistantName: identity.name,
       assistantAvatar: avatarValue ?? identity.avatar,
       assistantAgentId: identity.agentId,
-      gatewayAuthToken: resolveBootstrapGatewayAuthToken(config),
+      gatewayAuthToken:
+        isLoopbackRequest(req) && config?.gateway?.auth
+          ? resolveBootstrapGatewayAuthToken(config)
+          : undefined,
       serverVersion: resolveRuntimeServiceVersion(process.env),
     } satisfies ControlUiBootstrapConfig);
     return true;
