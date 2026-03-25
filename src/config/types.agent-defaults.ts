@@ -252,6 +252,15 @@ export type AgentDefaultsConfig = {
   };
   /** Max concurrent agent runs across all conversations. Default: 1 (sequential). */
   maxConcurrent?: number;
+  /** Anthropic provider-specific tuning. */
+  anthropic?: {
+    /**
+     * Max concurrent Anthropic streaming API calls in this process (default: 3).
+     * Additional requests are queued until a slot is available.
+     * Lower this if the gateway OOMs when many subagents run concurrently.
+     */
+    maxConcurrentStreams?: number;
+  };
   /** Sub-agent defaults (spawned via sessions_spawn). */
   subagents?: {
     /** Max concurrent sub-agent runs (global lane: "subagent"). Default: 1. */
