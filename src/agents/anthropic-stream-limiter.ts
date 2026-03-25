@@ -23,7 +23,9 @@ class StreamSemaphore {
   constructor(private max: number) {}
 
   updateMax(newMax: number): void {
-    if (newMax === this.max) return;
+    if (newMax === this.max) {
+      return;
+    }
     this.max = newMax;
     // If max increased, wake waiting requests
     this.drain();
@@ -38,14 +40,18 @@ class StreamSemaphore {
       let timer: ReturnType<typeof setTimeout> | undefined;
       const entry = {
         resolve: () => {
-          if (timer) clearTimeout(timer);
+          if (timer) {
+            clearTimeout(timer);
+          }
           resolve();
         },
         reject,
       };
       timer = setTimeout(() => {
         const idx = this.queue.indexOf(entry);
-        if (idx !== -1) this.queue.splice(idx, 1);
+        if (idx !== -1) {
+          this.queue.splice(idx, 1);
+        }
         reject(
           new Error(
             `anthropic-stream-limiter: timed out after ${timeoutMs}ms waiting for a stream slot (${this.current}/${this.max} active, ${this.queue.length} queued)`,
@@ -125,9 +131,7 @@ export function wrapStreamFnWithAnthropicSemaphore(
 
     await semaphore.acquire(ACQUIRE_TIMEOUT_MS);
 
-    log.debug(
-      `anthropic stream slot acquired: active=${semaphore.active} max=${maxConcurrent}`,
-    );
+    log.debug(`anthropic stream slot acquired: active=${semaphore.active} max=${maxConcurrent}`);
 
     let released = false;
     const release = () => {

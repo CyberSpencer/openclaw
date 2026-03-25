@@ -1,6 +1,10 @@
 /**
  * Voice mode model router integration.
  *
+ * @deprecated This in-process voice router stack is legacy for Jarvis-style deployments.
+ * Prefer Spark-first voice (`voice.mode=spark` and related config) for new work; do not extend
+ * these defaults without an explicit product decision.
+ *
  * Routes voice requests to appropriate models based on:
  * - Sensitive data detection (API keys, passwords, etc.)
  * - Complexity heuristics (question type, length, etc.)
@@ -11,6 +15,7 @@ import type { VoiceRouterConfig, VoiceRouterMode } from "../config/types.voice.j
 import { getDefaultRedactPatterns } from "../logging/redact.js";
 
 const DEFAULT_MODE: VoiceRouterMode = "auto";
+/** @deprecated Legacy default; Spark-first voice is the supported path for new deployments. */
 const DEFAULT_LOCAL_MODEL = "ollama/nemotron-3-nano:30b";
 const DEFAULT_CLOUD_MODEL = "openai-codex/gpt-5.3-codex";
 const DEFAULT_COMPLEXITY_THRESHOLD = 5;

@@ -1,6 +1,9 @@
-import { describe, it, expect, beforeEach } from "vitest";
-import { resetAnthropicStreamSemaphore, wrapStreamFnWithAnthropicSemaphore } from "./anthropic-stream-limiter.js";
 import type { StreamFn } from "@mariozechner/pi-agent-core";
+import { describe, it, expect, beforeEach } from "vitest";
+import {
+  resetAnthropicStreamSemaphore,
+  wrapStreamFnWithAnthropicSemaphore,
+} from "./anthropic-stream-limiter.js";
 
 // Minimal EventStream stub matching the pi-ai type
 function makeStream(
@@ -10,7 +13,7 @@ function makeStream(
   result: () => Promise<unknown>;
   [Symbol.asyncIterator]: () => AsyncIterator<unknown>;
 } {
-  let done = false;
+  let _done = false;
   const doneResolvers: Array<() => void> = [];
 
   return {
@@ -25,17 +28,17 @@ function makeStream(
           if (idx < events.length) {
             return { value: events[idx++], done: false };
           }
-          done = true;
+          _done = true;
           doneResolvers.forEach((r) => r());
           return { value: undefined, done: true };
         },
         async return() {
-          done = true;
+          _done = true;
           doneResolvers.forEach((r) => r());
           return { value: undefined, done: true };
         },
         async throw() {
-          done = true;
+          _done = true;
           doneResolvers.forEach((r) => r());
           return { value: undefined, done: true };
         },
@@ -50,11 +53,21 @@ function makeStreamFn(delayMs = 0): { fn: StreamFn; calls: number } {
     calls++;
     return new Promise((resolve) => {
       setTimeout(() => {
-        resolve(makeStream([{ type: "text", text: "hi" }], { role: "assistant", content: [] }) as ReturnType<typeof makeStream>);
+        resolve(
+          makeStream([{ type: "text", text: "hi" }], {
+            role: "assistant",
+            content: [],
+          }),
+        );
       }, delayMs);
     });
   }) as unknown as StreamFn;
-  return { fn, calls: 0, get calls() { return calls; } } as { fn: StreamFn; calls: number };
+  return {
+    fn,
+    get calls() {
+      return calls;
+    },
+  } as { fn: StreamFn; calls: number };
 }
 
 beforeEach(() => {
@@ -66,7 +79,9 @@ describe("wrapStreamFnWithAnthropicSemaphore", () => {
     const { fn } = makeStreamFn();
     const wrapped = wrapStreamFnWithAnthropicSemaphore(fn, undefined);
     const stream = await (wrapped as unknown as (...args: unknown[]) => Promise<unknown>)(
-      {}, {}, {}
+      {},
+      {},
+      {},
     );
     expect(stream).toBeDefined();
   });
@@ -78,7 +93,9 @@ describe("wrapStreamFnWithAnthropicSemaphore", () => {
 
     const slowFn: StreamFn = ((_m, _c, _o) => {
       active++;
-      if (active > maxActive) maxActive = active;
+      if (active > maxActive) {
+        maxActive = active;
+      }
       return new Promise((resolve) => {
         setTimeout(() => {
           const stream = makeStream([], { role: "assistant", content: [] });
@@ -90,7 +107,7 @@ describe("wrapStreamFnWithAnthropicSemaphore", () => {
             order.push("released");
             return r;
           };
-          resolve(stream as ReturnType<typeof makeStream>);
+          resolve(stream);
         }, 20);
       });
     }) as unknown as StreamFn;
@@ -100,11 +117,13 @@ describe("wrapStreamFnWithAnthropicSemaphore", () => {
     // Launch 5 concurrent calls
     const calls = Array.from({ length: 5 }, (_, i) =>
       (wrapped as unknown as (...args: unknown[]) => Promise<{ result: () => Promise<unknown> }>)(
-        {}, {}, {}
+        {},
+        {},
+        {},
       ).then((s) => {
         order.push(`started-${i}`);
         return s.result();
-      })
+      }),
     );
 
     await Promise.all(calls);
@@ -119,7 +138,9 @@ describe("wrapStreamFnWithAnthropicSemaphore", () => {
 
     const slowFn: StreamFn = ((_m, _c, _o) => {
       active++;
-      if (active > maxActive) maxActive = active;
+      if (active > maxActive) {
+        maxActive = active;
+      }
       return new Promise((resolve) => {
         setTimeout(() => {
           const stream = makeStream([], { role: "assistant", content: [] });
@@ -129,7 +150,7 @@ describe("wrapStreamFnWithAnthropicSemaphore", () => {
             active--;
             return r;
           };
-          resolve(stream as ReturnType<typeof makeStream>);
+          resolve(stream);
         }, 20);
       });
     }) as unknown as StreamFn;
@@ -142,8 +163,10 @@ describe("wrapStreamFnWithAnthropicSemaphore", () => {
 
     const calls = Array.from({ length: 3 }, () =>
       (wrapped as unknown as (...args: unknown[]) => Promise<{ result: () => Promise<unknown> }>)(
-        {}, {}, {}
-      ).then((s) => s.result())
+        {},
+        {},
+        {},
+      ).then((s) => s.result()),
     );
 
     await Promise.all(calls);
@@ -158,7 +181,7 @@ describe("wrapStreamFnWithAnthropicSemaphore", () => {
         await origResult();
         throw new Error("API failure");
       };
-      return Promise.resolve(stream as ReturnType<typeof makeStream>);
+      return Promise.resolve(stream);
     }) as unknown as StreamFn;
 
     const config = {
@@ -169,19 +192,20 @@ describe("wrapStreamFnWithAnthropicSemaphore", () => {
 
     await expect(
       (wrapped as unknown as (...args: unknown[]) => Promise<{ result: () => Promise<unknown> }>)(
-        {}, {}, {}
-      ).then((s) => s.result())
+        {},
+        {},
+        {},
+      ).then((s) => s.result()),
     ).rejects.toThrow("API failure");
 
     // Slot should be released — next call should succeed immediately
     const successFn: StreamFn = ((_m, _c, _o) =>
-      Promise.resolve(makeStream([], { role: "assistant", content: [] }) as ReturnType<typeof makeStream>)
-    ) as unknown as StreamFn;
+      Promise.resolve(makeStream([], { role: "assistant", content: [] }))) as unknown as StreamFn;
 
     const wrapped2 = wrapStreamFnWithAnthropicSemaphore(successFn, config);
-    const stream = await (wrapped2 as unknown as (...args: unknown[]) => Promise<{ result: () => Promise<unknown> }>)(
-      {}, {}, {}
-    );
+    const stream = await (
+      wrapped2 as unknown as (...args: unknown[]) => Promise<{ result: () => Promise<unknown> }>
+    )({}, {}, {});
     await stream.result(); // Should not hang
   });
 });

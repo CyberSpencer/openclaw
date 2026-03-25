@@ -2,7 +2,32 @@
 name: todoist
 description: Manage Todoist tasks, projects, labels, and sections via the `todoist` CLI. Use when a user asks Clawdis to add/complete/list tasks, show today's tasks, search tasks, or manage projects.
 homepage: https://github.com/buddyh/todoist-cli
-metadata: {"clawdis":{"emoji":"✅","requires":{"bins":["todoist"],"env":["TODOIST_API_TOKEN"]},"primaryEnv":"TODOIST_API_TOKEN","install":[{"id":"brew","kind":"brew","formula":"buddyh/tap/todoist","bins":["todoist"],"label":"Install todoist (brew)"},{"id":"go","kind":"go","module":"github.com/buddyh/todoist-cli/cmd/todoist@latest","bins":["todoist"],"label":"Install todoist-cli (go)"}]}}
+metadata:
+  {
+    "clawdis":
+      {
+        "emoji": "✅",
+        "requires": { "bins": ["todoist"], "env": ["TODOIST_API_TOKEN"] },
+        "primaryEnv": "TODOIST_API_TOKEN",
+        "install":
+          [
+            {
+              "id": "brew",
+              "kind": "brew",
+              "formula": "buddyh/tap/todoist",
+              "bins": ["todoist"],
+              "label": "Install todoist (brew)",
+            },
+            {
+              "id": "go",
+              "kind": "go",
+              "module": "github.com/buddyh/todoist-cli/cmd/todoist@latest",
+              "bins": ["todoist"],
+              "label": "Install todoist-cli (go)",
+            },
+          ],
+      },
+  }
 ---
 
 # Todoist CLI
@@ -21,6 +46,7 @@ Use `todoist` to manage tasks, projects, labels, and sections via the Todoist RE
 ## JSON Output
 
 All commands support `--json` for machine-readable output with envelope:
+
 ```json
 {"success":true,"data":[...]}
 {"success":false,"error":"..."}
@@ -107,26 +133,29 @@ todoist completed -p Work             # By project
 
 ## Priority Mapping
 
-| CLI Flag | Todoist |
-|----------|---------|
+| CLI Flag | Todoist           |
+| -------- | ----------------- |
 | `-P 1`   | p1 (highest, red) |
-| `-P 2`   | p2 (orange) |
-| `-P 3`   | p3 (blue) |
-| `-P 4`   | p4 (lowest) |
+| `-P 2`   | p2 (orange)       |
+| `-P 3`   | p3 (blue)         |
+| `-P 4`   | p4 (lowest)       |
 
 ## Examples
 
 Add task to specific project with due date and priority:
+
 ```bash
 todoist add "Review PR" -p Work -d "tomorrow 2pm" -P 2 -l code-review
 ```
 
 List today's high priority tasks as JSON:
+
 ```bash
 todoist tasks --filter "today & p1" --json
 ```
 
 Quick capture from stdin:
+
 ```bash
 echo "Quick idea" | xargs todoist add
 ```

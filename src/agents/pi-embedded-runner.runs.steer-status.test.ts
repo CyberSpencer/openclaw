@@ -6,9 +6,7 @@ import {
   type EmbeddedPiQueueHandle,
 } from "./pi-embedded-runner/runs.js";
 
-function createHandle(
-  overrides: Partial<EmbeddedPiQueueHandle> = {},
-): EmbeddedPiQueueHandle & {
+function createHandle(overrides: Partial<EmbeddedPiQueueHandle> = {}): EmbeddedPiQueueHandle & {
   queueMessage: ReturnType<typeof vi.fn>;
   abort: ReturnType<typeof vi.fn>;
 } {
