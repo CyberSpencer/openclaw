@@ -1286,6 +1286,36 @@ export function listDescendantRunsForRequester(rootSessionKey: string): Subagent
   );
 }
 
+export function deriveTaskPlanTerminalStateForOutcome(outcome: SubagentRunOutcome): {
+  status: "done" | "blocked";
+  failureReason?: string;
+  resultSummary?: string;
+} {
+  if (outcome.status === "ok") {
+    return { status: "done" };
+  }
+  if (outcome.status === "error") {
+    return {
+      status: "blocked",
+      failureReason: "error",
+      resultSummary: outcome.error || "Subagent run failed with an error.",
+    };
+  }
+  if (outcome.status === "timeout") {
+    return {
+      status: "blocked",
+      failureReason: "timeout",
+      resultSummary: "Subagent run timed out before completion.",
+    };
+  }
+  // unknown or any other status
+  return {
+    status: "blocked",
+    failureReason: "unknown",
+    resultSummary: "Subagent run ended with unknown outcome.",
+  };
+}
+
 export function initSubagentRegistry() {
   restoreSubagentRunsOnce();
 }
