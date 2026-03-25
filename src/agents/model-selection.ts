@@ -563,7 +563,9 @@ function pickAnthropicSuppressionFallback(params: {
       return ref;
     }
   }
-  return ANTHROPIC_RATE_LIMIT_FALLBACK_MODEL;
+  // Use the config-level local fallback model before the hardcoded last resort.
+  const localFallback = params.cfg.routing?.localFallbackModel?.trim();
+  return localFallback || ANTHROPIC_RATE_LIMIT_FALLBACK_MODEL;
 }
 
 /**
