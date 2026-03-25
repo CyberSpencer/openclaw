@@ -120,3 +120,23 @@ dist/protocol.schema.json
 
 # Synthing
 **/.stfolder/
+
+# Jarvis workspace personal files (local only, never commit)
+MEMORY.md
+SOUL.md
+TOOLS.md
+TODO.md
+memory/
+artifacts/
+config/secrets.env
+config/workspace.env
+logs/
+
+# Jarvis task queue runtime state (but NOT seed files like config.json, plans/templates/)
+.jarvis/queue/pending/*.json
+.jarvis/queue/active/*.json
+.jarvis/queue/done/*.json
+.jarvis/queue/failed/*.json
+.jarvis/status.json
+.jarvis/plans/active.json
+.jarvis/plans/archive/

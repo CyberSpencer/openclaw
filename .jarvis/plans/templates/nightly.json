@@ -1,0 +1,151 @@
+{
+  "template_id": "nightly",
+  "version": "1.0",
+  "description": "Standard nightly ops: cleanup, code quality, audit, hygiene, morning prep",
+  "phases": [
+    {
+      "phase": 1,
+      "name": "Cleanup",
+      "description": "Commit dirty files, prune worktrees, drop stale stashes",
+      "waves": [
+        {
+          "wave": 1,
+          "tasks": [
+            {
+              "name_template": "Phase 1: Core repo cleanup",
+              "model": "spark-nemotron-super",
+              "timeout_min": 25,
+              "max_attempts": 2,
+              "priority": 10,
+              "instructions_template": "Perform Phase 1 core repo cleanup in ~/clawd/core:\n1. Commit any dirty tracked files (git add -u && git commit -m 'chore: nightly cleanup'). Skip src/voice/router.ts - it is deprecated and intentionally dirty.\n2. Drop stale git stashes: list with 'git stash list', drop any stash older than 30 days or with message 'preserve unrelated edits' beyond stash@{3}. Keep the 4 most recent.\n3. Run 'git worktree prune --verbose' in both ~/clawd/core and ~/clawd.\nWrite results to ~/clawd/artifacts/nightly/phase1-cleanup-{DATE}.md",
+              "verify_template": "test -f ~/clawd/artifacts/nightly/phase1-cleanup-{DATE}.md && [ $(wc -c < ~/clawd/artifacts/nightly/phase1-cleanup-{DATE}.md) -gt 200 ]",
+              "artifacts_template": ["~/clawd/artifacts/nightly/phase1-cleanup-{DATE}.md"]
+            },
+            {
+              "name_template": "Phase 1: Workspace file commit",
+              "model": "spark-nemotron-super",
+              "timeout_min": 15,
+              "max_attempts": 2,
+              "priority": 9,
+              "instructions_template": "Commit any untracked or modified files in ~/clawd workspace (not core). Run 'git -C ~/clawd status --short', stage anything relevant (scripts, memory, artifacts, config), commit with 'chore: nightly workspace sync'. Write a brief summary to ~/clawd/artifacts/nightly/phase1-workspace-{DATE}.md",
+              "verify_template": "test -f ~/clawd/artifacts/nightly/phase1-workspace-{DATE}.md",
+              "artifacts_template": ["~/clawd/artifacts/nightly/phase1-workspace-{DATE}.md"]
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "phase": 2,
+      "name": "Code Quality",
+      "description": "TypeScript check, lint, format, test suite on core",
+      "waves": [
+        {
+          "wave": 1,
+          "tasks": [
+            {
+              "name_template": "Phase 2: TypeScript and lint check",
+              "model": "sonnet",
+              "timeout_min": 30,
+              "max_attempts": 2,
+              "priority": 10,
+              "instructions_template": "Run TypeScript and lint checks on ~/clawd/core:\n1. cd ~/clawd/core && pnpm tsgo --noEmit 2>&1 | tail -30 (note any new errors vs pre-existing ui/ errors)\n2. pnpm check 2>&1 | tail -30\n3. If format issues found: pnpm format:fix then re-run pnpm check\nWrite results to ~/clawd/artifacts/nightly/phase2-tsgo-lint-{DATE}.md. Note: ~411 pre-existing ui/ errors are expected and not regressions.",
+              "verify_template": "test -f ~/clawd/artifacts/nightly/phase2-tsgo-lint-{DATE}.md && [ $(wc -c < ~/clawd/artifacts/nightly/phase2-tsgo-lint-{DATE}.md) -gt 200 ]",
+              "artifacts_template": ["~/clawd/artifacts/nightly/phase2-tsgo-lint-{DATE}.md"]
+            },
+            {
+              "name_template": "Phase 2: Test suite",
+              "model": "sonnet",
+              "timeout_min": 60,
+              "max_attempts": 1,
+              "priority": 8,
+              "instructions_template": "Run the full test suite on ~/clawd/core:\ncd ~/clawd/core && OPENCLAW_TEST_PROFILE=low OPENCLAW_TEST_SERIAL_GATEWAY=1 pnpm test --run 2>&1 | tail -80\nNote any new failures vs the baseline of 47 pre-existing failures. Write results to ~/clawd/artifacts/nightly/phase2-tests-{DATE}.md with pass/fail counts and any new failures highlighted.",
+              "verify_template": "test -f ~/clawd/artifacts/nightly/phase2-tests-{DATE}.md && [ $(wc -c < ~/clawd/artifacts/nightly/phase2-tests-{DATE}.md) -gt 300 ]",
+              "artifacts_template": ["~/clawd/artifacts/nightly/phase2-tests-{DATE}.md"]
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "phase": 3,
+      "name": "Nightly Audit",
+      "description": "Spark nightly report and preflight scripts",
+      "waves": [
+        {
+          "wave": 1,
+          "tasks": [
+            {
+              "name_template": "Phase 3: Spark nightly report",
+              "model": "spark-nemotron-super",
+              "timeout_min": 25,
+              "max_attempts": 3,
+              "priority": 10,
+              "instructions_template": "Run the Spark nightly report script: ~/clawd/scripts/spark_nightly_report.sh 2>&1 | tail -40. If it times out or errors, retry. Write a brief status to ~/clawd/artifacts/nightly/phase3-spark-report-{DATE}.md",
+              "verify_template": "test -f ~/clawd/artifacts/nightly/phase3-spark-report-{DATE}.md",
+              "artifacts_template": ["~/clawd/artifacts/nightly/phase3-spark-report-{DATE}.md"]
+            },
+            {
+              "name_template": "Phase 3: AII preflight check",
+              "model": "spark-nemotron-super",
+              "timeout_min": 20,
+              "max_attempts": 3,
+              "priority": 9,
+              "instructions_template": "Run the AII preflight script in quick mode: ~/clawd/scripts/spark_aii_preflight.sh --quick 2>&1 | tail -40. If it errors, retry. Write status to ~/clawd/artifacts/nightly/phase3-aii-preflight-{DATE}.md",
+              "verify_template": "test -f ~/clawd/artifacts/nightly/phase3-aii-preflight-{DATE}.md",
+              "artifacts_template": ["~/clawd/artifacts/nightly/phase3-aii-preflight-{DATE}.md"]
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "phase": 4,
+      "name": "Repository Hygiene",
+      "description": "CI status, stale branch cleanup, worktree assessment",
+      "waves": [
+        {
+          "wave": 1,
+          "tasks": [
+            {
+              "name_template": "Phase 4: Repo hygiene",
+              "model": "haiku",
+              "timeout_min": 20,
+              "max_attempts": 2,
+              "priority": 10,
+              "instructions_template": "Run repo hygiene checks:\n1. Delete merged branches in ~/clawd/core: git branch --merged main | grep -v 'main' | xargs git branch -d\n2. Check CI status on open AI Integrations PRs: gh pr list --repo AI-Integrations/aiva-api --state open --json number,title,statusCheckRollup | head -5\n3. Verify all LaunchAgents are healthy: launchctl list | grep -E 'clawd|aiintegrations'\nWrite results to ~/clawd/artifacts/nightly/phase4-hygiene-{DATE}.md",
+              "verify_template": "test -f ~/clawd/artifacts/nightly/phase4-hygiene-{DATE}.md && [ $(wc -c < ~/clawd/artifacts/nightly/phase4-hygiene-{DATE}.md) -gt 200 ]",
+              "artifacts_template": ["~/clawd/artifacts/nightly/phase4-hygiene-{DATE}.md"]
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "phase": 5,
+      "name": "Morning Prep",
+      "description": "Push, summary, Desktop delivery. Depends on phases 1-4.",
+      "waves": [
+        {
+          "wave": 1,
+          "dependencies_phases": [1, 2, 3, 4],
+          "tasks": [
+            {
+              "name_template": "Phase 5: Push and morning summary",
+              "model": "sonnet",
+              "timeout_min": 20,
+              "max_attempts": 2,
+              "priority": 10,
+              "instructions_template": "Run morning prep:\n1. Push core: cd ~/clawd/core && git push aii-private main && git push fork main\n2. Push workspace: cd ~/clawd && git push origin $(git branch --show-current)\n3. Read all phase artifact files from tonight and write a unified overnight summary to ~/clawd/artifacts/nightly/overnight-summary-{DATE}.md. Include: what ran, what passed, what failed, top 3 items for Spencer.\n4. Copy to Desktop: cp ~/clawd/artifacts/nightly/overnight-summary-{DATE}.md ~/Desktop/overnight-summary-{DATE}.md\n5. Update ~/clawd/memory/skills-and-ops.md with any new operational notes.",
+              "verify_template": "test -f ~/Desktop/overnight-summary-{DATE}.md && [ $(wc -c < ~/Desktop/overnight-summary-{DATE}.md) -gt 500 ]",
+              "artifacts_template": [
+                "~/clawd/artifacts/nightly/overnight-summary-{DATE}.md",
+                "~/Desktop/overnight-summary-{DATE}.md"
+              ]
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

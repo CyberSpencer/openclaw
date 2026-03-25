@@ -1,0 +1,10 @@
+{
+  "max_concurrent_per_wave": 3,
+  "stale_task_timeout_min": 45,
+  "heartbeat_check_interval_min": 20,
+  "default_max_attempts": 2,
+  "work_window": {
+    "start_hour_ct": 22,
+    "end_hour_ct": 6
+  }
+}
