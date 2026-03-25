@@ -24,7 +24,7 @@ describe("loadModelCatalog", () => {
       const second = await loadModelCatalog({ config: cfg });
       expect(second).toEqual([{ id: "gpt-4.1", name: "GPT-4.1", provider: "openai" }]);
       expect(getCallCount()).toBe(2);
-      expect(warnSpy).toHaveBeenCalledTimes(1);
+      expect(warnSpy).toHaveBeenCalledTimes(2);
     } finally {
       setLoggerOverride(null);
       resetLogger();

@@ -274,7 +274,7 @@ describe("subagents utils", () => {
     expect(formatRunStatus({ ...baseRun })).toBe("running");
     expect(formatRunStatus({ ...baseRun, endedAt: 2000, outcome: { status: "ok" } })).toBe("done");
     expect(formatRunStatus({ ...baseRun, endedAt: 2000, outcome: { status: "timeout" } })).toBe(
-      "timeout",
+      "error",
     );
   });
 

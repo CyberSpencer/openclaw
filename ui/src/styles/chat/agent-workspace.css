@@ -194,6 +194,7 @@
   background: linear-gradient(90deg, var(--accent), var(--accent-2));
   opacity: 0.85;
   transform-origin: left;
+  transition: width 400ms var(--ease-out);
 }
 
 .agent-progress-meta {
@@ -360,7 +361,7 @@
   line-height: 1.35;
 }
 
-.agent-task__assigned {
+.agent-task__chip {
   display: flex;
   align-items: center;
   justify-content: space-between;
@@ -378,29 +379,29 @@
     transform var(--duration-fast) var(--ease-out);
 }
 
-.agent-task__assigned:disabled {
+.agent-task__chip:disabled {
   cursor: not-allowed;
   opacity: 0.75;
   transform: none;
 }
 
-.agent-task__assigned:hover {
+.agent-task__chip:hover {
   background: var(--bg-hover);
   border-color: var(--border);
   transform: translateY(-1px);
 }
 
-.agent-task__assigned:active {
+.agent-task__chip:active {
   transform: translateY(0);
 }
 
-.agent-task__assigned:focus-visible {
+.agent-task__chip:focus-visible {
   outline: none;
   border-color: var(--accent);
   box-shadow: var(--focus-glow);
 }
 
-.agent-task__assignedKey {
+.agent-task__chipKey {
   font-size: 11px;
   color: var(--muted-strong);
   white-space: nowrap;
@@ -408,13 +409,13 @@
   text-overflow: ellipsis;
 }
 
-.agent-task__assignedAge {
+.agent-task__chipAge {
   font-size: 10px;
   color: var(--muted);
   flex: 0 0 auto;
 }
 
-.agent-task__assignedMissing {
+.agent-task__chipMissing {
   font-size: 10px;
   flex: 0 0 auto;
 }
@@ -588,6 +589,12 @@
   padding-right: 2px;
 }
 
+.agent-subagents__divider {
+  border: none;
+  border-top: 1px solid var(--border);
+  margin: 2px 0;
+}
+
 .agent-subagent {
   display: flex;
   align-items: stretch;
@@ -657,6 +664,7 @@
 }
 
 .agent-subagent--running {
+  border-left: 3px solid var(--accent);
   border-color: color-mix(in srgb, var(--accent) 36%, var(--border));
   background: linear-gradient(
     180deg,

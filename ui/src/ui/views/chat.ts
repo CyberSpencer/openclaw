@@ -261,12 +261,13 @@ function formatSubagentRuntime(session: {
   modelApplied?: boolean;
   routing?: string;
   complexity?: string;
-}): string {
+}): { short: string; full: string } {
   const provider = typeof session.modelProvider === "string" ? session.modelProvider.trim() : "";
   const modelValue = typeof session.model === "string" ? session.model.trim() : "";
-  return provider && !modelValue.includes("/")
-    ? `${provider}/${modelValue}`
-    : modelValue || "unknown";
+  const short = modelValue || "unknown";
+  const full =
+    provider && !modelValue.includes("/") ? `${provider}/${modelValue}` : modelValue || "unknown";
+  return { short, full };
 }
 
 function extractImages(message: unknown): ImageBlock[] {
@@ -974,6 +975,14 @@ function renderOrchestrationCard(props: ChatProps) {
       ? `${props.sessionKey.slice(0, 10)}…${props.sessionKey.slice(-10)}`
       : props.sessionKey;
 
+  // Sort subagents: running first, then todo/blocked, then done/skipped
+  const sortedSubagents = [...subagents].toSorted((a, b) => {
+    const order = (st?: string) =>
+      st === "running" ? 0 : st === "done" || st === "skipped" ? 2 : 1;
+    return order(a.runStatus) - order(b.runStatus);
+  });
+  const runningSubagentCount = sortedSubagents.filter((s) => s.runStatus === "running").length;
+
   return html`
     <section class="card agent-orchestration ${expanded ? "" : "agent-orchestration--collapsed"}" aria-label="Agent orchestration">
       <div class="agent-orchestration__header">
@@ -1049,9 +1058,7 @@ function renderOrchestrationCard(props: ChatProps) {
           ${
             subagents.length > 0
               ? html`
-                  <div class="agent-subagents__hint muted">
-                    thread sessions, one-shot runs, and background coding agents spawned by this thread
-                  </div>
+                  <div class="agent-subagents__hint muted">spawned by this thread</div>
                 `
               : nothing
           }
@@ -1069,13 +1076,23 @@ function renderOrchestrationCard(props: ChatProps) {
                   <div class="muted agent-subagents__empty">Loading…</div>
                 `
               : subagents.length === 0
-                ? nothing
+                ? html`
+                    <div class="agent-subagents__empty muted">No subagents yet.</div>
+                  `
                 : html`
                     <div class="agent-subagents__list">
-                      ${repeat(
-                        subagents,
-                        (s) => s.key,
-                        (s) => {
+                      ${sortedSubagents.map((s, subagentIdx) => {
+                        // Insert divider between running and non-running groups
+                        const showDivider =
+                          subagentIdx === runningSubagentCount &&
+                          runningSubagentCount > 0 &&
+                          runningSubagentCount < sortedSubagents.length;
+                        const divider = showDivider
+                          ? html`
+                              <hr class="agent-subagents__divider" />
+                            `
+                          : nothing;
+                        const s_render = (() => {
                           const label =
                             s.label?.trim() ||
                             s.derivedTitle?.trim() ||
@@ -1118,7 +1135,7 @@ function renderOrchestrationCard(props: ChatProps) {
                                 : s.spawnMode === "session"
                                   ? "thread"
                                   : "subagent";
-                          const runtimeDisplay = formatSubagentRuntime(s);
+                          const rt = formatSubagentRuntime(s);
                           const isRunning = s.runStatus === "running";
                           const canStop = isRunning && isOpenable && Boolean(props.onSubagentStop);
                           const openTitle = isOpenable
@@ -1158,8 +1175,8 @@ function renderOrchestrationCard(props: ChatProps) {
                                 </div>
                                 <div class="agent-subagent__sub">
                                   <div class="agent-subagent__subMeta">
-                                    <div class="agent-subagent__model mono" title=${runtimeDisplay}>
-                                      ${runtimeDisplay}
+                                    <div class="agent-subagent__model mono" title=${rt.full}>
+                                      ${rt.short}
                                     </div>
                                     <div class="agent-subagent__lane">${laneLabel}</div>
                                   </div>
@@ -1194,8 +1211,9 @@ function renderOrchestrationCard(props: ChatProps) {
                             }
                           </div>
                         `;
-                        },
-                      )}
+                        })();
+                        return html`${divider}${s_render}`;
+                      })}
                     </div>
                   `
         }
@@ -1287,7 +1305,7 @@ function renderOrchestrationCard(props: ChatProps) {
                                     assignedKey
                                       ? html`
                                           <button
-                                            class="agent-task__assigned"
+                                            class="agent-task__chip"
                                             type="button"
                                             ?disabled=${!canOpenAssigned}
                                             @click=${() => {
@@ -1298,16 +1316,16 @@ function renderOrchestrationCard(props: ChatProps) {
                                             }}
                                             title=${assignedTitle}
                                           >
-                                            <span class="mono agent-task__assignedKey">
+                                            <span class="mono agent-task__chipKey">
                                               ${assignedLabel}
                                             </span>
-                                            <span class="agent-task__assignedAge mono">
+                                            <span class="agent-task__chipAge mono">
                                               ${formatRelativeTimestamp(updatedAt, { fallback: "" })}
                                             </span>
                                             ${
                                               assignedMissing
                                                 ? html`
-                                                    <span class="muted agent-task__assignedMissing">(pruned)</span>
+                                                    <span class="muted agent-task__chipMissing">(pruned)</span>
                                                   `
                                                 : nothing
                                             }
