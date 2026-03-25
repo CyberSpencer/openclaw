@@ -297,7 +297,8 @@ describe("model-selection", () => {
 
           expect(sel.model).toBe("openai-codex/gpt-5.4");
           expect(sel.rateLimitFallback).toBe(true);
-          expect(sel.route).toBe("anthropic-nemotron");
+          // route should reflect the actual selected model, not a fixed placeholder
+          expect(sel.route).toBe("configured-default");
         },
       );
     });

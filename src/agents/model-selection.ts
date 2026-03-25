@@ -55,8 +55,9 @@ export type AnthropicModelLane =
   | "anthropic-opus";
 
 /**
- * Last-resort model when Anthropic Sonnet is rate-limited and no configured
- * fallback chain yields a usable ref. Prefer Spark vLLM Nemotron (private lane).
+ * Last-resort fallback model used when the entire configured subagent chain
+ * is exhausted (all entries are Anthropic and all are suppressed).
+ * Routes to the local Spark/vLLM Nemotron instance — the unlimited backstop.
  */
 export const ANTHROPIC_RATE_LIMIT_FALLBACK_MODEL = "spark-vllm/nemotron-3-super";
 
@@ -473,6 +474,47 @@ export function resolveSubagentConfiguredModelSelection(params: {
   );
 }
 
+/**
+ * Build the ordered model chain (primary + fallbacks) for a subagent spawn,
+ * using the same config priority as resolveSubagentConfiguredModelSelection:
+ *   1. Agent-specific subagents.model config
+ *   2. Global defaults subagents.model config
+ *   3. Agent-specific model config (non-subagents override)
+ *   4. Runtime default ref as last resort
+ *
+ * Returns the full list so the caller can walk it and skip suppressed entries.
+ */
+function resolveSubagentModelChain(params: {
+  cfg: OpenClawConfig;
+  agentId: string;
+  runtimeDefaultRef: string;
+}): string[] {
+  const agentConfig = resolveAgentConfig(params.cfg, params.agentId);
+
+  // Priority 1: agent-specific subagents.model
+  const agentSubModel = agentConfig?.subagents?.model;
+  const agentSubPrimary = normalizeModelSelection(agentSubModel);
+  if (agentSubPrimary) {
+    return [agentSubPrimary, ...resolveAgentModelFallbackValues(agentSubModel)];
+  }
+
+  // Priority 2: global defaults subagents.model
+  const globalSubModel = params.cfg.agents?.defaults?.subagents?.model;
+  const globalSubPrimary = normalizeModelSelection(globalSubModel);
+  if (globalSubPrimary) {
+    return [globalSubPrimary, ...resolveAgentModelFallbackValues(globalSubModel)];
+  }
+
+  // Priority 3: agent-specific model (non-subagents override)
+  const agentModel = agentConfig?.model;
+  const agentPrimary = normalizeModelSelection(agentModel);
+  if (agentPrimary) {
+    return [agentPrimary, ...resolveAgentModelFallbackValues(agentModel)];
+  }
+
+  return [params.runtimeDefaultRef];
+}
+
 export function resolveSubagentSpawnModelSelection(params: {
   cfg: OpenClawConfig;
   agentId: string;
@@ -486,125 +528,83 @@ export function resolveSubagentSpawnModelSelection(params: {
   });
   const resolvedOverride = normalizeModelSelection(params.modelOverride);
   if (resolvedOverride) {
-    return {
-      model: resolvedOverride,
-      route: "explicit",
-    };
+    // Explicit overrides bypass suppression checks entirely.
+    return resolveAnthropicAwareSelection(resolvedOverride, "explicit");
   }
 
-  const configuredModel = resolveSubagentConfiguredModelSelection({
+  const runtimeDefaultRef = `${runtimeDefault.provider}/${runtimeDefault.model}`;
+  const chain = resolveSubagentModelChain({
     cfg: params.cfg,
     agentId: params.agentId,
+    runtimeDefaultRef,
   });
 
-  const candidateModel =
-    configuredModel ??
-    normalizeModelSelection(resolveAgentModelPrimaryValue(params.cfg.agents?.defaults?.model)) ??
-    `${runtimeDefault.provider}/${runtimeDefault.model}`;
-
-  return resolveAnthropicAwareSelection(candidateModel, "configured-default", now, {
-    cfg: params.cfg,
-    agentId: params.agentId,
-  });
-}
-
-function resolveSubagentSpawnFallbackChain(params: {
-  cfg: OpenClawConfig;
-  agentId: string;
-}): string[] {
-  const agent = resolveAgentConfig(params.cfg, params.agentId);
-  const fromAgent = resolveAgentModelFallbackValues(agent?.subagents?.model);
-  const defaultsSub = resolveAgentModelFallbackValues(
-    params.cfg.agents?.defaults?.subagents?.model,
-  );
-  const mainFallbacks = resolveAgentModelFallbackValues(params.cfg.agents?.defaults?.model);
-
-  const out: string[] = [];
-  const seen = new Set<string>();
-  const add = (refs: string[]) => {
-    for (const r of refs) {
-      const t = r.trim();
-      if (!t) {
-        continue;
-      }
-      const k = t.toLowerCase();
-      if (seen.has(k)) {
-        continue;
-      }
-      seen.add(k);
-      out.push(t);
+  // Walk the chain in configured order, skipping Anthropic models that are
+  // currently suppressed (blanket outage or per-model rate-limit cooldown).
+  //
+  // Blanket suppression → isAnthropicModelSuppressed returns true for every
+  //   Anthropic entry; the walk falls through to the first non-Anthropic model
+  //   (e.g. openai-codex/gpt-5.4), not all the way to the local fallback.
+  //
+  // Per-model suppression (e.g. Sonnet hits its own rate limit while Haiku
+  //   and Opus remain available) → only that specific model is skipped; the
+  //   next entry in the chain is tried and may be OpenAI or another Anthropic
+  //   tier that is not separately suppressed.
+  //
+  // Non-Anthropic models (OpenAI, Spark, Ollama) are never affected by
+  //   Anthropic suppression and always pass through immediately.
+  //
+  // When any entry was skipped due to suppression, rateLimitFallback=true is
+  //   set so telemetry knows the path was rate-limit-driven. The route tag
+  //   reflects the actually-selected model (e.g. "anthropic-haiku" when Haiku
+  //   is the fallback Anthropic tier, or "configured-default" for a
+  //   non-Anthropic fallback like openai-codex/gpt-5.4) rather than a fixed
+  //   placeholder — accurate route tagging is needed for meaningful telemetry.
+  let skippedSuppressed = false;
+  for (const candidate of chain) {
+    const anthropicLane = resolveAnthropicLane(candidate);
+    if (anthropicLane && isAnthropicModelSuppressed(candidate, now)) {
+      log.info(`[routing] ${candidate} suppressed; trying next entry in fallback chain`);
+      skippedSuppressed = true;
+      continue;
     }
-  };
-  add(fromAgent);
-  add(defaultsSub);
-  add(mainFallbacks);
-  return out;
-}
-
-/**
- * Sonnet refs that are in Anthropic cooldown should not be chosen as the swap target.
- * Only call `isAnthropicModelSuppressed` for Sonnet-shaped refs so blanket suppression
- * does not incorrectly block non-Anthropic fallbacks (e.g. Codex).
- */
-function isAnthropicSonnetCooldownBlocked(modelRef: string, now: number): boolean {
-  if (resolveAnthropicLane(modelRef) !== "anthropic-sonnet") {
-    return false;
-  }
-  return isAnthropicModelSuppressed(modelRef, now);
-}
-
-function pickAnthropicSuppressionFallback(params: {
-  cfg: OpenClawConfig;
-  agentId: string;
-  now: number;
-}): string {
-  for (const ref of resolveSubagentSpawnFallbackChain(params)) {
-    if (!isAnthropicSonnetCooldownBlocked(ref, params.now)) {
-      return ref;
+    const result = resolveAnthropicAwareSelection(candidate, "configured-default");
+    if (skippedSuppressed) {
+      return { ...result, rateLimitFallback: true };
     }
+    return result;
   }
-  // Use the config-level local fallback model before the hardcoded last resort.
+
+  // All entries in the chain were Anthropic and suppressed — hard local fallback.
+  // Prefer the user-configured local fallback model (routing.localFallbackModel)
+  // before the hardcoded last resort.
   const localFallback = params.cfg.routing?.localFallbackModel?.trim();
-  return localFallback || ANTHROPIC_RATE_LIMIT_FALLBACK_MODEL;
+  const fallbackModel = localFallback || ANTHROPIC_RATE_LIMIT_FALLBACK_MODEL;
+  log.warn(`[routing] All configured models suppressed; falling back to ${fallbackModel}`);
+  return {
+    model: fallbackModel,
+    route: "anthropic-nemotron",
+    rateLimitFallback: true,
+  };
 }
 
 /**
- * Resolve the final model + route for a given candidate model string.
+ * Attach the Anthropic routing-lane tag to a pre-selected model string.
  *
- * If the candidate is an Anthropic Sonnet model and it is currently
- * rate-limited (suppressed), substitute the first usable model from the
- * configured subagent/main fallback chains, then {@link ANTHROPIC_RATE_LIMIT_FALLBACK_MODEL}.
- *
- * For all other Anthropic models, attaches the appropriate lane tag so
- * telemetry and the UI can show which tier was used.
+ * Suppression checks are intentionally NOT performed here — they are handled
+ * upstream in resolveSubagentSpawnModelSelection, which walks the full
+ * configured fallback chain and skips suppressed entries before calling this.
+ * Explicit model overrides also bypass suppression and come straight here.
  */
 function resolveAnthropicAwareSelection(
   candidateModel: string,
   baseRoute: SubagentModelRoute,
-  now: number,
-  ctx: { cfg: OpenClawConfig; agentId: string },
 ): SubagentSpawnModelSelection {
   const anthropicLane = resolveAnthropicLane(candidateModel);
   if (!anthropicLane) {
     // Not an Anthropic model — return as-is with the base route.
     return { model: candidateModel, route: baseRoute };
   }
-
-  // Sonnet rate-limit cooldown routing: walk configured fallbacks before hardcoded last resort.
-  if (anthropicLane === "anthropic-sonnet" && isAnthropicModelSuppressed(candidateModel, now)) {
-    const fallback = pickAnthropicSuppressionFallback({
-      cfg: ctx.cfg,
-      agentId: ctx.agentId,
-      now,
-    });
-    log.info(`[routing] Anthropic Sonnet suppressed; routing subagent to ${fallback}`);
-    return {
-      model: fallback,
-      route: "anthropic-nemotron",
-      rateLimitFallback: true,
-    };
-  }
-
   return { model: candidateModel, route: anthropicLane };
 }
 
