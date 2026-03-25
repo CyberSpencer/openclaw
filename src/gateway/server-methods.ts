@@ -27,6 +27,7 @@ import { sparkVoiceMethodsHandlers } from "./server-methods/spark-voice-methods.
 import { sparkVoiceHandlers } from "./server-methods/spark-voice.js";
 import { systemHandlers } from "./server-methods/system.js";
 import { talkHandlers } from "./server-methods/talk.js";
+import { toolsCatalogHandlers } from "./server-methods/tools-catalog.js";
 import { ttsHandlers } from "./server-methods/tts.js";
 import type { GatewayRequestHandlers, GatewayRequestOptions } from "./server-methods/types.js";
 import { updateHandlers } from "./server-methods/update.js";
@@ -91,6 +92,8 @@ const READ_METHODS = new Set([
   "node.list",
   "node.describe",
   "chat.history",
+  "talk.config",
+  "tools.catalog",
 ]);
 const WRITE_METHODS = new Set([
   "send",
@@ -138,6 +141,10 @@ function authorizeGatewayMethod(method: string, client: GatewayRequestOptions["c
   }
   if (role !== "operator") {
     return errorShape(ErrorCodes.INVALID_REQUEST, `unauthorized role: ${role}`);
+  }
+  // health is a free endpoint — always accessible regardless of scopes
+  if (method === "health") {
+    return null;
   }
   if (scopes.includes(ADMIN_SCOPE)) {
     return null;
@@ -231,6 +238,7 @@ export const coreGatewayHandlers: GatewayRequestHandlers = {
   ...agentHandlers,
   ...agentsHandlers,
   ...browserHandlers,
+  ...toolsCatalogHandlers,
 };
 
 export async function handleGatewayRequest(
