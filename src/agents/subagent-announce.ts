@@ -431,32 +431,92 @@ export function buildSubagentSystemPrompt(params: {
   childSessionKey: string;
   label?: string;
   task?: string;
+  /**
+   * Depth of this sub-agent in the spawn hierarchy (1 = direct child of main agent,
+   * 2 = grandchild, etc.). Used together with `maxSpawnDepth` to decide whether to
+   * include orchestrator-level spawning guidance or leaf-level restrictions.
+   */
+  childDepth?: number;
+  /**
+   * Maximum allowed spawn depth.  When `childDepth < maxSpawnDepth` the prompt
+   * includes guidance for orchestrators that can spawn further sub-agents.
+   * When `childDepth >= maxSpawnDepth` the prompt marks this as a leaf worker.
+   * When omitted (or `maxSpawnDepth` is 1) no sub-agent spawning section is rendered.
+   */
+  maxSpawnDepth?: number;
+  /** Whether ACP (coding-agent harness) spawning is enabled.  Defaults to true. */
+  acpEnabled?: boolean;
 }) {
   const taskText =
     typeof params.task === "string" && params.task.trim()
       ? params.task.replace(/\s+/g, " ").trim()
       : "{{TASK_DESCRIPTION}}";
-  const lines = [
+
+  // Determine the spawn tier for this agent.
+  const depth = typeof params.childDepth === "number" ? params.childDepth : undefined;
+  const maxDepth = typeof params.maxSpawnDepth === "number" ? params.maxSpawnDepth : undefined;
+  // An orchestrator can spawn further sub-agents; a leaf worker cannot.
+  const isOrchestrator =
+    depth !== undefined && maxDepth !== undefined && maxDepth > 1 && depth < maxDepth;
+  const isLeafWorker =
+    depth !== undefined && maxDepth !== undefined && maxDepth > 1 && depth >= maxDepth;
+  const acpEnabled = params.acpEnabled !== false;
+
+  // For depth-2+ agents, the "parent" is the parent orchestrator rather than the main agent.
+  const parentLabel =
+    depth !== undefined && depth >= 2 ? "the parent orchestrator" : "the main agent";
+
+  const lines: Array<string | undefined> = [
     "# Subagent Context",
     "",
-    "You are a **subagent** spawned by the main agent for a specific task.",
+    `You are a **subagent** spawned by ${parentLabel} for a specific task.`,
     "",
     "## Your Role",
     `- You were created to handle: ${taskText}`,
     "- Complete this task. That's your entire purpose.",
-    "- You are NOT the main agent. Don't try to be.",
+    `- You are NOT the main agent. Don't try to be.`,
     "",
     "## Working Style (be methodical)",
     "- Break the task into 3-8 concrete subtasks (a short checklist).",
     "- Work through them in order. If you get blocked, stop early and report what you need.",
     "- Prefer tight, verifiable actions over broad advice (commands run, files changed, tests).",
+    "- For large files use offset/limit instead of full-file `cat`; long tool outputs are often truncated.",
+    "- Context tokens are finite: `[compacted: tool output removed to free context]` and `[truncated: output exceeded context limit]` markers mean data was dropped — re-fetch what you need.",
     "",
     "## Rules",
     "1. **Stay focused** - Do your assigned task, nothing else",
-    "2. **Complete the task** - Your final message will be automatically reported to the main agent",
+    `2. **Complete the task** - Your final message will be automatically reported to ${parentLabel}`,
     "3. **Don't initiate** - No heartbeats, no proactive actions, no side quests",
     "4. **Be ephemeral** - You may be terminated after task completion. That's fine.",
     "",
+  ];
+
+  // Sub-agent spawning guidance — only rendered when this agent has spawn capacity.
+  if (isOrchestrator) {
+    lines.push("## Sub-Agent Spawning");
+    lines.push(
+      "You CAN spawn your own sub-agents for parallel or complex work using `sessions_spawn`.",
+    );
+    lines.push("- Use `subagents` only for OpenClaw subagents, not ACP harness agents.");
+    lines.push("- Subagent results auto-announce back to you when they complete.");
+    lines.push("- Avoid polling loops: do not busy-poll `subagents list` or `sessions_list`.");
+    lines.push("- Do not ask users to run slash commands or CLI commands; use tools directly.");
+    lines.push("- Do not use `exec` (`openclaw ...`, `acpx ...`) to drive sub-agents.");
+    if (acpEnabled) {
+      lines.push('- For ACP harness sessions (codex/claudecode/gemini), use runtime: "acp".');
+      lines.push("- set `agentId` unless `acp.defaultAgent` is configured.");
+    }
+    lines.push("");
+  } else if (isLeafWorker) {
+    lines.push("## Sub-Agent Spawning");
+    lines.push(
+      "You are a **leaf worker** in a multi-level orchestration: you CANNOT spawn further sub-agents.",
+    );
+    lines.push("- Complete your task and return results directly.");
+    lines.push("");
+  }
+
+  lines.push(
     "## Final Output Format (required)",
     "When complete, your final response must include these headings:",
     "- Summary (1-3 bullets)",
@@ -479,8 +539,9 @@ export function buildSubagentSystemPrompt(params: {
       : undefined,
     `- Your session: ${params.childSessionKey}.`,
     "",
-  ].filter((line): line is string => line !== undefined);
-  return lines.join("\n");
+  );
+
+  return lines.filter((line): line is string => line !== undefined).join("\n");
 }
 
 export type SubagentRunOutcome = {
@@ -507,6 +568,7 @@ export async function runSubagentAnnounceFlow(params: {
   outcome?: SubagentRunOutcome;
   announceType?: SubagentAnnounceType;
   expectsCompletionMessage?: boolean;
+  bestEffortDeliver?: boolean;
   spawnMode?: "run" | "session";
 }): Promise<boolean> {
   let didAnnounce = false;

@@ -558,6 +558,26 @@ vi.mock("../agents/pi-embedded.js", async () => {
   };
 });
 
+// Mirror the pi-embedded mock for the split-out runs module (server-methods/sessions.ts
+// imports directly from pi-embedded-runner/runs.js after the refactor in bd4adbb731).
+vi.mock("../agents/pi-embedded-runner/runs.js", async () => {
+  const actual = await vi.importActual<typeof import("../agents/pi-embedded-runner/runs.js")>(
+    "../agents/pi-embedded-runner/runs.js",
+  );
+  return {
+    ...actual,
+    isEmbeddedPiRunActive: (sessionId: string) => embeddedRunMock.activeIds.has(sessionId),
+    abortEmbeddedPiRun: (sessionId: string) => {
+      embeddedRunMock.abortCalls.push(sessionId);
+      return embeddedRunMock.activeIds.has(sessionId);
+    },
+    waitForEmbeddedPiRunEnd: async (sessionId: string) => {
+      embeddedRunMock.waitCalls.push(sessionId);
+      return embeddedRunMock.waitResults.get(sessionId) ?? true;
+    },
+  };
+});
+
 vi.mock("../commands/health.js", () => ({
   getHealthSnapshot: vi.fn().mockResolvedValue({ ok: true, stub: true }),
 }));

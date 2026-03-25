@@ -361,6 +361,7 @@ export async function dispatchCronDelivery(
         timeoutMs: params.timeoutMs,
         cleanup: params.job.deleteAfterRun ? "delete" : "keep",
         roundOneReply: synthesizedText,
+        bestEffortDeliver: options.delivery?.bestEffort ?? false,
         // Cron output is a finished completion message: send it directly to the
         // target channel via the completion-direct-send path rather than injecting
         // a trigger message into the (likely idle) main agent session.

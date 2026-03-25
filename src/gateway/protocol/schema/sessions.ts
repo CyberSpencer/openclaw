@@ -37,9 +37,12 @@ const TaskPlanSchema = Type.Object(
 export const SessionsListParamsSchema = Type.Object(
   {
     limit: Type.Optional(Type.Integer({ minimum: 1 })),
+    offset: Type.Optional(Type.Integer({ minimum: 0 })),
     activeMinutes: Type.Optional(Type.Integer({ minimum: 1 })),
     includeGlobal: Type.Optional(Type.Boolean()),
     includeUnknown: Type.Optional(Type.Boolean()),
+    kind: Type.Optional(Type.Union([Type.Literal("direct"), Type.Literal("subagent")])),
+    includeSubagents: Type.Optional(Type.Boolean()),
     /**
      * Read first 8KB of each session transcript to derive title from first user message.
      * Performs a file read per session - use `limit` to bound result set on large stores.

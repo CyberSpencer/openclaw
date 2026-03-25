@@ -747,6 +747,9 @@ export function listSessionsFromStore(params: {
       ? Math.max(1, Math.floor(opts.activeMinutes))
       : undefined;
 
+  const kind = opts.kind ?? "direct"; // "direct" or "subagent"
+  const includeSubagents = opts.includeSubagents === true;
+
   let sessions = Object.entries(store)
     .filter(([key]) => {
       if (isCronRunSessionKey(key)) {
@@ -756,6 +759,15 @@ export function listSessionsFromStore(params: {
         return false;
       }
       if (!includeUnknown && key === "unknown") {
+        return false;
+      }
+      // Filter by kind: "direct" or "subagent"
+      const isSubagentKey =
+        key.startsWith("subagent:") || (key.startsWith("agent:") && key.includes(":subagent:"));
+      if (kind === "direct" && !includeSubagents && isSubagentKey) {
+        return false;
+      }
+      if (kind === "subagent" && !isSubagentKey) {
         return false;
       }
       if (agentId) {
@@ -867,12 +879,21 @@ export function listSessionsFromStore(params: {
     sessions = sessions.filter((s) => (s.updatedAt ?? 0) >= cutoff);
   }
 
-  if (typeof opts.limit === "number" && Number.isFinite(opts.limit)) {
-    const limit = Math.max(1, Math.floor(opts.limit));
-    sessions = sessions.slice(0, limit);
-  }
+  const offset =
+    typeof opts.offset === "number" && Number.isFinite(opts.offset)
+      ? Math.max(0, Math.floor(opts.offset))
+      : 0;
+  const limit =
+    typeof opts.limit === "number" && Number.isFinite(opts.limit)
+      ? Math.max(1, Math.floor(opts.limit))
+      : undefined;
 
-  const finalSessions: GatewaySessionRow[] = sessions.map((s) => {
+  const totalCount = sessions.length;
+  const paginatedSessions = limit ? sessions.slice(offset, offset + limit) : sessions.slice(offset);
+  const hasMore = limit ? offset + limit < totalCount : false;
+  const nextOffset = hasMore ? offset + (limit ?? totalCount) : null;
+
+  const finalSessions: GatewaySessionRow[] = paginatedSessions.map((s) => {
     const { entry, ...rest } = s;
     let derivedTitle: string | undefined;
     let lastMessagePreview: string | undefined;
@@ -902,6 +923,11 @@ export function listSessionsFromStore(params: {
     ts: now,
     path: storePath,
     count: finalSessions.length,
+    total: totalCount,
+    offset,
+    limit,
+    hasMore,
+    nextOffset,
     defaults: getSessionDefaults(cfg),
     sessions: finalSessions,
   };
