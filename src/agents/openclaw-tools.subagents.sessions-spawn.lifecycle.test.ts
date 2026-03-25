@@ -179,7 +179,7 @@ describe("openclaw-tools: subagents (sessions_spawn lifecycle)", () => {
 
     // Second call: main agent trigger (not "Sub-agent announce step." anymore)
     const second = agentCalls[1]?.params as { sessionKey?: string; message?: string } | undefined;
-    expect(second?.sessionKey).toBe("agent:main:main");
+    expect(second?.sessionKey).toBe("main");
     expect(second?.message).toContain("subagent task");
 
     // No direct send to external channel (main agent handles delivery)
@@ -244,7 +244,7 @@ describe("openclaw-tools: subagents (sessions_spawn lifecycle)", () => {
           deliver?: boolean;
         }
       | undefined;
-    expect(second?.sessionKey).toBe("agent:main:discord:group:req");
+    expect(second?.sessionKey).toBe("discord:group:req");
     expect(second?.deliver).toBe(false);
     expect(second?.message).toContain("subagent task");
 
@@ -296,7 +296,7 @@ describe("openclaw-tools: subagents (sessions_spawn lifecycle)", () => {
 
     // Second call: main agent trigger
     const second = agentCalls[1]?.params as { sessionKey?: string; deliver?: boolean } | undefined;
-    expect(second?.sessionKey).toBe("agent:main:discord:group:req");
+    expect(second?.sessionKey).toBe("discord:group:req");
     expect(second?.deliver).toBe(false);
 
     // No direct send to external channel (main agent handles delivery)
@@ -366,7 +366,7 @@ describe("openclaw-tools: subagents (sessions_spawn lifecycle)", () => {
       | { accountId?: string; channel?: string; deliver?: boolean }
       | undefined;
     expect(announceParams?.deliver).toBe(false);
-    expect(announceParams?.channel).toBeUndefined();
-    expect(announceParams?.accountId).toBeUndefined();
+    expect(announceParams?.channel).toBe("whatsapp");
+    expect(announceParams?.accountId).toBe("kev");
   });
 });

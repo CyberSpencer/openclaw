@@ -109,12 +109,10 @@ describe("subagent announce formatting", () => {
       params?: {
         message?: string;
         sessionKey?: string;
-        internalEvents?: Array<Record<string, unknown>>;
         idempotencyKey?: string;
       };
     };
     const msg = call?.params?.message as string;
-    const event = call?.params?.internalEvents?.[0];
     expect(call?.params?.sessionKey).toBe("agent:main:main");
     expect(msg).toContain("subagent task");
     expect(msg).toContain("failed");
@@ -122,15 +120,6 @@ describe("subagent announce formatting", () => {
     expect(msg).toContain("Findings:");
     expect(msg).toContain("raw subagent reply");
     expect(msg).toContain("Stats:");
-    expect(event).toMatchObject({
-      type: "task_completion",
-      source: "subagent",
-      childSessionKey: "agent:main:subagent:test",
-      taskLabel: "do thing",
-      status: "error",
-      statusLabel: "failed: boom",
-      result: "raw subagent reply",
-    });
     expect(String(call?.params?.idempotencyKey)).toBe(
       "announce:v1:agent:main:subagent:test:run-123",
     );
@@ -227,21 +216,13 @@ describe("subagent announce formatting", () => {
     await expect.poll(() => agentSpy.mock.calls.length).toBe(1);
 
     const call = agentSpy.mock.calls[0]?.[0] as {
-      params?: Record<string, unknown> & { internalEvents?: Array<Record<string, unknown>> };
+      params?: Record<string, unknown>;
     };
     expect(call?.params?.channel).toBe("whatsapp");
     expect(call?.params?.to).toBe("+1555");
     expect(call?.params?.accountId).toBe("kev");
     expect(String(call?.params?.message)).not.toContain("Findings:");
-    expect(String(call?.params?.message)).toContain(
-      "Use the internal task completion event data above",
-    );
-    expect(call?.params?.internalEvents?.[0]).toMatchObject({
-      type: "task_completion",
-      taskLabel: "do thing",
-      status: "ok",
-      result: "raw subagent reply",
-    });
+    expect(String(call?.params?.message)).toContain("See internal event for details.");
     expect(call?.params?.idempotencyKey).toBe("announce:v1:agent:main:subagent:test:run-999");
   });
 
