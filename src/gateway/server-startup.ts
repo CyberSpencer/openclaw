@@ -28,6 +28,7 @@ import {
   shouldWakeFromRestartSentinel,
 } from "./server-restart-sentinel.js";
 import { startGatewayMemoryBackend } from "./server-startup-memory.js";
+import { recoverZombieSessions } from "./server-startup-zombie-recovery.js";
 
 const SESSION_LOCK_STALE_MS = 30 * 60 * 1000;
 
@@ -50,12 +51,14 @@ export async function startGatewaySidecars(params: {
     const stateDir = resolveStateDir(process.env);
     const sessionDirs = await resolveAgentSessionDirs(stateDir);
     for (const sessionsDir of sessionDirs) {
-      await cleanStaleLockFiles({
+      const { cleaned } = await cleanStaleLockFiles({
         sessionsDir,
         staleMs: SESSION_LOCK_STALE_MS,
         removeStale: true,
         log: { warn: (message) => params.log.warn(message) },
       });
+      // Recover sessions whose agent runs were interrupted by the gateway crash.
+      await recoverZombieSessions({ sessionsDir, cleaned });
     }
   } catch (err) {
     params.log.warn(`session lock cleanup failed on startup: ${String(err)}`);
