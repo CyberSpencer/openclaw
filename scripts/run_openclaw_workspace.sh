@@ -4,7 +4,9 @@
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
-CORE_DIR="$REPO_ROOT/core"
+# When this script lives inside the core repo (scripts/ -> parent IS core), use REPO_ROOT directly.
+# Previously pointed to REPO_ROOT/core when invoked from the outer wrapper repo.
+CORE_DIR="$REPO_ROOT"
 
 if [[ ! -f "$CORE_DIR/openclaw.mjs" ]]; then
   echo "run_openclaw_workspace: openclaw.mjs not found in $CORE_DIR" >&2
