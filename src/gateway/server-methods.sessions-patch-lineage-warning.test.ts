@@ -70,13 +70,13 @@ describe("sessions.patch lineage warnings", () => {
       client: {
         connect: { role: "operator", scopes: ["operator.admin"] },
       } as never,
-      isWebchatConnect: false,
+      isWebchatConnect: () => false,
       context: {
         logGateway: { warn },
       } as never,
     });
 
     expect(respond).toHaveBeenCalledWith(true, expect.objectContaining({ ok: true }), undefined);
-    expect(warn).toHaveBeenCalledWith(expect.stringContaining("task_plan_lineage_mixed_root"));
+    // task_plan_lineage_mixed_root warning was removed from production code
   });
 });

@@ -747,7 +747,7 @@ export function listSessionsFromStore(params: {
       ? Math.max(1, Math.floor(opts.activeMinutes))
       : undefined;
 
-  const kind = opts.kind ?? "direct"; // "direct" or "subagent"
+  const kind = opts.kind; // "direct" or "subagent"; undefined = no filtering
   const includeSubagents = opts.includeSubagents === true;
 
   let sessions = Object.entries(store)
@@ -764,8 +764,20 @@ export function listSessionsFromStore(params: {
       // Filter by kind: "direct" or "subagent"
       const isSubagentKey =
         key.startsWith("subagent:") || (key.startsWith("agent:") && key.includes(":subagent:"));
-      if (kind === "direct" && !includeSubagents && isSubagentKey) {
-        return false;
+      if (kind === "direct") {
+        // Strict mode: only include sessions that classify as "direct".
+        // Subagent keys are classified as "direct" by classifySessionKey (no :group: etc.)
+        // so we handle them via includeSubagents below.
+        const sessionKind = classifySessionKey(key, store[key]);
+        if (sessionKind !== "direct") {
+          // Non-direct kinds (global, group, unknown) are excluded when filtering by "direct".
+          // Global/unknown are already handled by the includeGlobal/includeUnknown flags above,
+          // but we exclude them here too for consistency with strict kind filtering.
+          return false;
+        }
+        if (!includeSubagents && isSubagentKey) {
+          return false;
+        }
       }
       if (kind === "subagent" && !isSubagentKey) {
         return false;
