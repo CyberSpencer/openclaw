@@ -115,7 +115,7 @@ const BASE_METHODS = [
   "chat.history",
   "chat.abort",
   "chat.send",
-  "chat.steer",
+  // "chat.steer", // removed: premature advertisement, no handler wired
   "router.status",
   "router.setEnabled",
   "spark.status",
