@@ -83,4 +83,19 @@ export class ExecApprovalManager {
     const entry = this.pending.get(recordId);
     return entry?.record ?? null;
   }
+
+  register(record: ExecApprovalRecord, timeoutMs: number): Promise<ExecApprovalDecision | null> {
+    return this.waitForDecision(record, timeoutMs);
+  }
+
+  expire(recordId: string, _reason?: string): boolean {
+    const pending = this.pending.get(recordId);
+    if (!pending) {
+      return false;
+    }
+    clearTimeout(pending.timer);
+    this.pending.delete(recordId);
+    pending.resolve(null);
+    return true;
+  }
 }
