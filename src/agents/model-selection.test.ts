@@ -1,3 +1,6 @@
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { describe, it, expect, vi } from "vitest";
 import type { OpenClawConfig } from "../config/config.js";
 import { resetLogger, setLoggerOverride } from "../logging/logger.js";
@@ -12,6 +15,7 @@ import {
   resolveAllowedModelRef,
   resolveConfiguredModelRef,
   resolveModelRefFromString,
+  resolveSubagentSpawnModelSelection,
 } from "./model-selection.js";
 
 describe("model-selection", () => {
@@ -239,6 +243,96 @@ describe("model-selection", () => {
       });
       expect(index.byAlias.get("smart")?.ref).toEqual({ provider: "openai", model: "gpt-4o" });
       expect(index.byKey.get(modelKey("anthropic", "claude-3-5-sonnet"))).toEqual(["fast"]);
+    });
+  });
+
+  describe("resolveSubagentSpawnModelSelection", () => {
+    function withSuppressionFile(payload: Record<string, unknown>, run: () => void) {
+      const prevRuntimeDir = process.env.OPENCLAW_RUNTIME_DIR;
+      const root = mkdtempSync(join(tmpdir(), "openclaw-anthropic-"));
+      const tmp = join(root, "tmp");
+      mkdirSync(tmp, { recursive: true });
+      writeFileSync(join(tmp, "router-anthropic-suppression.json"), JSON.stringify(payload));
+      process.env.OPENCLAW_RUNTIME_DIR = root;
+      try {
+        run();
+      } finally {
+        rmSync(root, { recursive: true, force: true });
+        if (prevRuntimeDir === undefined) {
+          delete process.env.OPENCLAW_RUNTIME_DIR;
+        } else {
+          process.env.OPENCLAW_RUNTIME_DIR = prevRuntimeDir;
+        }
+      }
+    }
+
+    it("uses configured fallback when Anthropic Sonnet is suppressed", () => {
+      withSuppressionFile(
+        {
+          per_model: {
+            "anthropic/claude-sonnet-4-6": {
+              suppressed_until: Math.floor(Date.now() / 1000) + 3600,
+            },
+          },
+        },
+        () => {
+          const cfg = {
+            agents: {
+              defaults: {
+                subagents: {
+                  model: {
+                    primary: "anthropic/claude-sonnet-4-6",
+                    fallbacks: ["openai-codex/gpt-5.4"],
+                  },
+                },
+              },
+            },
+          } as OpenClawConfig;
+
+          const sel = resolveSubagentSpawnModelSelection({
+            cfg,
+            agentId: "main",
+            now: Date.now(),
+          });
+
+          expect(sel.model).toBe("openai-codex/gpt-5.4");
+          expect(sel.rateLimitFallback).toBe(true);
+          expect(sel.route).toBe("anthropic-nemotron");
+        },
+      );
+    });
+
+    it("uses last-resort spark-vllm model when no fallbacks and Sonnet suppressed", () => {
+      withSuppressionFile(
+        {
+          per_model: {
+            "anthropic/claude-sonnet-4-6": {
+              suppressed_until: Math.floor(Date.now() / 1000) + 3600,
+            },
+          },
+        },
+        () => {
+          const cfg = {
+            agents: {
+              defaults: {
+                subagents: {
+                  model: {
+                    primary: "anthropic/claude-sonnet-4-6",
+                  },
+                },
+              },
+            },
+          } as OpenClawConfig;
+
+          const sel = resolveSubagentSpawnModelSelection({
+            cfg,
+            agentId: "main",
+            now: Date.now(),
+          });
+          expect(sel.model).toBe("spark-vllm/nemotron-3-super");
+          expect(sel.rateLimitFallback).toBe(true);
+        },
+      );
     });
   });
 
