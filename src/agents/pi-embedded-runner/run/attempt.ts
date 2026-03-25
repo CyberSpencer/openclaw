@@ -31,6 +31,7 @@ import { isReasoningTagProvider } from "../../../utils/provider-utils.js";
 import { resolveOpenClawAgentDir } from "../../agent-paths.js";
 import { resolveSessionAgentIds } from "../../agent-scope.js";
 import { createAnthropicPayloadLogger } from "../../anthropic-payload-log.js";
+import { wrapStreamFnWithAnthropicSemaphore } from "../../anthropic-stream-limiter.js";
 import { makeBootstrapWarn, resolveBootstrapContextForRun } from "../../bootstrap-files.js";
 import { createCacheTrace } from "../../cache-trace.js";
 import {
@@ -958,6 +959,17 @@ export async function runEmbeddedAttempt(
       } else {
         // Force a stable streamFn reference so vitest can reliably mock @mariozechner/pi-ai.
         activeSession.agent.streamFn = streamSimple;
+      }
+
+      // Limit concurrent Anthropic streams to prevent OOM.
+      // Large context windows (~35KB each) can exhaust process memory when many subagents
+      // stream simultaneously. Additional requests are queued until a slot is free.
+      // Configurable via agents.defaults.anthropic.maxConcurrentStreams (default: 3).
+      if (params.model.api === "anthropic-messages") {
+        activeSession.agent.streamFn = wrapStreamFnWithAnthropicSemaphore(
+          activeSession.agent.streamFn,
+          params.config,
+        );
       }
 
       // Ollama with OpenAI-compatible API needs num_ctx in payload.options.

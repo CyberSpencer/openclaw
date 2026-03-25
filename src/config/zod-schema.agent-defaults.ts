@@ -143,6 +143,19 @@ export const AgentDefaultsSchema = z
     typingMode: TypingModeSchema.optional(),
     heartbeat: HeartbeatSchema,
     maxConcurrent: z.number().int().positive().optional(),
+    anthropic: z
+      .object({
+        maxConcurrentStreams: z
+          .number()
+          .int()
+          .positive()
+          .optional()
+          .describe(
+            "Max concurrent Anthropic streaming API calls (default: 3). Additional requests are queued to prevent OOM.",
+          ),
+      })
+      .strict()
+      .optional(),
     subagents: z
       .object({
         maxConcurrent: z.number().int().positive().optional(),

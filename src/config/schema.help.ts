@@ -953,6 +953,10 @@ export const FIELD_HELP: Record<string, string> = {
     "User-prompt template used for the pre-compaction memory flush turn when generating memory candidates. Use this only when you need custom extraction instructions beyond the default memory flush behavior.",
   "agents.defaults.compaction.memoryFlush.systemPrompt":
     "System-prompt override for the pre-compaction memory flush turn to control extraction style and safety constraints. Use carefully so custom instructions do not reduce memory quality or leak sensitive context.",
+  "agents.defaults.anthropic":
+    "Anthropic provider-specific tuning (stream concurrency limits to prevent OOM under heavy subagent load).",
+  "agents.defaults.anthropic.maxConcurrentStreams":
+    "Max concurrent Anthropic streaming API calls in this process (default: 3). Additional requests are queued. Lower this if the gateway OOMs when many subagents run concurrently.",
   "agents.defaults.embeddedPi":
     "Embedded Pi runner hardening controls for how workspace-local Pi settings are trusted and applied in OpenClaw sessions.",
   "agents.defaults.embeddedPi.projectSettingsPolicy":
