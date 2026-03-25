@@ -37,6 +37,9 @@ export const AgentDefaultsSchema = z
     skipBootstrap: z.boolean().optional(),
     bootstrapMaxChars: z.number().int().positive().optional(),
     bootstrapTotalMaxChars: z.number().int().positive().optional(),
+    bootstrapPromptTruncationWarning: z
+      .union([z.literal("off"), z.literal("once"), z.literal("always")])
+      .optional(),
     userTimezone: z.string().optional(),
     timeFormat: z.union([z.literal("auto"), z.literal("12"), z.literal("24")]).optional(),
     envelopeTimezone: z.string().optional(),
@@ -81,6 +84,7 @@ export const AgentDefaultsSchema = z
     compaction: z
       .object({
         mode: z.union([z.literal("default"), z.literal("safeguard")]).optional(),
+        timeoutSeconds: z.number().int().positive().optional(),
         reserveTokens: z.number().int().nonnegative().optional(),
         keepRecentTokens: z.number().int().positive().optional(),
         reserveTokensFloor: z.number().int().nonnegative().optional(),

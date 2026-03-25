@@ -267,12 +267,16 @@ export function renderDgx(props: DgxProps): TemplateResult {
   const coreHealthy = coreServices.filter(([, s]) => s.healthy).length;
   const coreTotal = coreServices.length;
   const coreAllHealthy = coreTotal > 0 && coreHealthy === coreTotal;
-  const overall =
-    coreTotal > 0
+  // Trust backend's own overall assessment first; fall back to CORE_KEYS derivation
+  const overall = spark?.overall
+    ? spark.overall
+    : coreTotal > 0
       ? coreAllHealthy
         ? "healthy"
         : "down"
-      : (spark?.overall ?? (spark?.active ? "healthy" : "down"));
+      : spark?.active
+        ? "healthy"
+        : "down";
   const routing = props.routingStatus ?? null;
   const checkedAt = spark?.checkedAt;
   const checkedLabel = checkedAt
@@ -317,9 +321,11 @@ export function renderDgx(props: DgxProps): TemplateResult {
         <div class="dgx-header__right">
           <span class="dgx-badge ${overallBadgeClass(overall)}">
             ${
-              coreTotal > 0
-                ? html`${coreHealthy}/${coreTotal} core services`
-                : html`${overall.toUpperCase()}`
+              spark?.counts
+                ? html`${spark.counts.healthy}/${spark.counts.total} services`
+                : coreTotal > 0
+                  ? html`${coreHealthy}/${coreTotal} core services`
+                  : html`${overall.toUpperCase()}`
             }
           </span>
           ${checkedLabel ? html`<span class="muted">Updated: ${checkedLabel}</span>` : nothing}

@@ -2,7 +2,11 @@ import { existsSync, readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import type { OpenClawConfig } from "../config/config.js";
-import { resolveAgentModelPrimaryValue, toAgentModelListLike } from "../config/model-input.js";
+import {
+  resolveAgentModelFallbackValues,
+  resolveAgentModelPrimaryValue,
+  toAgentModelListLike,
+} from "../config/model-input.js";
 import { createSubsystemLogger } from "../logging/subsystem.js";
 import { resolveAgentConfig, resolveAgentEffectiveModelPrimary } from "./agent-scope.js";
 import { DEFAULT_MODEL, DEFAULT_PROVIDER } from "./defaults.js";
@@ -51,10 +55,10 @@ export type AnthropicModelLane =
   | "anthropic-opus";
 
 /**
- * Fallback model used when Sonnet is rate-limited.
- * Routes to the local Spark/Ollama Nemotron instance.
+ * Last-resort model when Anthropic Sonnet is rate-limited and no configured
+ * fallback chain yields a usable ref. Prefer Spark vLLM Nemotron (private lane).
  */
-export const ANTHROPIC_RATE_LIMIT_FALLBACK_MODEL = "ollama/nemotron-3-nano:30b";
+export const ANTHROPIC_RATE_LIMIT_FALLBACK_MODEL = "spark-vllm/nemotron-3-super";
 
 /** Classify an anthropic model string into a routing lane. */
 export function resolveAnthropicLane(modelRef: string): AnthropicModelLane | null {
@@ -498,15 +502,76 @@ export function resolveSubagentSpawnModelSelection(params: {
     normalizeModelSelection(resolveAgentModelPrimaryValue(params.cfg.agents?.defaults?.model)) ??
     `${runtimeDefault.provider}/${runtimeDefault.model}`;
 
-  return resolveAnthropicAwareSelection(candidateModel, "configured-default", now);
+  return resolveAnthropicAwareSelection(candidateModel, "configured-default", now, {
+    cfg: params.cfg,
+    agentId: params.agentId,
+  });
+}
+
+function resolveSubagentSpawnFallbackChain(params: {
+  cfg: OpenClawConfig;
+  agentId: string;
+}): string[] {
+  const agent = resolveAgentConfig(params.cfg, params.agentId);
+  const fromAgent = resolveAgentModelFallbackValues(agent?.subagents?.model);
+  const defaultsSub = resolveAgentModelFallbackValues(
+    params.cfg.agents?.defaults?.subagents?.model,
+  );
+  const mainFallbacks = resolveAgentModelFallbackValues(params.cfg.agents?.defaults?.model);
+
+  const out: string[] = [];
+  const seen = new Set<string>();
+  const add = (refs: string[]) => {
+    for (const r of refs) {
+      const t = r.trim();
+      if (!t) {
+        continue;
+      }
+      const k = t.toLowerCase();
+      if (seen.has(k)) {
+        continue;
+      }
+      seen.add(k);
+      out.push(t);
+    }
+  };
+  add(fromAgent);
+  add(defaultsSub);
+  add(mainFallbacks);
+  return out;
+}
+
+/**
+ * Sonnet refs that are in Anthropic cooldown should not be chosen as the swap target.
+ * Only call `isAnthropicModelSuppressed` for Sonnet-shaped refs so blanket suppression
+ * does not incorrectly block non-Anthropic fallbacks (e.g. Codex).
+ */
+function isAnthropicSonnetCooldownBlocked(modelRef: string, now: number): boolean {
+  if (resolveAnthropicLane(modelRef) !== "anthropic-sonnet") {
+    return false;
+  }
+  return isAnthropicModelSuppressed(modelRef, now);
+}
+
+function pickAnthropicSuppressionFallback(params: {
+  cfg: OpenClawConfig;
+  agentId: string;
+  now: number;
+}): string {
+  for (const ref of resolveSubagentSpawnFallbackChain(params)) {
+    if (!isAnthropicSonnetCooldownBlocked(ref, params.now)) {
+      return ref;
+    }
+  }
+  return ANTHROPIC_RATE_LIMIT_FALLBACK_MODEL;
 }
 
 /**
  * Resolve the final model + route for a given candidate model string.
  *
  * If the candidate is an Anthropic Sonnet model and it is currently
- * rate-limited (suppressed), transparently substitutes the local
- * Nemotron/Spark fallback model instead of hammering the Anthropic API.
+ * rate-limited (suppressed), substitute the first usable model from the
+ * configured subagent/main fallback chains, then {@link ANTHROPIC_RATE_LIMIT_FALLBACK_MODEL}.
  *
  * For all other Anthropic models, attaches the appropriate lane tag so
  * telemetry and the UI can show which tier was used.
@@ -515,6 +580,7 @@ function resolveAnthropicAwareSelection(
   candidateModel: string,
   baseRoute: SubagentModelRoute,
   now: number,
+  ctx: { cfg: OpenClawConfig; agentId: string },
 ): SubagentSpawnModelSelection {
   const anthropicLane = resolveAnthropicLane(candidateModel);
   if (!anthropicLane) {
@@ -522,13 +588,16 @@ function resolveAnthropicAwareSelection(
     return { model: candidateModel, route: baseRoute };
   }
 
-  // Sonnet rate-limit cooldown routing: swap to local Nemotron/Spark when suppressed.
+  // Sonnet rate-limit cooldown routing: walk configured fallbacks before hardcoded last resort.
   if (anthropicLane === "anthropic-sonnet" && isAnthropicModelSuppressed(candidateModel, now)) {
-    log.info(
-      `[routing] Anthropic Sonnet suppressed; routing subagent to ${ANTHROPIC_RATE_LIMIT_FALLBACK_MODEL}`,
-    );
+    const fallback = pickAnthropicSuppressionFallback({
+      cfg: ctx.cfg,
+      agentId: ctx.agentId,
+      now,
+    });
+    log.info(`[routing] Anthropic Sonnet suppressed; routing subagent to ${fallback}`);
     return {
-      model: ANTHROPIC_RATE_LIMIT_FALLBACK_MODEL,
+      model: fallback,
       route: "anthropic-nemotron",
       rateLimitFallback: true,
     };

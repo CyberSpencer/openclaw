@@ -134,6 +134,8 @@ export type AgentDefaultsConfig = {
   bootstrapMaxChars?: number;
   /** Max total chars across all injected bootstrap files (default: 150000). */
   bootstrapTotalMaxChars?: number;
+  /** When to warn about bootstrap file truncation (workspace sync / Pi). */
+  bootstrapPromptTruncationWarning?: "off" | "once" | "always";
   /** Optional IANA timezone for the user (used in system prompt; defaults to host timezone). */
   userTimezone?: string;
   /** Time format in system prompt: auto (OS preference), 12-hour, or 24-hour. */
@@ -293,6 +295,8 @@ export type AgentCompactionConfig = {
   identifierInstructions?: string;
   /** Pre-compaction memory flush (agentic turn). Default: enabled. */
   memoryFlush?: AgentCompactionMemoryFlushConfig;
+  /** Max seconds allowed for a single compaction run (optional guardrail). */
+  timeoutSeconds?: number;
 };
 
 export type AgentCompactionMemoryFlushConfig = {
