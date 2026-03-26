@@ -236,6 +236,36 @@
   color: var(--danger);
 }
 
+.pill--model {
+  font-size: 12px;
+  padding: 4px 10px;
+  gap: 5px;
+}
+
+.pill--model .pill-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  color: inherit;
+}
+
+.pill--model .pill-icon svg {
+  width: 14px;
+  height: 14px;
+}
+
+.pill.model-cloud {
+  border-color: rgba(56, 189, 248, 0.3);
+}
+
+.pill.model-spark {
+  border-color: rgba(167, 139, 250, 0.3);
+}
+
+.pill.model-local {
+  border-color: rgba(251, 191, 36, 0.3);
+}
+
 /* ===========================================
    Theme Toggle
    =========================================== */

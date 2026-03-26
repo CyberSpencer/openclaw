@@ -5,12 +5,20 @@ import { refreshChat } from "./app-chat.ts";
 import { syncUrlWithSessionKey } from "./app-settings.ts";
 import type { AppViewState } from "./app-view-state.ts";
 import { OpenClawApp } from "./app.ts";
+import {
+  buildChatModelOption,
+  createChatModelOverride,
+  formatChatModelDisplay,
+  normalizeChatModelOverrideValue,
+  resolveServerChatModelValue,
+} from "./chat-model-ref.ts";
 import { ChatState, loadChatHistory } from "./controllers/chat.ts";
+import { loadSessions } from "./controllers/sessions.ts";
 import { icons } from "./icons.ts";
 import { iconForTab, pathForTab, titleForTab, type Tab } from "./navigation.ts";
 import type { ThemeTransitionContext } from "./theme-transition.ts";
 import type { ThemeMode } from "./theme.ts";
-import type { SessionsListResult } from "./types.ts";
+import type { ModelCatalogEntry, SessionsListResult } from "./types.ts";
 
 type SessionDefaultsSnapshot = {
   mainSessionKey?: string;
@@ -123,17 +131,10 @@ function renderCronFilterIcon(hiddenCount: number) {
 }
 
 export function renderChatControls(state: AppViewState) {
-  const mainSessionKey = resolveMainSessionKey(state.hello, state.sessionsResult);
   const hideCron = state.sessionsHideCron ?? true;
   const hiddenCronCount = hideCron
     ? countHiddenCronSessions(state.sessionKey, state.sessionsResult)
     : 0;
-  const sessionOptions = resolveSessionOptions(
-    state.sessionKey,
-    state.sessionsResult,
-    mainSessionKey,
-    hideCron,
-  );
   const disableThinkingToggle = state.onboarding;
   const disableFocusToggle = state.onboarding;
   const showThinking = state.onboarding ? false : state.settings.chatShowThinking;
@@ -174,43 +175,6 @@ export function renderChatControls(state: AppViewState) {
   `;
   return html`
     <div class="chat-controls">
-      <label class="field chat-controls__session">
-        <select
-          .value=${state.sessionKey}
-          ?disabled=${!state.connected}
-          @change=${(e: Event) => {
-            const next = (e.target as HTMLSelectElement).value;
-            state.sessionKey = next;
-            state.chatMessage = "";
-            state.chatStream = null;
-            (state as unknown as OpenClawApp).chatStreamStartedAt = null;
-            state.chatRunId = null;
-            (state as unknown as OpenClawApp).resetToolStream();
-            (state as unknown as OpenClawApp).resetChatScroll();
-            state.applySettings({
-              ...state.settings,
-              sessionKey: next,
-              lastActiveSessionKey: next,
-            });
-            void state.loadAssistantIdentity();
-            syncUrlWithSessionKey(
-              state as unknown as Parameters<typeof syncUrlWithSessionKey>[0],
-              next,
-              true,
-            );
-            void loadChatHistory(state as unknown as ChatState);
-          }}
-        >
-          ${repeat(
-            sessionOptions,
-            (entry) => entry.key,
-            (entry) =>
-              html`<option value=${entry.key} title=${entry.key}>
-                ${entry.displayName ?? entry.key}
-              </option>`,
-          )}
-        </select>
-      </label>
       <button
         class="btn btn--sm btn--icon"
         ?disabled=${state.chatLoading || !state.connected}
@@ -291,6 +255,66 @@ export function renderChatControls(state: AppViewState) {
   `;
 }
 
+export function renderChatSessionSelect(state: AppViewState) {
+  const mainSessionKey = resolveMainSessionKey(state.hello, state.sessionsResult);
+  const sessionOptions = resolveSessionOptions(
+    state.sessionKey,
+    state.sessionsResult,
+    mainSessionKey,
+    state.sessionsHideCron ?? true,
+  );
+  return html`
+    <div class="chat-controls__session-row">
+      <label class="field chat-controls__session">
+        <select
+          .value=${state.sessionKey}
+          ?disabled=${!state.connected || sessionOptions.length === 0}
+          @change=${(e: Event) => {
+            const next = (e.target as HTMLSelectElement).value;
+            if (state.sessionKey === next) {
+              return;
+            }
+            switchChatSession(state, next);
+          }}
+        >
+          ${repeat(
+            sessionOptions,
+            (entry) => entry.key,
+            (entry) =>
+              html`<option value=${entry.key} title=${entry.key}>
+                ${entry.displayName ?? entry.key}
+              </option>`,
+          )}
+        </select>
+      </label>
+      ${renderChatModelSelect(state)}
+    </div>
+  `;
+}
+
+export function switchChatSession(state: AppViewState, nextSessionKey: string) {
+  state.sessionKey = nextSessionKey;
+  state.chatMessage = "";
+  state.chatStream = null;
+  state.chatQueue = [];
+  (state as unknown as OpenClawApp).chatStreamStartedAt = null;
+  state.chatRunId = null;
+  (state as unknown as OpenClawApp).resetToolStream();
+  (state as unknown as OpenClawApp).resetChatScroll();
+  state.applySettings({
+    ...state.settings,
+    sessionKey: nextSessionKey,
+    lastActiveSessionKey: nextSessionKey,
+  });
+  void state.loadAssistantIdentity();
+  syncUrlWithSessionKey(
+    state as unknown as Parameters<typeof syncUrlWithSessionKey>[0],
+    nextSessionKey,
+    true,
+  );
+  void loadChatHistory(state as unknown as ChatState);
+}
+
 function resolveMainSessionKey(
   hello: AppViewState["hello"],
   sessions: SessionsListResult | null,
@@ -308,6 +332,135 @@ function resolveMainSessionKey(
     return "main";
   }
   return null;
+}
+
+function resolveActiveSessionRow(state: AppViewState) {
+  return state.sessionsResult?.sessions?.find((row) => row.key === state.sessionKey);
+}
+
+function resolveModelOverrideValue(state: AppViewState): string {
+  const cached = state.chatModelOverrides[state.sessionKey];
+  if (cached) {
+    return normalizeChatModelOverrideValue(cached, state.chatModelCatalog ?? []);
+  }
+  if (cached === null) {
+    return "";
+  }
+  const activeRow = resolveActiveSessionRow(state);
+  if (activeRow && typeof activeRow.model === "string" && activeRow.model.trim()) {
+    return resolveServerChatModelValue(activeRow.model, activeRow.modelProvider);
+  }
+  return "";
+}
+
+function resolveDefaultModelValue(state: AppViewState): string {
+  const defaults = state.sessionsResult?.defaults;
+  return resolveServerChatModelValue(defaults?.model, defaults?.modelProvider);
+}
+
+function buildChatModelOptions(
+  catalog: ModelCatalogEntry[],
+  currentOverride: string,
+  defaultModel: string,
+): Array<{ value: string; label: string }> {
+  const seen = new Set<string>();
+  const options: Array<{ value: string; label: string }> = [];
+  const addOption = (value: string, label?: string) => {
+    const trimmed = value.trim();
+    if (!trimmed) {
+      return;
+    }
+    const key = trimmed.toLowerCase();
+    if (seen.has(key)) {
+      return;
+    }
+    seen.add(key);
+    options.push({ value: trimmed, label: label ?? trimmed });
+  };
+
+  for (const entry of catalog) {
+    const option = buildChatModelOption(entry);
+    addOption(option.value, option.label);
+  }
+
+  if (currentOverride) {
+    addOption(currentOverride, formatChatModelDisplay(currentOverride));
+  }
+  if (defaultModel) {
+    addOption(defaultModel, formatChatModelDisplay(defaultModel));
+  }
+  return options;
+}
+
+function renderChatModelSelect(state: AppViewState) {
+  const currentOverride = resolveModelOverrideValue(state);
+  const defaultModel = resolveDefaultModelValue(state);
+  const options = buildChatModelOptions(
+    state.chatModelCatalog ?? [],
+    currentOverride,
+    defaultModel,
+  );
+  const defaultDisplay = formatChatModelDisplay(defaultModel);
+  const defaultLabel = defaultModel ? `Default (${defaultDisplay})` : "Default model";
+  const busy =
+    state.chatLoading || state.chatSending || Boolean(state.chatRunId) || state.chatStream !== null;
+  const disabled =
+    !state.connected || busy || (state.chatModelsLoading && options.length === 0) || !state.client;
+  return html`
+    <label class="field chat-controls__session chat-controls__model">
+      <select
+        data-chat-model-select="true"
+        aria-label="Chat model"
+        ?disabled=${disabled}
+        @change=${async (e: Event) => {
+          const next = (e.target as HTMLSelectElement).value.trim();
+          await switchChatModel(state, next);
+        }}
+      >
+        <option value="" ?selected=${currentOverride === ""}>${defaultLabel}</option>
+        ${repeat(
+          options,
+          (entry) => entry.value,
+          (entry) =>
+            html`<option value=${entry.value} ?selected=${entry.value === currentOverride}>
+              ${entry.label}
+            </option>`,
+        )}
+      </select>
+    </label>
+  `;
+}
+
+async function switchChatModel(state: AppViewState, nextModel: string) {
+  if (!state.client || !state.connected) {
+    return;
+  }
+  const currentOverride = resolveModelOverrideValue(state);
+  if (currentOverride === nextModel) {
+    return;
+  }
+  const targetSessionKey = state.sessionKey;
+  const prevOverride = state.chatModelOverrides[targetSessionKey];
+  state.lastError = null;
+  state.chatModelOverrides = {
+    ...state.chatModelOverrides,
+    [targetSessionKey]: createChatModelOverride(nextModel),
+  };
+  try {
+    await state.client.request("sessions.patch", {
+      key: targetSessionKey,
+      model: nextModel || null,
+    });
+    await loadSessions(state as unknown as Parameters<typeof loadSessions>[0], {
+      activeMinutes: 0,
+      limit: 0,
+      includeGlobal: true,
+      includeUnknown: true,
+    });
+  } catch (err) {
+    state.chatModelOverrides = { ...state.chatModelOverrides, [targetSessionKey]: prevOverride };
+    state.lastError = `Failed to set model: ${String(err)}`;
+  }
 }
 
 /* ── Channel display labels ────────────────────────────── */

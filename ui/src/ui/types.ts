@@ -1,4 +1,5 @@
 export type UpdateAvailable = import("../../../src/infra/update-startup.js").UpdateAvailable;
+export type ModelCatalogEntry = import("../../../src/agents/model-catalog.js").ModelCatalogEntry;
 
 export type ChannelsStatusSnapshot = {
   ts: number;

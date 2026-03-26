@@ -493,9 +493,11 @@
   gap: 8px;
 }
 
-/* Chat view header adjustments (ChatGPT-style threads sidebar lives in nav). */
+/* Chat view header stays visible so session/model selectors remain available. */
 .content--chat .content-header {
-  display: none;
+  display: flex;
+  align-items: center;
+  max-height: none;
 }
 
 /* ===========================================

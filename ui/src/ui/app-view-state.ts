@@ -1,6 +1,6 @@
 import type { ProviderUsageSnapshot } from "../../../src/infra/provider-usage.types.ts";
 import type { EventLogEntry } from "./app-events.ts";
-import type { CompactionStatus, FallbackStatus } from "./app-tool-stream.ts";
+import type { CompactionStatus, FallbackStatus, ModelSelectionInfo } from "./app-tool-stream.ts";
 import type {
   CronFieldErrors,
   CronJobsLastStatusFilter,
@@ -45,7 +45,7 @@ import type {
   ToolsCatalogResult,
   StatusSummary,
 } from "./types.ts";
-import type { ChatAttachment, ChatQueueItem, CronFormState } from "./ui-types.ts";
+import type { ChatAttachment, ChatQueueItem, CronFormState, TaskPlan } from "./ui-types.ts";
 import type { NostrProfileFormState } from "./views/channels.nostr-profile-form.ts";
 import type { SessionLogEntry } from "./views/usage.ts";
 
@@ -79,8 +79,13 @@ export type AppViewState = {
   fallbackStatus: FallbackStatus | null;
   chatAvatarUrl: string | null;
   chatThinkingLevel: string | null;
+  chatModelOverrides: Record<string, import("./chat-model-ref.ts").ChatModelOverride | null>;
+  chatModelsLoading: boolean;
+  chatModelCatalog: import("./types.ts").ModelCatalogEntry[];
   chatQueue: ChatQueueItem[];
   chatManualRefreshInFlight: boolean;
+  chatModelSelection: ModelSelectionInfo | null;
+  chatTaskPlan: TaskPlan | null;
   nodesLoading: boolean;
   nodes: Array<Record<string, unknown>>;
   chatNewMessagesBelow: boolean;

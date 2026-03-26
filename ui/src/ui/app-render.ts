@@ -1,8 +1,18 @@
 import { html, nothing } from "lit";
 import { parseAgentSessionKey } from "../../../src/routing/session-key.js";
 import { refreshChatAvatar } from "./app-chat.ts";
-import { renderChatControls, renderTab, renderThemeToggle } from "./app-render.helpers.ts";
+import {
+  renderChatControls,
+  renderChatSessionSelect,
+  renderTab,
+  renderThemeToggle,
+} from "./app-render.helpers.ts";
 import type { AppViewState } from "./app-view-state.ts";
+import {
+  createChatModelOverride,
+  normalizeChatModelOverrideValue,
+  resolveServerChatModelValue,
+} from "./chat-model-ref.ts";
 import { loadAgentFiles, loadAgentFileContent, saveAgentFile } from "./controllers/agent-files.ts";
 import { loadAgentIdentity, loadAgentIdentities } from "./controllers/agent-identity.ts";
 import { loadAgentSkills } from "./controllers/agent-skills.ts";
@@ -132,8 +142,32 @@ function classifyModelSource(provider: string | null): {
 
 function renderModelPill(state: AppViewState) {
   const selection = state.chatModelSelection;
-  const provider = selection?.provider ?? null;
-  const modelId = selection?.model ?? null;
+  let provider = selection?.provider ?? null;
+  let modelId = selection?.model ?? null;
+
+  if (!provider && !modelId && state.tab === "chat") {
+    const row = state.sessionsResult?.sessions?.find((s) => s.key === state.sessionKey);
+    const defaults = state.sessionsResult?.defaults;
+    const overrideValue = normalizeChatModelOverrideValue(
+      createChatModelOverride(state.chatModelOverrides[state.sessionKey]),
+      state.chatModelCatalog ?? [],
+    );
+    const rowValue = resolveServerChatModelValue(row?.model ?? null, row?.modelProvider ?? null);
+    const defaultValue = resolveServerChatModelValue(
+      defaults?.model ?? null,
+      defaults?.modelProvider ?? null,
+    );
+    const fallbackValue = overrideValue || rowValue || defaultValue;
+    if (fallbackValue) {
+      const slashIndex = fallbackValue.indexOf("/");
+      if (slashIndex > 0 && slashIndex < fallbackValue.length - 1) {
+        provider = fallbackValue.slice(0, slashIndex);
+        modelId = fallbackValue.slice(slashIndex + 1);
+      } else {
+        modelId = fallbackValue;
+      }
+    }
+  }
   if (!provider && !modelId) {
     return nothing;
   }
@@ -150,11 +184,14 @@ function renderModelPill(state: AppViewState) {
         .pop() ?? modelId)
     : "";
   const title = provider && modelId ? `${provider}/${modelId}` : (provider ?? modelId ?? "");
+  const modelIcon =
+    source.cssClass === "model-spark" || source.cssClass === "model-local"
+      ? icons.server
+      : icons.cloud;
 
   return html`
     <div class="pill pill--model ${source.cssClass}" title="${title}">
-      <span class="statusDot ${source.cssClass}"></span>
-      <span>${source.label}</span>
+      <span class="pill-icon">${modelIcon}</span>
       ${shortModel ? html`<span class="mono">${shortModel}</span>` : nothing}
     </div>
   `;
@@ -171,34 +208,35 @@ export function renderApp(state: AppViewState) {
   const assistantAvatarUrl = resolveAssistantAvatarUrl(state);
   const chatAvatarUrl = state.chatAvatarUrl ?? assistantAvatarUrl ?? null;
   const topbarLogoSrc = `${state.basePath}/favicon.svg`;
-  const cmdKey = (() => {
-    if (typeof navigator === "undefined") {
-      return "Ctrl K";
-    }
-    const platform = navigator.platform || "";
-    return /mac|iphone|ipad|ipod/i.test(platform) ? "Cmd K" : "Ctrl K";
-  })();
   const sparkEnabled = state.sparkStatus?.enabled;
-  const sparkActive = state.sparkStatus?.active;
   const sparkKnown = Boolean(state.sparkStatus);
   const sparkHost = typeof state.sparkStatus?.host === "string" ? state.sparkStatus.host : null;
+  const sparkOverall =
+    typeof state.sparkStatus?.overall === "string" ? state.sparkStatus.overall : null;
   const sparkLabel = state.sparkBusy
     ? "..."
     : !sparkKnown
       ? "..."
       : sparkEnabled === false
         ? "Off"
-        : sparkActive
-          ? "On"
-          : "Fallback";
-  const sparkDotClass = !sparkKnown || sparkEnabled === false ? "neutral" : sparkActive ? "ok" : "";
+        : sparkOverall === "degraded"
+          ? "Degraded"
+          : "";
+  const sparkDotClass =
+    !sparkKnown || sparkEnabled === false
+      ? "neutral"
+      : sparkOverall === "healthy"
+        ? "ok"
+        : sparkOverall === "degraded"
+          ? "warn"
+          : sparkOverall === "down"
+            ? "err"
+            : "";
   const sparkTitle = !sparkKnown
-    ? "DGX Spark status unavailable"
+    ? "DGX status unavailable"
     : sparkEnabled === false
-      ? "DGX Spark disabled"
-      : sparkActive
-        ? `DGX Spark active${sparkHost ? ` (${sparkHost})` : ""}`
-        : `DGX Spark fallback${sparkHost ? ` (${sparkHost})` : ""}`;
+      ? "DGX disabled"
+      : `DGX ${sparkOverall ?? "unknown"}${sparkHost ? ` (${sparkHost})` : ""}`;
   const configValue =
     state.configForm ?? (state.configSnapshot?.config as Record<string, unknown> | null);
   const resolvedAgentId =
@@ -270,16 +308,6 @@ export function renderApp(state: AppViewState) {
             <span class="mono">${state.connected ? "OK" : "Offline"}</span>
           </div>
           <button
-            class="pill topbar-action-btn"
-            @click=${() => state.openCommandPalette()}
-            title=${`Search (${cmdKey})`}
-            aria-label="Search (Command palette)"
-          >
-            <span class="pill-icon">${icons.search}</span>
-            <span>Search</span>
-            <span class="mono">${cmdKey}</span>
-          </button>
-          <button
             class="pill topbar-action-btn topbar-action-btn--status"
             ?disabled=${!state.connected || state.memorySearchBusy}
             @click=${() => state.handleMemorySearchToggle()}
@@ -308,32 +336,14 @@ export function renderApp(state: AppViewState) {
           </button>
           <button
             class="pill topbar-action-btn topbar-action-btn--status"
-            ?disabled=${!state.connected || state.nvidiaRouterBusy}
-            @click=${() => state.handleNvidiaRouterToggle()}
-            title="${state.nvidiaRouterEnabled === false ? "Enable NVIDIA Router" : "Disable NVIDIA Router"}"
-            aria-label="${state.nvidiaRouterEnabled === false ? "Enable NVIDIA Router" : "Disable NVIDIA Router"}"
-          >
-            <span class="statusDot ${state.nvidiaRouterHealthy ? "ok" : ""}"></span>
-            <span>NVIDIA Router</span>
-          </button>
-          <button
-            class="pill topbar-action-btn topbar-action-btn--status"
             ?disabled=${!state.connected || state.sparkBusy}
             @click=${() => state.setTab("dgx")}
             title=${sparkTitle}
             aria-label="DGX Spark status"
           >
             <span class="statusDot ${sparkDotClass}"></span>
-            <span>DGX Spark</span>
+            <span>DGX</span>
             <span class="mono">${sparkLabel}</span>
-          </button>
-          <button
-            class="voice-toggle-btn ${state.voiceBarVisible ? "voice-toggle-btn--active" : ""}"
-            @click=${() => state.toggleVoiceBar()}
-            title="${state.voiceBarVisible ? "Hide voice mode" : "Show voice mode"}"
-            aria-label="${state.voiceBarVisible ? "Hide voice mode" : "Show voice mode"}"
-          >
-            ${icons.mic || "🎤"}
           </button>
           ${renderThemeToggle(state)}
         </div>
@@ -428,8 +438,14 @@ export function renderApp(state: AppViewState) {
       <main id="main-content" class="content ${isChat ? "content--chat" : ""}" tabindex="-1">
         <section class="content-header">
           <div>
-            ${state.tab === "usage" ? nothing : html`<div class="page-title">${titleForTab(state.tab)}</div>`}
-            ${state.tab === "usage" ? nothing : html`<div class="page-sub">${subtitleForTab(state.tab)}</div>`}
+            ${
+              isChat
+                ? renderChatSessionSelect(state)
+                : state.tab === "usage"
+                  ? nothing
+                  : html`<div class="page-title">${titleForTab(state.tab)}</div>`
+            }
+            ${isChat || state.tab === "usage" ? nothing : html`<div class="page-sub">${subtitleForTab(state.tab)}</div>`}
           </div>
           <div class="page-meta">
             ${state.lastError ? html`<div class="pill danger">${state.lastError}</div>` : nothing}

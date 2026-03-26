@@ -9,6 +9,7 @@ import {
 import { scheduleChatScroll, scheduleLogsScroll, type ScrollHost } from "./app-scroll.ts";
 import { loadAgents, type AgentsState } from "./controllers/agents.ts";
 import { loadChannels, type ChannelsState } from "./controllers/channels.ts";
+import { loadChatModels, type ChatModelsState } from "./controllers/chat-models.ts";
 import { loadConfig, loadConfigSchema, type ConfigState } from "./controllers/config.ts";
 import { loadCronJobs, loadCronStatus, type CronState } from "./controllers/cron.ts";
 import { loadDebug, type DebugState } from "./controllers/debug.ts";
@@ -35,6 +36,7 @@ export type SettingsHost = PollingHost &
   ScrollHost &
   ChatHost &
   AgentsState &
+  ChatModelsState &
   ChannelsState &
   ConfigState &
   CronState &
@@ -222,7 +224,7 @@ export async function refreshActiveTab(host: SettingsHost) {
     await loadExecApprovals(host);
   }
   if (host.tab === "chat") {
-    await refreshChat(host);
+    await Promise.all([refreshChat(host), loadChatModels(host)]);
     scheduleChatScroll(host, !host.chatHasAutoScrolled);
   }
   if (host.tab === "config") {
@@ -403,6 +405,7 @@ export async function loadOverview(host: SettingsHost) {
     loadChannels(host, false),
     loadPresence(host),
     loadSessions(host),
+    loadChatModels(host),
     loadCronStatus(host),
     loadDebug(host),
   ]);

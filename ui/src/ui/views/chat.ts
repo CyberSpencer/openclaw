@@ -3,7 +3,10 @@ import { ref } from "lit/directives/ref.js";
 import { repeat } from "lit/directives/repeat.js";
 import { unsafeHTML } from "lit/directives/unsafe-html.js";
 import { formatDurationCompact } from "../../../../src/infra/format-time/format-duration.js";
-import { formatRelativeTimestamp } from "../../../../src/infra/format-time/format-relative.js";
+import {
+  formatRelativeTimestamp,
+  formatRelativeTimestamp as formatAge,
+} from "../../../../src/infra/format-time/format-relative.js";
 import type { ModelSelectionInfo } from "../app-tool-stream.ts";
 import { extractTextCached } from "../chat/message-extract.ts";
 import { normalizeMessage, normalizeRoleForGrouping } from "../chat/message-normalizer.ts";

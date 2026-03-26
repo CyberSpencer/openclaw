@@ -54,6 +54,7 @@ import {
 } from "./app-tool-stream.ts";
 import type { AppViewState } from "./app-view-state.ts";
 import { resolveInjectedAssistantIdentity } from "./assistant-identity.ts";
+import type { ChatModelOverride } from "./chat-model-ref.ts";
 import {
   buildCommandPaletteActions,
   filterCommandPaletteActions,
@@ -117,6 +118,7 @@ import type {
   HealthSnapshot,
   LogEntry,
   LogLevel,
+  ModelCatalogEntry,
   PresenceEntry,
   ChannelsStatusSnapshot,
   SessionsListResult,
@@ -505,6 +507,9 @@ export class OpenClawApp extends LitElement {
   @state() compactionStatus: CompactionStatus | null = null;
   @state() chatAvatarUrl: string | null = null;
   @state() chatThinkingLevel: string | null = null;
+  @state() chatModelOverrides: Record<string, ChatModelOverride | null> = {};
+  @state() chatModelsLoading = false;
+  @state() chatModelCatalog: ModelCatalogEntry[] = [];
   @state() chatQueue: ChatQueueItem[] = [];
   @state() chatAttachments: ChatAttachment[] = [];
   private chatDraftBySession: Record<string, string> = {};

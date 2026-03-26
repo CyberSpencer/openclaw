@@ -360,6 +360,18 @@
   max-width: 300px;
 }
 
+.chat-controls__session-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.chat-controls__model {
+  min-width: 220px;
+  max-width: 360px;
+}
+
 .chat-controls__thinking {
   display: flex;
   align-items: center;
@@ -450,6 +462,11 @@
   text-overflow: ellipsis;
 }
 
+.chat-controls__model select {
+  min-width: 220px;
+  max-width: 360px;
+}
+
 .chat-controls__thinking {
   display: flex;
   align-items: center;
@@ -501,5 +518,21 @@
 
   .chat-controls__session {
     min-width: 120px;
+  }
+
+  .chat-controls__session-row {
+    width: 100%;
+  }
+
+  .chat-controls__model {
+    min-width: 120px;
+    max-width: 100%;
+    flex: 1 1 220px;
+  }
+
+  .chat-controls__model select {
+    min-width: 0;
+    max-width: 100%;
+    width: 100%;
   }
 }
