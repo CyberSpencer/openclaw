@@ -18,12 +18,13 @@ Read the JSON output from stdout:
 
 **`{"action": "spawn", "task": {...}}`** → Spawn a subagent:
 
-1. Use `task.model` as the model
-2. Use `task.timeout_min * 60` as `runTimeoutSeconds` (aligns gateway kill-timeout with Jarvis stale threshold)
-3. Use `"jarvis:<task.id>"` as the `label` (enables auto-announce routing back to Jarvis)
-4. Use `task.instructions` as the task prompt — append to it: "When done, run: `openclaw system event --text 'Task <task.id> complete: <one line summary>' --mode now`"
-5. After spawning, call: `./scripts/jarvis-task.sh start <task.id> <subagent_session_key>`
-6. Reply with a brief note on what's running
+1. Use `task.model` as the primary model. For tonight's plan, tasks are set to `smart` (GPT-5.4).
+2. If spawn fails because of rate limit, quota, capacity, or provider unavailability, immediately retry the SAME task once with model `sonnet`.
+3. Use `task.timeout_min * 60` as `runTimeoutSeconds` (aligns gateway kill-timeout with Jarvis stale threshold)
+4. Use `"jarvis:<task.id>"` as the `label` (enables auto-announce routing back to Jarvis)
+5. Use `task.instructions` as the task prompt — append to it: "When done, run: `openclaw system event --text 'Task <task.id> complete: <one line summary>' --mode now`"
+6. After spawning, call: `./scripts/jarvis-task.sh start <task.id> <subagent_session_key>`
+7. Reply with a brief note on what's running
 
 **On subagent completion announcements** (system events like "Task XXXX complete"):
 
