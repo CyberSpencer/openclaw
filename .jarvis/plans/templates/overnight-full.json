@@ -1,0 +1,223 @@
+{
+  "template_id": "overnight-full",
+  "version": "1.0",
+  "description": "Full 8-hour overnight: cron cleanup, worktree triage, code quality, audit, hygiene, AII triage, summary",
+  "phases": [
+    {
+      "phase": 1,
+      "name": "Cron Cleanup & Reconfiguration",
+      "description": "Purge stale one-shot cron jobs, fix recurring job targets",
+      "waves": [
+        {
+          "wave": 1,
+          "tasks": [
+            {
+              "name_template": "Phase 1: Purge stale cron jobs and fix targets",
+              "model": "sonnet",
+              "timeout_min": 20,
+              "max_attempts": 2,
+              "priority": 10,
+              "instructions_template": "Cron cleanup for Jarvis overnight system:\n\n1. Run `openclaw cron list` to see all jobs.\n2. Delete ALL one-shot (kind=at) jobs that have already fired. Use `openclaw cron remove <id>` for each.\n3. Delete these stale recurring jobs (PRs merged, no longer needed):\n   - Any job with 'watch-openclaw-core-pr-125' or 'watch-openclaw-core-pr-126' in the name\n   - Any job with 'workflow_slo_guard' in the name\n4. Verify the two jarvis: cron jobs (nightly-kickoff and nightly-heartbeat) point to /Users/spencerthomson/clawd/core in their message payload. If they still reference /Users/spencerthomson/clawd-automation, update them.\n5. Run `openclaw cron list` again and write final state to ~/clawd/artifacts/nightly/phase1-cron-cleanup-{DATE}.md\n\nDo NOT delete: Daily Clawdbot security check, Nightly Desktop Cleanup, jarvis:nightly-kickoff, jarvis:nightly-heartbeat.",
+              "verify_template": "test -f ~/clawd/artifacts/nightly/phase1-cron-cleanup-{DATE}.md && [ $(wc -c < ~/clawd/artifacts/nightly/phase1-cron-cleanup-{DATE}.md) -gt 200 ]",
+              "artifacts_template": ["~/clawd/artifacts/nightly/phase1-cron-cleanup-{DATE}.md"]
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "phase": 2,
+      "name": "Worktree Triage & Cleanup",
+      "description": "Prune merged worktrees, review pending fixes, document decisions",
+      "waves": [
+        {
+          "wave": 1,
+          "dependencies_phases": [1],
+          "tasks": [
+            {
+              "name_template": "Phase 2: Prune merged worktrees",
+              "model": "haiku",
+              "timeout_min": 15,
+              "max_attempts": 2,
+              "priority": 10,
+              "instructions_template": "Prune merged/dead worktrees in ~/clawd/core:\n1. Run `git -C ~/clawd/core worktree list` to see current state.\n2. Remove `core-model-routing-v2` worktree (already merged): `git -C ~/clawd/core worktree remove ~/clawd/_worktrees/core-model-routing-v2 --force`\n3. Run `git -C ~/clawd/core worktree prune --verbose`\n4. Check for any /tmp worktrees and clean them.\n5. Write results to ~/clawd/artifacts/nightly/phase2-worktree-prune-{DATE}.md with before/after worktree count.",
+              "verify_template": "test -f ~/clawd/artifacts/nightly/phase2-worktree-prune-{DATE}.md && ! test -d ~/clawd/_worktrees/core-model-routing-v2",
+              "artifacts_template": ["~/clawd/artifacts/nightly/phase2-worktree-prune-{DATE}.md"]
+            },
+            {
+              "name_template": "Phase 2: Review stream-limiter worktree",
+              "model": "sonnet",
+              "timeout_min": 30,
+              "max_attempts": 1,
+              "priority": 9,
+              "instructions_template": "Review the stream-limiter fix worktree:\n1. cd ~/clawd/_worktrees/core-stream-limiter\n2. Run: git log --oneline main..HEAD\n3. Run: git diff main..HEAD --stat\n4. Run: git diff main..HEAD (full diff, read carefully)\n5. Assess:\n   - Is this a complete, self-contained fix?\n   - Any TypeScript errors introduced? Run: pnpm tsgo --noEmit 2>&1 | grep -v 'ui/' | tail -20\n   - Does it have tests?\n   - Any risk to merge?\n6. Write review to ~/clawd/artifacts/nightly/worktree-review-stream-limiter-{DATE}.md with verdict: MERGE / NEEDS_WORK / REJECT and rationale.",
+              "verify_template": "test -f ~/clawd/artifacts/nightly/worktree-review-stream-limiter-{DATE}.md && [ $(wc -c < ~/clawd/artifacts/nightly/worktree-review-stream-limiter-{DATE}.md) -gt 300 ]",
+              "artifacts_template": [
+                "~/clawd/artifacts/nightly/worktree-review-stream-limiter-{DATE}.md"
+              ]
+            },
+            {
+              "name_template": "Phase 2: Review zombie-recovery worktree",
+              "model": "sonnet",
+              "timeout_min": 30,
+              "max_attempts": 1,
+              "priority": 9,
+              "instructions_template": "Review the zombie-recovery fix worktree:\n1. cd ~/clawd/_worktrees/core-zombie-recovery\n2. Run: git log --oneline main..HEAD\n3. Run: git diff main..HEAD --stat\n4. Run: git diff main..HEAD (full diff, read carefully)\n5. Assess:\n   - Is this a complete, self-contained fix?\n   - Any TypeScript errors introduced?\n   - Does it have tests?\n   - Any risk to merge?\n6. Write review to ~/clawd/artifacts/nightly/worktree-review-zombie-recovery-{DATE}.md with verdict: MERGE / NEEDS_WORK / REJECT and rationale.",
+              "verify_template": "test -f ~/clawd/artifacts/nightly/worktree-review-zombie-recovery-{DATE}.md && [ $(wc -c < ~/clawd/artifacts/nightly/worktree-review-zombie-recovery-{DATE}.md) -gt 300 ]",
+              "artifacts_template": [
+                "~/clawd/artifacts/nightly/worktree-review-zombie-recovery-{DATE}.md"
+              ]
+            },
+            {
+              "name_template": "Phase 2: Assess Codex overnight worktrees",
+              "model": "sonnet",
+              "timeout_min": 25,
+              "max_attempts": 1,
+              "priority": 8,
+              "instructions_template": "Assess two Codex-generated worktrees created 2026-03-25:\n\n1. ~/clawd/_worktrees/core-orphaned-subagent-cleanup-20260325 (branch: codex_spencer/orphaned-subagent-cleanup-20260325)\n   - Run: git log --oneline main..HEAD\n   - Run: git diff main..HEAD --stat\n   - Assess: is this complete? Self-contained? Worth merging?\n\n2. ~/clawd/_worktrees/core-session-restore-recovery-20260325 (branch: codex_spencer/session-restore-recovery-20260325)\n   - Same assessment.\n\nWrite findings to ~/clawd/artifacts/nightly/worktree-review-codex-overnight-{DATE}.md with per-worktree verdict.",
+              "verify_template": "test -f ~/clawd/artifacts/nightly/worktree-review-codex-overnight-{DATE}.md && [ $(wc -c < ~/clawd/artifacts/nightly/worktree-review-codex-overnight-{DATE}.md) -gt 200 ]",
+              "artifacts_template": [
+                "~/clawd/artifacts/nightly/worktree-review-codex-overnight-{DATE}.md"
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "phase": 3,
+      "name": "Code Quality & Tests",
+      "description": "TypeScript check, lint, test suite, build verification",
+      "waves": [
+        {
+          "wave": 1,
+          "dependencies_phases": [2],
+          "tasks": [
+            {
+              "name_template": "Phase 3: TypeScript + lint check",
+              "model": "sonnet",
+              "timeout_min": 25,
+              "max_attempts": 2,
+              "priority": 10,
+              "instructions_template": "Run TypeScript and lint checks on ~/clawd/core:\n1. cd ~/clawd/core && pnpm tsgo --noEmit 2>&1 | tail -40\n   Note: ~411 pre-existing ui/ errors are expected baseline. Only flag NEW errors.\n2. pnpm check 2>&1 | tail -30\n3. If format issues found: pnpm format:fix then re-run pnpm check\n4. pnpm build 2>&1 | tail -30 (confirm clean build)\nWrite results to ~/clawd/artifacts/nightly/phase3-tsgo-lint-{DATE}.md with clear pass/fail and any new error details.",
+              "verify_template": "test -f ~/clawd/artifacts/nightly/phase3-tsgo-lint-{DATE}.md && [ $(wc -c < ~/clawd/artifacts/nightly/phase3-tsgo-lint-{DATE}.md) -gt 200 ]",
+              "artifacts_template": ["~/clawd/artifacts/nightly/phase3-tsgo-lint-{DATE}.md"]
+            },
+            {
+              "name_template": "Phase 3: Full test suite",
+              "model": "sonnet",
+              "timeout_min": 60,
+              "max_attempts": 1,
+              "priority": 8,
+              "instructions_template": "Run the full test suite on ~/clawd/core:\ncd ~/clawd/core && OPENCLAW_TEST_PROFILE=low OPENCLAW_TEST_SERIAL_GATEWAY=1 pnpm test --run 2>&1 | tail -100\n\nBaseline: ~47 pre-existing failures. Only flag NEW failures.\nWrite results to ~/clawd/artifacts/nightly/phase3-tests-{DATE}.md with:\n- Total tests run / passed / failed / skipped\n- Any NEW failures (not in the 47 baseline)\n- Memory usage / duration notes",
+              "verify_template": "test -f ~/clawd/artifacts/nightly/phase3-tests-{DATE}.md && [ $(wc -c < ~/clawd/artifacts/nightly/phase3-tests-{DATE}.md) -gt 300 ]",
+              "artifacts_template": ["~/clawd/artifacts/nightly/phase3-tests-{DATE}.md"]
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "phase": 4,
+      "name": "Nightly Audit & Spark Ops",
+      "description": "Spark health, AII preflight, security audit",
+      "waves": [
+        {
+          "wave": 1,
+          "dependencies_phases": [1],
+          "tasks": [
+            {
+              "name_template": "Phase 4: Spark nightly audit",
+              "model": "spark-nemotron-super",
+              "timeout_min": 25,
+              "max_attempts": 3,
+              "priority": 10,
+              "instructions_template": "Run the Spark nightly report: ~/clawd/scripts/spark_nightly_report.sh 2>&1 | tail -40\nIf it fails, try ~/clawd/core/scripts/spark_nightly_report.sh instead.\nIf Spark is unreachable (SSH timeout), write 'Spark unreachable' to the artifact and continue.\nWrite status to ~/clawd/artifacts/nightly/phase4-spark-report-{DATE}.md",
+              "verify_template": "test -f ~/clawd/artifacts/nightly/phase4-spark-report-{DATE}.md",
+              "artifacts_template": ["~/clawd/artifacts/nightly/phase4-spark-report-{DATE}.md"]
+            },
+            {
+              "name_template": "Phase 4: AII preflight check",
+              "model": "haiku",
+              "timeout_min": 20,
+              "max_attempts": 2,
+              "priority": 8,
+              "instructions_template": "Run the AII preflight script in quick mode:\n~/clawd/scripts/spark_aii_preflight.sh --quick 2>&1 | tail -40\nIf it fails, try ~/clawd/core/scripts/spark_aii_preflight.sh --quick instead.\nWrite status to ~/clawd/artifacts/nightly/phase4-aii-preflight-{DATE}.md",
+              "verify_template": "test -f ~/clawd/artifacts/nightly/phase4-aii-preflight-{DATE}.md",
+              "artifacts_template": ["~/clawd/artifacts/nightly/phase4-aii-preflight-{DATE}.md"]
+            },
+            {
+              "name_template": "Phase 4: Security audit",
+              "model": "haiku",
+              "timeout_min": 15,
+              "max_attempts": 2,
+              "priority": 7,
+              "instructions_template": "Run a read-only security audit:\nopenclaw security audit 2>&1 | tail -40\nDo NOT run openclaw doctor.\nWrite findings to ~/clawd/artifacts/nightly/phase4-security-{DATE}.md",
+              "verify_template": "test -f ~/clawd/artifacts/nightly/phase4-security-{DATE}.md",
+              "artifacts_template": ["~/clawd/artifacts/nightly/phase4-security-{DATE}.md"]
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "phase": 5,
+      "name": "Repo Hygiene & AII Triage",
+      "description": "Branch cleanup, PR status, AII critical issue review",
+      "waves": [
+        {
+          "wave": 1,
+          "dependencies_phases": [3, 4],
+          "tasks": [
+            {
+              "name_template": "Phase 5: Repo hygiene",
+              "model": "haiku",
+              "timeout_min": 15,
+              "max_attempts": 2,
+              "priority": 10,
+              "instructions_template": "Run repo hygiene checks:\n1. Delete merged branches in ~/clawd/core: git branch --merged main | grep -v 'main\\|HEAD' | xargs git branch -d 2>/dev/null || true\n2. Drop stale git stashes older than 30 days (keep top 2): git -C ~/clawd/core stash list, then git stash drop for stashes beyond index 1\n3. Check LaunchAgent health: launchctl list 2>/dev/null | grep -E 'clawd|aiintegrations|openclaw'\n4. Check disk usage: du -sh ~/clawd/core ~/clawd/_worktrees ~/clawd/artifacts\nWrite to ~/clawd/artifacts/nightly/phase5-hygiene-{DATE}.md",
+              "verify_template": "test -f ~/clawd/artifacts/nightly/phase5-hygiene-{DATE}.md && [ $(wc -c < ~/clawd/artifacts/nightly/phase5-hygiene-{DATE}.md) -gt 200 ]",
+              "artifacts_template": ["~/clawd/artifacts/nightly/phase5-hygiene-{DATE}.md"]
+            },
+            {
+              "name_template": "Phase 5: AII open PR triage",
+              "model": "sonnet",
+              "timeout_min": 45,
+              "max_attempts": 1,
+              "priority": 9,
+              "instructions_template": "Review all open PRs across AI Integrations repos. This is READ-ONLY - no merges, no commits.\n\n1. For each repo (aiva-api, AII-Dashboard, AII-Chatbot, Autobuild, aii-scraper, aii-packages):\n   gh pr list --repo AI-Integrations/$repo --state open --json number,title,headRefName,statusCheckRollup,updatedAt --limit 10\n\n2. Read ~/clawd/artifacts/research/cross-repo-synthesis-2026-03-25.md for the 4 critical issues identified.\n\n3. For each critical issue, verify current state:\n   a. Dashboard broken verifyToken import - check PR #154\n   b. Coordinated prompt-canon merge (aiva-api #75 + Autobuild #44)\n   c. aii-packages publish workflow (PR #2)\n   d. Scraper status format (aiva-api #72 + aii-scraper #58)\n\n4. Write actionable triage to ~/clawd/artifacts/nightly/phase5-aii-triage-{DATE}.md with:\n   - Per-repo PR summary table\n   - Critical issues status update\n   - Recommended merge order (4-wave plan)\n   - Top 3 actions for Spencer",
+              "verify_template": "test -f ~/clawd/artifacts/nightly/phase5-aii-triage-{DATE}.md && [ $(wc -c < ~/clawd/artifacts/nightly/phase5-aii-triage-{DATE}.md) -gt 500 ]",
+              "artifacts_template": ["~/clawd/artifacts/nightly/phase5-aii-triage-{DATE}.md"]
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "phase": 6,
+      "name": "Summary & Morning Prep",
+      "description": "Push changes, write summary, update memory and TODO",
+      "waves": [
+        {
+          "wave": 1,
+          "dependencies_phases": [1, 2, 3, 4, 5],
+          "tasks": [
+            {
+              "name_template": "Phase 6: Push, summary & morning prep",
+              "model": "sonnet",
+              "timeout_min": 30,
+              "max_attempts": 2,
+              "priority": 10,
+              "instructions_template": "Final overnight step:\n\n1. GIT PUSH:\n   cd ~/clawd/core && git add -u && git commit -m 'chore: nightly cleanup {DATE}' 2>/dev/null || true\n   git push aii-private HEAD 2>/dev/null || true\n   git push fork HEAD 2>/dev/null || true\n   cd ~/clawd && git push origin $(git branch --show-current) 2>/dev/null || true\n\n2. OVERNIGHT SUMMARY:\n   Read ALL artifacts from ~/clawd/artifacts/nightly/ matching pattern *-{DATE}.md\n   Write ~/clawd/artifacts/nightly/overnight-summary-{DATE}.md with sections:\n   - Executive Summary (3 sentences)\n   - What Ran (phase-by-phase pass/fail)\n   - Worktree Decisions (per-worktree recommendation from phase 2 reviews)\n   - AII Triage (top 3 actions from phase 5)\n   - Cron Health (final state from phase 1)\n   - Blockers (anything needing Spencer's input)\n   - Top 3 Priorities for Today\n\n3. DESKTOP DELIVERY:\n   cp ~/clawd/artifacts/nightly/overnight-summary-{DATE}.md ~/Desktop/overnight-summary-{DATE}.md\n\n4. TODO UPDATE:\n   Read ~/clawd/TODO.md. Update based on tonight's findings:\n   - If cron jobs fixed: mark T-0069 done\n   - Update T-0065 with worktree decisions\n   - Update T-0067 with AII triage findings\n   Add any new items discovered tonight.\n\n5. MEMORY UPDATE:\n   Append tonight's key findings to ~/clawd/memory/2026-03-25.md (create if missing).",
+              "verify_template": "test -f ~/Desktop/overnight-summary-{DATE}.md && [ $(wc -c < ~/Desktop/overnight-summary-{DATE}.md) -gt 500 ]",
+              "artifacts_template": [
+                "~/clawd/artifacts/nightly/overnight-summary-{DATE}.md",
+                "~/Desktop/overnight-summary-{DATE}.md"
+              ]
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

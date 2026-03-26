@@ -8,7 +8,9 @@
 
 set -euo pipefail
 
-JARVIS_DIR="$HOME/clawd/.jarvis"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
+JARVIS_DIR="${JARVIS_DIR:-$REPO_ROOT/.jarvis}"
 TEMPLATES_DIR="$JARVIS_DIR/plans/templates"
 PENDING_DIR="$JARVIS_DIR/queue/pending"
 ACTIVE_DIR="$JARVIS_DIR/queue/active"

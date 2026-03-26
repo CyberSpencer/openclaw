@@ -16,14 +16,16 @@
 
 set -euo pipefail
 
-JARVIS_DIR="${JARVIS_DIR:-$HOME/clawd/.jarvis}"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
+JARVIS_DIR="${JARVIS_DIR:-$REPO_ROOT/.jarvis}"
 QUEUE_DIR="$JARVIS_DIR/queue"
 PENDING="$QUEUE_DIR/pending"
 ACTIVE="$QUEUE_DIR/active"
 DONE="$QUEUE_DIR/done"
 FAILED="$QUEUE_DIR/failed"
 STATUS_FILE="$JARVIS_DIR/status.json"
-TASK_SH="${TASK_SH:-$HOME/clawd/scripts/jarvis-task.sh}"
+TASK_SH="${TASK_SH:-$SCRIPT_DIR/jarvis-task.sh}"
 
 # ---------------------------------------------------------------------------
 # Helpers
