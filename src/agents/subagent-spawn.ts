@@ -11,7 +11,7 @@ import {
   parseAgentSessionKey,
 } from "../routing/session-key.js";
 import { normalizeDeliveryContext } from "../utils/delivery-context.js";
-import { resolveAgentConfig } from "./agent-scope.js";
+import { resolveAgentConfig, resolveAgentWorkspaceDir } from "./agent-scope.js";
 import { AGENT_LANE_SUBAGENT } from "./lanes.js";
 import { resolveSubagentSpawnModelSelection } from "./model-selection.js";
 import { resolveSandboxRuntimeStatus } from "./sandbox/runtime-status.js";
@@ -37,6 +37,7 @@ export type SpawnSubagentParams = {
   agentId?: string;
   model?: string;
   thinking?: string;
+  cwd?: string;
   runTimeoutSeconds?: number;
   thread?: boolean;
   mode?: SpawnSubagentMode;
@@ -202,6 +203,7 @@ export async function spawnSubagentDirect(
   const requestedAgentId = params.agentId;
   const modelOverride = params.model;
   const thinkingOverrideRaw = params.thinking;
+  const cwdOverride = params.cwd?.trim() || undefined;
   const requestThreadBinding = params.thread === true;
   const sandboxMode = params.sandbox === "require" ? "require" : "inherit";
   const spawnMode = resolveSpawnMode({
@@ -332,9 +334,15 @@ export async function spawnSubagentDirect(
   const childDepth = callerDepth + 1;
   const spawnedByKey = requesterInternalKey;
   const targetAgentConfig = resolveAgentConfig(cfg, targetAgentId);
+  const routingCwd =
+    cwdOverride ??
+    resolveAgentWorkspaceDir(cfg, requesterAgentId) ??
+    resolveAgentWorkspaceDir(cfg, targetAgentId);
   const resolvedModelSelection = resolveSubagentSpawnModelSelection({
     cfg,
     agentId: targetAgentId,
+    task,
+    cwd: routingCwd,
     modelOverride,
   });
   const resolvedModel = resolvedModelSelection.model;

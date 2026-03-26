@@ -99,6 +99,25 @@ describe("sessions_spawn tool", () => {
     );
   });
 
+  it("passes cwd through to subagent runtime for routing context", async () => {
+    const tool = createSessionsSpawnTool({
+      agentSessionKey: "agent:main:main",
+      agentChannel: "discord",
+    });
+
+    await tool.execute("call-subagent-cwd", {
+      task: "inspect the repo and summarize billing flow",
+      cwd: "/workspace/private-repo",
+    });
+
+    expect(hoisted.spawnSubagentDirectMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        cwd: "/workspace/private-repo",
+      }),
+      expect.any(Object),
+    );
+  });
+
   it("routes to ACP runtime when runtime=acp", async () => {
     const tool = createSessionsSpawnTool({
       agentSessionKey: "agent:main:main",

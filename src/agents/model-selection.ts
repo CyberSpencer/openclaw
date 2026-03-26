@@ -2,7 +2,11 @@ import { existsSync, readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import type { OpenClawConfig } from "../config/config.js";
-import { resolveAgentModelPrimaryValue, toAgentModelListLike } from "../config/model-input.js";
+import {
+  resolveAgentModelFallbackValues,
+  resolveAgentModelPrimaryValue,
+  toAgentModelListLike,
+} from "../config/model-input.js";
 import { createSubsystemLogger } from "../logging/subsystem.js";
 import { resolveAgentConfig, resolveAgentEffectiveModelPrimary } from "./agent-scope.js";
 import { DEFAULT_MODEL, DEFAULT_PROVIDER } from "./defaults.js";
@@ -54,7 +58,7 @@ export type AnthropicModelLane =
  * Fallback model used when Sonnet is rate-limited.
  * Routes to the local Spark/Ollama Nemotron instance.
  */
-export const ANTHROPIC_RATE_LIMIT_FALLBACK_MODEL = "ollama/nemotron-3-nano:30b";
+export const ANTHROPIC_RATE_LIMIT_FALLBACK_MODEL = "spark-vllm/nemotron-3-super";
 
 /** Classify an anthropic model string into a routing lane. */
 export function resolveAnthropicLane(modelRef: string): AnthropicModelLane | null {
@@ -444,10 +448,17 @@ export function resolveDefaultModelForAgent(params: {
   });
 }
 
+export type SubagentTaskClass =
+  | "standard"
+  | "simple_readonly"
+  | "fast_code"
+  | "hard_code_or_review";
+
 export type SubagentModelRoute =
   | "explicit"
   | "simple-kimi"
   | "configured-default"
+  | SubagentTaskClass
   | AnthropicModelLane;
 
 export type SubagentSpawnModelSelection = {
@@ -455,7 +466,194 @@ export type SubagentSpawnModelSelection = {
   route: SubagentModelRoute;
   /** Set to true when model was substituted due to rate-limit suppression. */
   rateLimitFallback?: boolean;
+  taskClass: SubagentTaskClass;
 };
+
+function normalizeModelCandidates(values: Array<string | undefined>): string[] {
+  const seen = new Set<string>();
+  const next: string[] = [];
+  for (const value of values) {
+    const normalized = normalizeModelSelection(value);
+    if (!normalized || seen.has(normalized)) {
+      continue;
+    }
+    seen.add(normalized);
+    next.push(normalized);
+  }
+  return next;
+}
+
+function resolveModelChainFromConfig(model: unknown): string[] {
+  const listLike = toAgentModelListLike(model as never);
+  return normalizeModelCandidates([
+    listLike?.primary,
+    ...resolveAgentModelFallbackValues(model as never),
+  ]);
+}
+
+function looksLikeFrontendTask(task: string): boolean {
+  return [
+    "frontend",
+    "react",
+    "next.js",
+    "nextjs",
+    "vue",
+    "svelte",
+    "css",
+    "tailwind",
+    "component",
+    "layout",
+    "styling",
+  ].some((needle) => task.includes(needle));
+}
+
+function looksLikeSimpleReadonlyTask(task: string): boolean {
+  return [
+    "read only",
+    "readonly",
+    "audit",
+    "grep",
+    "trace",
+    "inspect",
+    "search",
+    "find",
+    "locate",
+    "list",
+    "show",
+    "summarize",
+    "status",
+    "report",
+    "explain",
+  ].some((needle) => task.includes(needle));
+}
+
+function looksLikeFastCodeTask(task: string): boolean {
+  return [
+    "quick",
+    "small",
+    "narrow",
+    "fast",
+    "patch",
+    "boilerplate",
+    "scaffold",
+    "stub",
+    "unit test",
+    "test fixture",
+    "fixture",
+    "lint",
+    "format",
+  ].some((needle) => task.includes(needle));
+}
+
+function looksLikeHardCodeOrReviewTask(task: string): boolean {
+  return [
+    "review",
+    "pr review",
+    "code review",
+    "backend",
+    "api",
+    "endpoint",
+    "server",
+    "express",
+    "database",
+    "migration",
+    "infra",
+    "ci",
+    "security",
+    "critical",
+    "architecture",
+    "performance",
+    "multi-file",
+    "complex",
+  ].some((needle) => task.includes(needle));
+}
+
+function looksLikeFrontendCwd(cwd: string): boolean {
+  return [
+    "/web",
+    "/ui",
+    "/frontend",
+    "/front-end",
+    "/apps/ios",
+    "/apps/android",
+    "/components",
+    "/pages",
+    "/screens",
+  ].some((needle) => cwd.includes(needle));
+}
+
+function looksLikeBackendCwd(cwd: string): boolean {
+  return [
+    "/api",
+    "/backend",
+    "/server",
+    "/services",
+    "/db",
+    "/database",
+    "/infra",
+    "/migrations",
+  ].some((needle) => cwd.includes(needle));
+}
+
+export function inferSubagentTaskClass(task: string, cwd?: string): SubagentTaskClass {
+  const normalizedTask = String(task ?? "")
+    .trim()
+    .toLowerCase();
+  const normalizedCwd = String(cwd ?? "")
+    .trim()
+    .toLowerCase();
+
+  if (!normalizedTask) {
+    if (looksLikeBackendCwd(normalizedCwd)) {
+      return "hard_code_or_review";
+    }
+    return "standard";
+  }
+  if (looksLikeFrontendTask(normalizedTask)) {
+    return "standard";
+  }
+  if (looksLikeSimpleReadonlyTask(normalizedTask)) {
+    return "simple_readonly";
+  }
+  if (looksLikeFastCodeTask(normalizedTask)) {
+    return "fast_code";
+  }
+  if (looksLikeHardCodeOrReviewTask(normalizedTask)) {
+    return "hard_code_or_review";
+  }
+  if (looksLikeBackendCwd(normalizedCwd)) {
+    return "hard_code_or_review";
+  }
+  if (looksLikeFrontendCwd(normalizedCwd)) {
+    return "standard";
+  }
+  return "standard";
+}
+
+function resolveDefaultSubagentModelChain(cfg: OpenClawConfig): string[] {
+  return normalizeModelCandidates([
+    ...resolveModelChainFromConfig(cfg.agents?.defaults?.subagents?.model),
+    ...resolveModelChainFromConfig(cfg.agents?.defaults?.model),
+    `${DEFAULT_PROVIDER}/${DEFAULT_MODEL}`,
+  ]);
+}
+
+export function resolveSubagentModelChain(
+  taskClass: SubagentTaskClass,
+  cfg: OpenClawConfig,
+): string[] {
+  const baseChain = resolveDefaultSubagentModelChain(cfg);
+  if (taskClass === "simple_readonly") {
+    return normalizeModelCandidates(["spark-vllm/nemotron-3-super", ...baseChain]);
+  }
+  if (taskClass === "fast_code") {
+    return normalizeModelCandidates(["openai-codex/gpt-5.3-codex-spark", ...baseChain]);
+  }
+  if (taskClass === "hard_code_or_review") {
+    return normalizeModelCandidates(["openai-codex/gpt-5.4", ...baseChain]);
+  }
+  return baseChain;
+}
 
 export function resolveSubagentConfiguredModelSelection(params: {
   cfg: OpenClawConfig;
@@ -472,19 +670,19 @@ export function resolveSubagentConfiguredModelSelection(params: {
 export function resolveSubagentSpawnModelSelection(params: {
   cfg: OpenClawConfig;
   agentId: string;
+  task?: string;
+  cwd?: string;
   modelOverride?: unknown;
   now?: number;
 }): SubagentSpawnModelSelection {
   const now = params.now ?? Date.now();
-  const runtimeDefault = resolveDefaultModelForAgent({
-    cfg: params.cfg,
-    agentId: params.agentId,
-  });
+  const taskClass = inferSubagentTaskClass(params.task ?? "", params.cwd);
   const resolvedOverride = normalizeModelSelection(params.modelOverride);
   if (resolvedOverride) {
     return {
       model: resolvedOverride,
       route: "explicit",
+      taskClass,
     };
   }
 
@@ -492,49 +690,94 @@ export function resolveSubagentSpawnModelSelection(params: {
     cfg: params.cfg,
     agentId: params.agentId,
   });
+  if (configuredModel) {
+    const selection = resolveAnthropicAwareSelection(configuredModel, "configured-default", now, {
+      cfg: params.cfg,
+      agentId: params.agentId,
+    });
+    return {
+      model: selection.model,
+      route: selection.route,
+      rateLimitFallback: selection.rateLimitFallback,
+      taskClass,
+    };
+  }
 
-  const candidateModel =
-    configuredModel ??
-    normalizeModelSelection(resolveAgentModelPrimaryValue(params.cfg.agents?.defaults?.model)) ??
-    `${runtimeDefault.provider}/${runtimeDefault.model}`;
-
-  return resolveAnthropicAwareSelection(candidateModel, "configured-default", now);
+  const candidateChain = resolveSubagentModelChain(taskClass, params.cfg);
+  const candidateModel = candidateChain[0] ?? `${DEFAULT_PROVIDER}/${DEFAULT_MODEL}`;
+  const selection = resolveAnthropicAwareSelection(candidateModel, taskClass, now, {
+    cfg: params.cfg,
+    agentId: params.agentId,
+  });
+  return {
+    model: selection.model,
+    route: selection.route,
+    rateLimitFallback: selection.rateLimitFallback,
+    taskClass,
+  };
 }
 
 /**
  * Resolve the final model + route for a given candidate model string.
  *
  * If the candidate is an Anthropic Sonnet model and it is currently
- * rate-limited (suppressed), transparently substitutes the local
- * Nemotron/Spark fallback model instead of hammering the Anthropic API.
- *
- * For all other Anthropic models, attaches the appropriate lane tag so
- * telemetry and the UI can show which tier was used.
+ * rate-limited, walk configured fallback chains before falling back to the
+ * local Spark/Nemotron last resort.
  */
 function resolveAnthropicAwareSelection(
   candidateModel: string,
   baseRoute: SubagentModelRoute,
   now: number,
-): SubagentSpawnModelSelection {
+  ctx: { cfg: OpenClawConfig; agentId: string },
+): Pick<SubagentSpawnModelSelection, "model" | "route" | "rateLimitFallback"> {
   const anthropicLane = resolveAnthropicLane(candidateModel);
   if (!anthropicLane) {
-    // Not an Anthropic model — return as-is with the base route.
     return { model: candidateModel, route: baseRoute };
   }
 
-  // Sonnet rate-limit cooldown routing: swap to local Nemotron/Spark when suppressed.
   if (anthropicLane === "anthropic-sonnet" && isAnthropicModelSuppressed(candidateModel, now)) {
-    log.info(
-      `[routing] Anthropic Sonnet suppressed; routing subagent to ${ANTHROPIC_RATE_LIMIT_FALLBACK_MODEL}`,
-    );
+    const fallback = pickAnthropicSuppressionFallback({
+      cfg: ctx.cfg,
+      agentId: ctx.agentId,
+      now,
+    });
+    log.info(`[routing] Anthropic Sonnet suppressed; routing subagent to ${fallback}`);
     return {
-      model: ANTHROPIC_RATE_LIMIT_FALLBACK_MODEL,
+      model: fallback,
       route: "anthropic-nemotron",
       rateLimitFallback: true,
     };
   }
 
   return { model: candidateModel, route: anthropicLane };
+}
+
+function resolveSubagentSpawnFallbackChain(params: {
+  cfg: OpenClawConfig;
+  agentId: string;
+}): string[] {
+  const agent = resolveAgentConfig(params.cfg, params.agentId);
+  return normalizeModelCandidates([
+    ...resolveAgentModelFallbackValues(agent?.subagents?.model),
+    ...resolveAgentModelFallbackValues(params.cfg.agents?.defaults?.subagents?.model),
+    ...resolveAgentModelFallbackValues(params.cfg.agents?.defaults?.model),
+  ]);
+}
+
+function pickAnthropicSuppressionFallback(params: {
+  cfg: OpenClawConfig;
+  agentId: string;
+  now: number;
+}): string {
+  for (const ref of resolveSubagentSpawnFallbackChain(params)) {
+    const lane = resolveAnthropicLane(ref);
+    if (lane !== null && isAnthropicModelSuppressed(ref, params.now)) {
+      continue;
+    }
+    return ref;
+  }
+  const localFallback = params.cfg.routing?.localFallbackModel?.trim();
+  return localFallback || ANTHROPIC_RATE_LIMIT_FALLBACK_MODEL;
 }
 
 export function buildAllowedModelSet(params: {

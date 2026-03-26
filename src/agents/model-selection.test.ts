@@ -1,8 +1,13 @@
-import { describe, it, expect, vi } from "vitest";
+import fs from "node:fs/promises";
+import os from "node:os";
+import path from "node:path";
+import { describe, it, expect, vi, afterEach } from "vitest";
 import type { OpenClawConfig } from "../config/config.js";
 import { resetLogger, setLoggerOverride } from "../logging/logger.js";
+import { DEFAULT_MODEL, DEFAULT_PROVIDER } from "./defaults.js";
 import {
   buildAllowedModelSet,
+  inferSubagentTaskClass,
   inferUniqueProviderFromConfiguredModels,
   parseModelRef,
   buildModelAliasIndex,
@@ -12,6 +17,8 @@ import {
   resolveAllowedModelRef,
   resolveConfiguredModelRef,
   resolveModelRefFromString,
+  resolveSubagentModelChain,
+  resolveSubagentSpawnModelSelection,
 } from "./model-selection.js";
 
 describe("model-selection", () => {
@@ -497,5 +504,308 @@ describe("normalizeModelSelection", () => {
     expect(normalizeModelSelection(undefined)).toBeUndefined();
     expect(normalizeModelSelection(null)).toBeUndefined();
     expect(normalizeModelSelection(42)).toBeUndefined();
+  });
+});
+
+describe("subagent spawn routing", () => {
+  const runtimeDirs: string[] = [];
+  const originalRuntimeDir = process.env.OPENCLAW_RUNTIME_DIR;
+
+  const baseConfig = (): OpenClawConfig =>
+    ({
+      agents: {
+        defaults: {
+          model: {
+            primary: "openai-codex/gpt-5.4",
+            fallbacks: [
+              "anthropic/claude-sonnet-4-6",
+              "openai-codex/gpt-5.3-codex-spark",
+              "spark-vllm/nemotron-3-super",
+            ],
+          },
+          subagents: {
+            model: {
+              primary: "anthropic/claude-sonnet-4-6",
+              fallbacks: [
+                "openai-codex/gpt-5.4",
+                "openai-codex/gpt-5.3-codex-spark",
+                "spark-vllm/nemotron-3-super",
+              ],
+            },
+          },
+        },
+      },
+    }) as OpenClawConfig;
+
+  const unpinnedConfig = (): OpenClawConfig =>
+    ({
+      agents: {
+        defaults: {
+          model: {
+            primary: "openai-codex/gpt-5.4",
+            fallbacks: [
+              "anthropic/claude-sonnet-4-6",
+              "openai-codex/gpt-5.3-codex-spark",
+              "spark-vllm/nemotron-3-super",
+            ],
+          },
+        },
+      },
+    }) as OpenClawConfig;
+
+  afterEach(async () => {
+    if (originalRuntimeDir === undefined) {
+      delete process.env.OPENCLAW_RUNTIME_DIR;
+    } else {
+      process.env.OPENCLAW_RUNTIME_DIR = originalRuntimeDir;
+    }
+    await Promise.all(
+      runtimeDirs.splice(0).map((dir) => fs.rm(dir, { recursive: true, force: true })),
+    );
+  });
+
+  it("infers the standard class for frontend and generic analysis work", () => {
+    expect(inferSubagentTaskClass("investigate the react component rendering bug")).toBe(
+      "standard",
+    );
+    expect(inferSubagentTaskClass("analyze the failing UI state transition")).toBe("standard");
+  });
+
+  it("infers the simple_readonly class for grep and inspection tasks", () => {
+    expect(inferSubagentTaskClass("grep the repo and summarize the auth flow")).toBe(
+      "simple_readonly",
+    );
+  });
+
+  it("infers the fast_code class for quick narrow patches", () => {
+    expect(inferSubagentTaskClass("quick narrow patch to add a unit test fixture")).toBe(
+      "fast_code",
+    );
+  });
+
+  it("infers the hard_code_or_review class for backend-heavy review work", () => {
+    expect(inferSubagentTaskClass("review this backend api migration and security impact")).toBe(
+      "hard_code_or_review",
+    );
+  });
+
+  it("builds the standard chain from configured defaults", () => {
+    expect(resolveSubagentModelChain("standard", baseConfig())).toEqual([
+      "anthropic/claude-sonnet-4-6",
+      "openai-codex/gpt-5.4",
+      "openai-codex/gpt-5.3-codex-spark",
+      "spark-vllm/nemotron-3-super",
+      `${DEFAULT_PROVIDER}/${DEFAULT_MODEL}`,
+    ]);
+  });
+
+  it("builds the simple_readonly chain with spark first", () => {
+    expect(resolveSubagentModelChain("simple_readonly", baseConfig())[0]).toBe(
+      "spark-vllm/nemotron-3-super",
+    );
+  });
+
+  it("builds the fast_code chain with codex spark first", () => {
+    expect(resolveSubagentModelChain("fast_code", baseConfig())[0]).toBe(
+      "openai-codex/gpt-5.3-codex-spark",
+    );
+  });
+
+  it("builds the hard_code_or_review chain with gpt-5.4 first", () => {
+    expect(resolveSubagentModelChain("hard_code_or_review", baseConfig())[0]).toBe(
+      "openai-codex/gpt-5.4",
+    );
+  });
+
+  it("preserves explicit model overrides", () => {
+    const selection = resolveSubagentSpawnModelSelection({
+      cfg: baseConfig(),
+      agentId: "main",
+      task: "review this backend change",
+      modelOverride: "minimax/MiniMax-M2.1",
+    });
+
+    expect(selection).toEqual({
+      model: "minimax/MiniMax-M2.1",
+      route: "explicit",
+      taskClass: "hard_code_or_review",
+    });
+  });
+
+  it("respects agent-specific subagent model pins before task routing", () => {
+    const cfg = {
+      ...baseConfig(),
+      agents: {
+        ...baseConfig().agents,
+        list: [{ id: "research", subagents: { model: "opencode/claude" } }],
+      },
+    } as OpenClawConfig;
+
+    const selection = resolveSubagentSpawnModelSelection({
+      cfg,
+      agentId: "research",
+      task: "quick narrow patch to add a unit test fixture",
+    });
+
+    expect(selection).toMatchObject({
+      model: "opencode/claude",
+      route: "anthropic-sonnet",
+      taskClass: "fast_code",
+    });
+  });
+
+  it("routes simple readonly tasks to spark first when unpinned", () => {
+    const selection = resolveSubagentSpawnModelSelection({
+      cfg: unpinnedConfig(),
+      agentId: "main",
+      task: "grep the repo and summarize the auth flow",
+    });
+
+    expect(selection).toMatchObject({
+      model: "spark-vllm/nemotron-3-super",
+      route: "simple_readonly",
+      taskClass: "simple_readonly",
+    });
+  });
+
+  it("routes fast code tasks to codex spark first when unpinned", () => {
+    const selection = resolveSubagentSpawnModelSelection({
+      cfg: unpinnedConfig(),
+      agentId: "main",
+      task: "quick narrow patch to add a unit test fixture",
+    });
+
+    expect(selection).toMatchObject({
+      model: "openai-codex/gpt-5.3-codex-spark",
+      route: "fast_code",
+      taskClass: "fast_code",
+    });
+  });
+
+  it("routes backend-heavy review tasks to gpt-5.4 first when unpinned", () => {
+    const selection = resolveSubagentSpawnModelSelection({
+      cfg: unpinnedConfig(),
+      agentId: "main",
+      task: "review this backend api migration and security impact",
+    });
+
+    expect(selection).toMatchObject({
+      model: "openai-codex/gpt-5.4",
+      route: "hard_code_or_review",
+      taskClass: "hard_code_or_review",
+    });
+  });
+
+  it("keeps agents.defaults.subagents.model as the default pin ahead of task routing", () => {
+    const selection = resolveSubagentSpawnModelSelection({
+      cfg: baseConfig(),
+      agentId: "main",
+      task: "quick narrow patch to add a unit test fixture",
+    });
+
+    expect(selection).toMatchObject({
+      model: "anthropic/claude-sonnet-4-6",
+      route: "anthropic-sonnet",
+      taskClass: "fast_code",
+    });
+  });
+
+  it("uses cwd as a tiebreaker when task text is generic", () => {
+    expect(inferSubagentTaskClass("investigate the failure", "/workspace/service/api")).toBe(
+      "hard_code_or_review",
+    );
+    expect(inferSubagentTaskClass("investigate the failure", "/workspace/apps/web")).toBe(
+      "standard",
+    );
+  });
+
+  it("keeps existing sonnet suppression behavior and uses spark fallback", async () => {
+    const runtimeDir = await fs.mkdtemp(path.join(os.tmpdir(), "openclaw-routing-"));
+    runtimeDirs.push(runtimeDir);
+    await fs.mkdir(path.join(runtimeDir, "tmp"), { recursive: true });
+    await fs.writeFile(
+      path.join(runtimeDir, "tmp", "router-anthropic-suppression.json"),
+      JSON.stringify({
+        per_model: {
+          "anthropic/claude-sonnet-4-6": {
+            suppressed_until: Math.floor(Date.now() / 1000) + 3600,
+            reason: "rate_limit",
+          },
+        },
+      }),
+      "utf8",
+    );
+    process.env.OPENCLAW_RUNTIME_DIR = runtimeDir;
+
+    const selection = resolveSubagentSpawnModelSelection({
+      cfg: baseConfig(),
+      agentId: "main",
+      task: "investigate the react component rendering bug",
+    });
+
+    expect(selection).toMatchObject({
+      model: "openai-codex/gpt-5.4",
+      route: "anthropic-nemotron",
+      rateLimitFallback: true,
+      taskClass: "standard",
+    });
+  });
+
+  it("falls back to routing.localFallbackModel when configured subagent fallbacks are exhausted", async () => {
+    const runtimeDir = await fs.mkdtemp(path.join(os.tmpdir(), "openclaw-routing-local-fallback-"));
+    runtimeDirs.push(runtimeDir);
+    await fs.mkdir(path.join(runtimeDir, "tmp"), { recursive: true });
+    await fs.writeFile(
+      path.join(runtimeDir, "tmp", "router-anthropic-suppression.json"),
+      JSON.stringify({
+        blanket: {
+          suppressed_until: Math.floor(Date.now() / 1000) + 3600,
+          reason: "rate_limit",
+        },
+        per_model: {
+          "anthropic/claude-sonnet-4-6": {
+            suppressed_until: Math.floor(Date.now() / 1000) + 3600,
+            reason: "rate_limit",
+          },
+        },
+      }),
+      "utf8",
+    );
+    process.env.OPENCLAW_RUNTIME_DIR = runtimeDir;
+
+    const cfg = {
+      ...baseConfig(),
+      agents: {
+        defaults: {
+          ...baseConfig().agents?.defaults,
+          subagents: {
+            model: {
+              primary: "anthropic/claude-sonnet-4-6",
+              fallbacks: ["anthropic/claude-sonnet-4-6"],
+            },
+          },
+          model: {
+            primary: "anthropic/claude-sonnet-4-6",
+            fallbacks: ["anthropic/claude-sonnet-4-6"],
+          },
+        },
+      },
+      routing: {
+        localFallbackModel: "spark-vllm/nemotron-3-super",
+      },
+    } as OpenClawConfig;
+
+    const selection = resolveSubagentSpawnModelSelection({
+      cfg,
+      agentId: "main",
+      task: "investigate the react component rendering bug",
+    });
+
+    expect(selection).toMatchObject({
+      model: "spark-vllm/nemotron-3-super",
+      route: "anthropic-nemotron",
+      rateLimitFallback: true,
+      taskClass: "standard",
+    });
   });
 });

@@ -99,7 +99,18 @@ export type SubagentTaskRow = {
   model?: string;
   modelProvider?: string;
   modelApplied?: boolean;
-  routing?: "explicit" | "simple-kimi" | "configured-default";
+  routing?:
+    | "explicit"
+    | "simple-kimi"
+    | "configured-default"
+    | "standard"
+    | "simple_readonly"
+    | "fast_code"
+    | "hard_code_or_review"
+    | "anthropic-sonnet"
+    | "anthropic-haiku"
+    | "anthropic-nemotron"
+    | "anthropic-opus";
   complexity?: "simple" | "complex";
   rootConversationId?: string;
   threadId?: string;

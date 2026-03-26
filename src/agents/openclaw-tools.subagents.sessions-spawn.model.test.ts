@@ -245,6 +245,69 @@ describe("openclaw-tools: subagents (sessions_spawn model + thinking)", () => {
     });
   });
 
+  it("sessions_spawn routes simple readonly tasks to spark when unpinned", async () => {
+    const calls: GatewayCall[] = [];
+    mockPatchAndSingleAgentRun({ calls, runId: "run-readonly" });
+
+    const tool = await getSessionsSpawnTool({
+      agentSessionKey: "agent:research:main",
+      agentChannel: "discord",
+    });
+
+    await tool.execute("call-readonly", {
+      task: "grep the repo and summarize the auth flow",
+    });
+
+    const patchCall = calls.find(
+      (call) => call.method === "sessions.patch" && (call.params as { model?: string })?.model,
+    );
+    expect(patchCall?.params).toMatchObject({
+      model: "spark-vllm/nemotron-3-super",
+    });
+  });
+
+  it("sessions_spawn routes fast code tasks to codex spark when unpinned", async () => {
+    const calls: GatewayCall[] = [];
+    mockPatchAndSingleAgentRun({ calls, runId: "run-fast-code" });
+
+    const tool = await getSessionsSpawnTool({
+      agentSessionKey: "agent:research:main",
+      agentChannel: "discord",
+    });
+
+    await tool.execute("call-fast-code", {
+      task: "quick narrow patch to add a unit test fixture",
+    });
+
+    const patchCall = calls.find(
+      (call) => call.method === "sessions.patch" && (call.params as { model?: string })?.model,
+    );
+    expect(patchCall?.params).toMatchObject({
+      model: "openai-codex/gpt-5.3-codex-spark",
+    });
+  });
+
+  it("sessions_spawn routes backend-heavy review tasks to gpt-5.4 when unpinned", async () => {
+    const calls: GatewayCall[] = [];
+    mockPatchAndSingleAgentRun({ calls, runId: "run-hard-code" });
+
+    const tool = await getSessionsSpawnTool({
+      agentSessionKey: "agent:research:main",
+      agentChannel: "discord",
+    });
+
+    await tool.execute("call-hard-code", {
+      task: "review this backend api migration and security impact",
+    });
+
+    const patchCall = calls.find(
+      (call) => call.method === "sessions.patch" && (call.params as { model?: string })?.model,
+    );
+    expect(patchCall?.params).toMatchObject({
+      model: "openai-codex/gpt-5.4",
+    });
+  });
+
   it("sessions_spawn fails when model patch is rejected", async () => {
     const calls: GatewayCall[] = [];
     mockLongRunningSpawnFlow({
