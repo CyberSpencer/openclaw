@@ -388,11 +388,21 @@ export function renderApp(state: AppViewState) {
                 activeSessionKey: state.sessionKey,
                 query: state.chatThreadsQuery,
                 showSubagents: state.chatThreadsShowSubagents,
+                collapsedGroups: state.chatThreadsCollapsedGroups,
                 onNewChat: () => state.handleChatNewThread(),
                 onSelectChat: (key) => state.openChatSession(key),
                 onQueryChange: (next) => state.handleChatThreadsQueryChange(next),
                 onToggleSubagents: () =>
                   (state.chatThreadsShowSubagents = !state.chatThreadsShowSubagents),
+                onToggleGroup: (label) => {
+                  const next = new Set(state.chatThreadsCollapsedGroups);
+                  if (next.has(label)) {
+                    next.delete(label);
+                  } else {
+                    next.add(label);
+                  }
+                  state.chatThreadsCollapsedGroups = next;
+                },
                 onRenameChat: (key) => state.handleChatThreadRename(key),
                 onDeleteChat: (key) => state.handleChatThreadDelete(key),
                 onRefresh: () => loadChatThreads(state, { search: state.chatThreadsQuery }),

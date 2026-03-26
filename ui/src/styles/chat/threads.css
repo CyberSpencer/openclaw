@@ -124,15 +124,70 @@
 .chat-nav__group {
   display: flex;
   flex-direction: column;
-  gap: 6px;
+  gap: 4px;
 }
 
+/* Clickable group header — acts like a disclosure button */
 .chat-nav__groupLabel {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  width: 100%;
+  padding: 4px 6px;
   font-size: 10px;
-  letter-spacing: 0.08em;
+  font-weight: 600;
+  letter-spacing: 0.07em;
   text-transform: uppercase;
   color: var(--muted);
-  padding: 0 4px;
+  background: transparent;
+  border: none;
+  cursor: pointer;
+  border-radius: var(--radius-sm);
+  transition: color var(--duration-fast) ease, background var(--duration-fast) ease;
+}
+
+.chat-nav__groupLabel:hover {
+  color: var(--text);
+  background: var(--bg-hover);
+}
+
+.chat-nav__groupLabelText {
+  flex: 1;
+  text-align: left;
+}
+
+.chat-nav__groupCount {
+  font-size: 9px;
+  font-weight: 500;
+  letter-spacing: 0;
+  text-transform: none;
+  opacity: 0.55;
+  font-variant-numeric: tabular-nums;
+}
+
+.chat-nav__groupChevron {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 12px;
+  height: 12px;
+  opacity: 0.45;
+  transition: transform var(--duration-fast) ease;
+}
+
+.chat-nav__groupChevron svg {
+  width: 12px;
+  height: 12px;
+  stroke: currentColor;
+  fill: none;
+  stroke-width: 2px;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+/* Collapsed: rotate chevron to point right */
+.chat-nav__group--collapsed .chat-nav__groupChevron {
+  transform: rotate(-90deg);
 }
 
 .chat-nav__groupList {

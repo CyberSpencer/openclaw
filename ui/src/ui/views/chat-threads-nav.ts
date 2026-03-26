@@ -1,5 +1,6 @@
 import { html, nothing } from "lit";
 import { repeat } from "lit/directives/repeat.js";
+import { isCronSessionKey } from "../app-render.helpers.ts";
 import { formatAgo, truncateText } from "../format.ts";
 import { icons } from "../icons.ts";
 import type { GatewaySessionRow, SessionsListResult } from "../types.ts";
@@ -15,10 +16,13 @@ export type ChatThreadsNavProps = {
   activeSessionKey: string;
   query: string;
   showSubagents: boolean;
+  /** Groups collapsed by default — all except "Today" */
+  collapsedGroups: Set<string>;
   onNewChat: () => void;
   onSelectChat: (key: string) => void;
   onQueryChange: (next: string) => void;
   onToggleSubagents: () => void;
+  onToggleGroup: (label: string) => void;
   onRenameChat: (key: string) => void;
   onDeleteChat: (key: string) => void;
   onRefresh: () => void;
@@ -194,6 +198,8 @@ function listThreads(props: ChatThreadsNavProps) {
   const all = props.sessions?.sessions ?? [];
   const threads = all
     .filter((row) => row.kind === "direct")
+    // Filter cron/system sessions (heartbeat, nightly jobs, etc.)
+    .filter((row) => !isCronSessionKey(row.key))
     .filter((row) => (props.showSubagents ? true : !isSubagentSessionKey(row.key)))
     .slice()
     .toSorted((a, b) => (b.updatedAt ?? 0) - (a.updatedAt ?? 0));
@@ -285,20 +291,36 @@ export function renderChatThreadsNav(props: ChatThreadsNavProps) {
               `
             : nothing
         }
-        ${groups.map(
-          (group) => html`
-            <div class="chat-nav__group">
-              <div class="chat-nav__groupLabel">${group.label}</div>
-              <div class="chat-nav__groupList">
-                ${repeat(
-                  group.items,
-                  (row) => row.key,
-                  (row) => renderThreadItem(props, row),
-                )}
-              </div>
+        ${groups.map((group) => {
+          const collapsed = props.collapsedGroups.has(group.label);
+          return html`
+            <div class="chat-nav__group ${collapsed ? "chat-nav__group--collapsed" : ""}">
+              <button
+                class="chat-nav__groupLabel"
+                type="button"
+                aria-expanded=${!collapsed}
+                @click=${() => props.onToggleGroup(group.label)}
+              >
+                <span class="chat-nav__groupLabelText">${group.label}</span>
+                <span class="chat-nav__groupCount">${group.items.length}</span>
+                <span class="chat-nav__groupChevron" aria-hidden="true">${icons.chevronDown}</span>
+              </button>
+              ${
+                collapsed
+                  ? nothing
+                  : html`
+                    <div class="chat-nav__groupList">
+                      ${repeat(
+                        group.items,
+                        (row) => row.key,
+                        (row) => renderThreadItem(props, row),
+                      )}
+                    </div>
+                  `
+              }
             </div>
-          `,
-        )}
+          `;
+        })}
       </div>
     </section>
   `;

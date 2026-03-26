@@ -521,6 +521,13 @@ export class OpenClawApp extends LitElement {
   @state() chatThreadsError: string | null = null;
   @state() chatThreadsQuery = "";
   @state() chatThreadsShowSubagents = false;
+  /** Groups collapsed by default — only "Today" is expanded */
+  @state() chatThreadsCollapsedGroups: Set<string> = new Set([
+    "Yesterday",
+    "Last 7 days",
+    "Last 30 days",
+    "Older",
+  ]);
   private chatThreadsSearchTimer: number | null = null;
   private chatNewThreadLabelKeys = new Set<string>();
   // Subagent monitor for the active chat session (spawnedBy=sessionKey)
