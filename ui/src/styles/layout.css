@@ -279,7 +279,7 @@
 
 /* Nav groups */
 .nav-group {
-  margin-bottom: 20px;
+  margin-bottom: 16px;
   display: grid;
   gap: 2px;
 }
@@ -297,7 +297,7 @@
   display: none;
 }
 
-/* Nav label */
+/* Nav label — uppercase tracking treatment from polished design */
 .nav-label {
   display: flex;
   align-items: center;
@@ -306,7 +306,7 @@
   width: 100%;
   padding: 6px 10px;
   font-size: 11px;
-  font-weight: 500;
+  font-weight: 600;
   color: var(--muted);
   margin-bottom: 4px;
   background: transparent;
@@ -314,6 +314,8 @@
   cursor: pointer;
   text-align: left;
   border-radius: var(--radius-sm);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
   transition:
     color var(--duration-fast) ease,
     background var(--duration-fast) ease;
@@ -338,8 +340,12 @@
 }
 
 .nav-label__chevron {
-  font-size: 10px;
-  opacity: 0.5;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 12px;
+  height: 12px;
+  opacity: 0.45;
   transition: transform var(--duration-fast) ease;
 }
 
@@ -354,22 +360,24 @@
   align-items: center;
   justify-content: flex-start;
   gap: 10px;
-  padding: 8px 10px;
+  padding: 9px 12px;
   border-radius: var(--radius-md);
   border: 1px solid transparent;
   background: transparent;
+  overflow: hidden;
   color: var(--muted);
   cursor: pointer;
   text-decoration: none;
   transition:
     border-color var(--duration-fast) ease,
     background var(--duration-fast) ease,
-    color var(--duration-fast) ease;
+    color var(--duration-fast) ease,
+    box-shadow var(--duration-fast) ease;
 }
 
 .nav-item__icon {
-  width: 16px;
-  height: 16px;
+  width: 18px;
+  height: 18px;
   display: flex;
   align-items: center;
   justify-content: center;
@@ -379,8 +387,8 @@
 }
 
 .nav-item__icon svg {
-  width: 16px;
-  height: 16px;
+  width: 18px;
+  height: 18px;
   stroke: currentColor;
   fill: none;
   stroke-width: 1.5px;
@@ -389,14 +397,32 @@
 }
 
 .nav-item__text {
-  font-size: 13px;
+  font-size: 14px;
   font-weight: 500;
   white-space: nowrap;
 }
 
+.nav-item__external-icon {
+  display: flex;
+  align-items: center;
+  margin-left: auto;
+  opacity: 0.4;
+}
+
+.nav-item__external-icon svg {
+  width: 12px;
+  height: 12px;
+  stroke: currentColor;
+  fill: none;
+  stroke-width: 1.5px;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
 .nav-item:hover {
   color: var(--text);
-  background: var(--bg-hover);
+  background: color-mix(in srgb, var(--secondary) 90%, transparent);
+  border-color: color-mix(in srgb, var(--border) 75%, transparent);
   text-decoration: none;
 }
 
@@ -404,9 +430,40 @@
   opacity: 1;
 }
 
+/* Active state — bordered card with left-edge accent glow */
 .nav-item.active {
   color: var(--text-strong);
-  background: var(--accent-subtle);
+  background: color-mix(in srgb, var(--accent-subtle) 70%, var(--secondary));
+  border-color: color-mix(in srgb, var(--accent) 34%, transparent);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--accent) 20%, transparent);
+}
+
+/* Radial glow from left edge — sweeps in on activation */
+.nav-item.active::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  background: radial-gradient(
+    ellipse 28px 120% at -2px 50%,
+    color-mix(in srgb, var(--accent) 38%, transparent) 0%,
+    color-mix(in srgb, var(--accent) 14%, transparent) 40%,
+    transparent 100%
+  );
+  opacity: 0;
+  animation: nav-glow-in 0.35s ease-out 0.04s forwards;
+  pointer-events: none;
+}
+
+@keyframes nav-glow-in {
+  from {
+    opacity: 0;
+    transform: translateX(-6px);
+  }
+  to {
+    opacity: 1;
+    transform: translateX(0);
+  }
 }
 
 .nav-item.active .nav-item__icon {
