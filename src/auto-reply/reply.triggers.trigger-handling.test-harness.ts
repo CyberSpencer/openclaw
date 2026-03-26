@@ -54,6 +54,7 @@ const providerUsageMocks = vi.hoisted(() => ({
   }),
   formatUsageSummaryLine: vi.fn().mockReturnValue("📊 Usage: Claude 80% left"),
   formatUsageWindowSummary: vi.fn().mockReturnValue("Claude 80% left"),
+  resolveUsageSummaryMaxWindows: vi.fn().mockReturnValue(1),
   resolveUsageProviderId: vi.fn((provider: string) => provider.split("/")[0]),
 }));
 

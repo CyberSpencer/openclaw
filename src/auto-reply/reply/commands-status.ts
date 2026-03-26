@@ -76,12 +76,47 @@ export async function buildStatusReply(params: {
     ? resolveSessionAgentId({ sessionKey, config: cfg })
     : resolveDefaultAgentId(cfg);
   const statusAgentDir = resolveAgentDir(cfg, statusAgentId);
+  const modelRefs = resolveSelectedAndActiveModel({
+    selectedProvider: provider,
+    selectedModel: model,
+    sessionEntry,
+  });
   const currentUsageProvider = (() => {
-    try {
-      return resolveUsageProviderId(provider);
-    } catch {
-      return undefined;
+    const candidates = [
+      modelRefs.active.provider,
+      modelRefs.active.label,
+      sessionEntry?.modelProvider,
+      sessionEntry?.model,
+      modelRefs.selected.provider,
+      modelRefs.selected.label,
+      provider,
+      model,
+    ];
+    for (const candidate of candidates) {
+      const raw = typeof candidate === "string" ? candidate.trim() : "";
+      if (!raw) {
+        continue;
+      }
+      const attempts = [raw];
+      const slashIndex = raw.indexOf("/");
+      if (slashIndex > 0) {
+        attempts.push(raw.slice(0, slashIndex).trim());
+      }
+      for (const attempt of attempts) {
+        if (!attempt) {
+          continue;
+        }
+        try {
+          const resolved = resolveUsageProviderId(attempt);
+          if (resolved) {
+            return resolved;
+          }
+        } catch {
+          // Ignore malformed provider hints and fall through to the next candidate.
+        }
+      }
     }
+    return undefined;
   })();
   let usageLine: string | null = null;
   if (currentUsageProvider) {
@@ -141,11 +176,6 @@ export async function buildStatusReply(params: {
   const groupActivation = isGroup
     ? (normalizeGroupActivation(sessionEntry?.groupActivation) ?? defaultGroupActivation())
     : undefined;
-  const modelRefs = resolveSelectedAndActiveModel({
-    selectedProvider: provider,
-    selectedModel: model,
-    sessionEntry,
-  });
   const selectedModelAuth = resolveModelAuthLabel({
     provider,
     cfg,

@@ -1,4 +1,4 @@
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { listAgentIds } from "../../agents/agent-scope.js";
 import type { AgentInternalEvent } from "../../agents/internal-events.js";
 import { BARE_SESSION_RESET_PROMPT } from "../../auto-reply/reply/session-reset-prompt.js";
@@ -68,6 +68,23 @@ function isGatewayErrorShape(value: unknown): value is { code: string; message: 
   }
   const candidate = value as { code?: unknown; message?: unknown };
   return typeof candidate.code === "string" && typeof candidate.message === "string";
+}
+
+function buildAgentDedupeKey(params: {
+  idempotencyKey: string;
+  rootConversationId?: string;
+  threadId?: string;
+}): string {
+  const rootConversationId = params.rootConversationId?.trim() || "";
+  const threadId = params.threadId?.trim() || "";
+  if (!rootConversationId && !threadId) {
+    return `agent:${params.idempotencyKey}`;
+  }
+  const lineageDigest = createHash("sha1")
+    .update(JSON.stringify({ rootConversationId, threadId }))
+    .digest("hex")
+    .slice(0, 16);
+  return `agent:${params.idempotencyKey}:lineage:${lineageDigest}`;
 }
 
 async function runSessionResetFromAgent(params: {
@@ -193,6 +210,7 @@ export const agentHandlers: GatewayRequestHandlers = {
       accountId?: string;
       replyAccountId?: string;
       threadId?: string;
+      rootConversationId?: string;
       groupId?: string;
       groupChannel?: string;
       groupSpace?: string;
@@ -209,6 +227,14 @@ export const agentHandlers: GatewayRequestHandlers = {
     const senderIsOwner = resolveSenderIsOwnerFromClient(client);
     const cfg = loadConfig();
     const idem = request.idempotencyKey;
+    const rootConversationId =
+      typeof request.rootConversationId === "string" ? request.rootConversationId.trim() : "";
+    const requestThreadId = typeof request.threadId === "string" ? request.threadId.trim() : "";
+    const dedupeKey = buildAgentDedupeKey({
+      idempotencyKey: idem,
+      rootConversationId,
+      threadId: requestThreadId,
+    });
     const groupIdRaw = typeof request.groupId === "string" ? request.groupId.trim() : "";
     const groupChannelRaw =
       typeof request.groupChannel === "string" ? request.groupChannel.trim() : "";
@@ -219,7 +245,7 @@ export const agentHandlers: GatewayRequestHandlers = {
     let spawnedByValue =
       typeof request.spawnedBy === "string" ? request.spawnedBy.trim() : undefined;
     const inputProvenance = normalizeInputProvenance(request.inputProvenance);
-    const cached = context.dedupe.get(`agent:${idem}`);
+    const cached = context.dedupe.get(dedupeKey);
     if (cached) {
       respond(cached.ok, cached.payload, cached.error, {
         cached: true,
@@ -591,7 +617,7 @@ export const agentHandlers: GatewayRequestHandlers = {
       acceptedAt: Date.now(),
     };
     // Store an in-flight ack so retries do not spawn a second run.
-    context.dedupe.set(`agent:${idem}`, {
+    context.dedupe.set(dedupeKey, {
       ts: Date.now(),
       ok: true,
       payload: accepted,
@@ -645,7 +671,7 @@ export const agentHandlers: GatewayRequestHandlers = {
           summary: "completed",
           result,
         };
-        context.dedupe.set(`agent:${idem}`, {
+        context.dedupe.set(dedupeKey, {
           ts: Date.now(),
           ok: true,
           payload,
@@ -661,7 +687,7 @@ export const agentHandlers: GatewayRequestHandlers = {
           status: "error" as const,
           summary: String(err),
         };
-        context.dedupe.set(`agent:${idem}`, {
+        context.dedupe.set(dedupeKey, {
           ts: Date.now(),
           ok: false,
           payload,

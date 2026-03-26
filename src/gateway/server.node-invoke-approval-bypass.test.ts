@@ -76,7 +76,7 @@ async function requestAllowOnceApproval(
 ): Promise<string> {
   const approvalId = crypto.randomUUID();
   const commandArgv = command.split(/\s+/).filter((part) => part.length > 0);
-  const requestP = rpcReq(ws, "exec.approval.request", {
+  const requested = await rpcReq(ws, "exec.approval.request", {
     id: approvalId,
     command,
     commandArgv,
@@ -91,10 +91,18 @@ async function requestAllowOnceApproval(
     cwd: null,
     host: "node",
     timeoutMs: 30_000,
+    twoPhase: true,
   });
-  await rpcReq(ws, "exec.approval.resolve", { id: approvalId, decision: "allow-once" });
-  const requested = await requestP;
-  expect(requested.ok).toBe(true);
+  if (!requested.ok) {
+    throw new Error(`approval request failed: ${requested.error?.message ?? "unknown error"}`);
+  }
+  expect(requested.payload?.id).toBe(approvalId);
+
+  const resolved = await rpcReq(ws, "exec.approval.resolve", {
+    id: approvalId,
+    decision: "allow-once",
+  });
+  expect(resolved.ok).toBe(true);
   return approvalId;
 }
 
