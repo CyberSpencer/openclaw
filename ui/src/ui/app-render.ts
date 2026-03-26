@@ -211,17 +211,41 @@ export function renderApp(state: AppViewState) {
   const sparkEnabled = state.sparkStatus?.enabled;
   const sparkKnown = Boolean(state.sparkStatus);
   const sparkHost = typeof state.sparkStatus?.host === "string" ? state.sparkStatus.host : null;
+  // Derive DGX health from the 4 core services only (same keys as dgx.ts)
+  const TOPBAR_CORE_KEYS = new Set([
+    "router",
+    "vllm_nemotron",
+    "qdrant",
+    "embeddings",
+    "reranker",
+    "embed",
+  ]);
+  const sparkServices = state.sparkStatus?.services ?? {};
+  const sparkCoreEntries = Object.entries(sparkServices).filter(([k]) => TOPBAR_CORE_KEYS.has(k));
+  const sparkCoreHealthy = sparkCoreEntries.filter(
+    ([, v]) => v && typeof v === "object" && (v as Record<string, unknown>).healthy === true,
+  ).length;
+  const sparkCoreTotal = sparkCoreEntries.length;
+  const sparkCoreAllHealthy = sparkCoreTotal > 0 && sparkCoreHealthy === sparkCoreTotal;
   const sparkOverall =
-    typeof state.sparkStatus?.overall === "string" ? state.sparkStatus.overall : null;
+    sparkCoreTotal > 0
+      ? sparkCoreAllHealthy
+        ? "healthy"
+        : "down"
+      : typeof state.sparkStatus?.overall === "string"
+        ? state.sparkStatus.overall
+        : null;
   const sparkLabel = state.sparkBusy
     ? "..."
     : !sparkKnown
       ? "..."
       : sparkEnabled === false
         ? "Off"
-        : sparkOverall === "degraded"
-          ? "Degraded"
-          : "";
+        : sparkOverall === "down"
+          ? "Down"
+          : sparkOverall === "degraded"
+            ? "Degraded"
+            : "";
   const sparkDotClass =
     !sparkKnown || sparkEnabled === false
       ? "neutral"
@@ -236,7 +260,9 @@ export function renderApp(state: AppViewState) {
     ? "DGX status unavailable"
     : sparkEnabled === false
       ? "DGX disabled"
-      : `DGX ${sparkOverall ?? "unknown"}${sparkHost ? ` (${sparkHost})` : ""}`;
+      : sparkCoreTotal > 0
+        ? `DGX ${sparkCoreHealthy}/${sparkCoreTotal} core services healthy${sparkHost ? ` (${sparkHost})` : ""}`
+        : `DGX ${sparkOverall ?? "unknown"}${sparkHost ? ` (${sparkHost})` : ""}`;
   const configValue =
     state.configForm ?? (state.configSnapshot?.config as Record<string, unknown> | null);
   const resolvedAgentId =

@@ -50,8 +50,8 @@ const SERVICE_META: Record<string, { label: string; sub: string; port?: number }
   voice_tts: { label: "Voice TTS", sub: "Qwen3-TTS 1.7B", port: 9002 },
 };
 
-// The 4 required core services (vllm_nemotron probed directly at port 8004)
-const CORE_KEYS = new Set(["vllm_nemotron", "qdrant", "embeddings", "reranker", "embed"]);
+// The 4 required core services and their alternate keys
+const CORE_KEYS = new Set(["router", "vllm_nemotron", "qdrant", "embeddings", "reranker", "embed"]);
 const VOICE_KEYS = new Set(["voice_health", "voice_stt", "voice_tts"]);
 
 function formatLatency(ms: number | undefined | null): string {
