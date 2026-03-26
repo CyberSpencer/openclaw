@@ -120,6 +120,10 @@
   flex: 1 1 0;
   min-height: 0;
   overflow-y: auto;
+  /* Must be flex column so children (.agent-subagents) can flex-grow
+     and the subagent list fills remaining space instead of collapsing. */
+  display: flex;
+  flex-direction: column;
 }
 
 .agent-orchestration--collapsed .agent-orchestration__body {
@@ -584,7 +588,9 @@
 .agent-subagents__list {
   display: grid;
   gap: 6px;
-  overflow: auto;
+  overflow-y: auto;
+  overflow-x: hidden;
+  /* Fill available orchestration body; no hard cap—let flex handle it */
   flex: 1 1 0;
   min-height: 0;
   padding-right: 2px;
@@ -593,58 +599,94 @@
 .agent-subagent {
   display: flex;
   align-items: stretch;
-  justify-content: space-between;
-  gap: 12px;
-  padding: 10px 10px;
+  gap: 0;
+  padding: 8px 10px;
   border-radius: var(--radius-lg);
-  border: 1px solid transparent;
-  cursor: pointer;
+  border: 1px solid color-mix(in srgb, var(--border) 88%, transparent);
+  background: linear-gradient(
+    180deg,
+    color-mix(in srgb, var(--panel-strong) 90%, transparent),
+    color-mix(in srgb, var(--panel) 100%, transparent)
+  );
+  box-shadow:
+    inset 0 1px 0 var(--card-highlight),
+    0 1px 2px rgba(0, 0, 0, 0.12);
   user-select: none;
-  background: transparent;
   color: inherit;
-  text-align: left;
+  overflow: hidden;
   transition:
     background var(--duration-fast) var(--ease-out),
     border-color var(--duration-fast) var(--ease-out),
-    transform var(--duration-fast) var(--ease-out);
+    box-shadow var(--duration-fast) var(--ease-out);
 }
 
 .agent-subagent:hover {
-  background: var(--bg-hover);
-  border-color: var(--border);
-  transform: translateY(-1px);
+  border-color: color-mix(in srgb, var(--border-strong) 68%, var(--border));
+  background: linear-gradient(
+    180deg,
+    color-mix(in srgb, var(--panel-strong) 94%, transparent),
+    color-mix(in srgb, var(--panel) 100%, transparent)
+  );
+  box-shadow:
+    inset 0 1px 0 var(--card-highlight),
+    0 4px 12px rgba(0, 0, 0, 0.14);
 }
 
-.agent-subagent--static {
+/* Clickable body area (excludes Stop button) */
+.agent-subagent__body {
+  flex: 1 1 0;
+  min-width: 0;
+  display: grid;
+  gap: 0;
+  cursor: pointer;
+}
+
+.agent-subagent__body:focus-visible {
+  outline: none;
+  border-radius: var(--radius-md);
+  box-shadow: var(--focus-glow);
+}
+
+.agent-subagent--static .agent-subagent__body {
   cursor: default;
 }
 
 .agent-subagent--static:hover {
-  transform: none;
-}
-
-.agent-subagent:active {
-  transform: translateY(0);
-}
-
-.agent-subagent:focus-visible {
-  outline: none;
-  border-color: var(--accent);
-  box-shadow: var(--focus-glow);
+  border-color: color-mix(in srgb, var(--border) 88%, transparent);
+  background: linear-gradient(
+    180deg,
+    color-mix(in srgb, var(--panel-strong) 90%, transparent),
+    color-mix(in srgb, var(--panel) 100%, transparent)
+  );
+  box-shadow:
+    inset 0 1px 0 var(--card-highlight),
+    0 1px 2px rgba(0, 0, 0, 0.12);
 }
 
 .agent-subagent--running {
-  border-color: color-mix(in srgb, var(--accent) 40%, var(--border));
-  background: var(--accent-subtle);
+  border-color: color-mix(in srgb, var(--accent) 36%, var(--border));
+  background: linear-gradient(
+    180deg,
+    color-mix(in srgb, var(--accent-subtle) 72%, var(--panel-strong)),
+    color-mix(in srgb, var(--panel) 100%, transparent)
+  );
+  box-shadow:
+    inset 0 1px 0 var(--card-highlight),
+    0 0 0 1px color-mix(in srgb, var(--accent) 12%, transparent);
 }
 
 .agent-subagent--running:hover {
-  border-color: color-mix(in srgb, var(--accent) 55%, var(--border));
+  border-color: color-mix(in srgb, var(--accent) 50%, var(--border));
+  background: linear-gradient(
+    180deg,
+    color-mix(in srgb, var(--accent-subtle) 84%, var(--panel-strong)),
+    color-mix(in srgb, var(--panel) 100%, transparent)
+  );
 }
 
 .agent-subagent__main {
-  flex: 1 1 0;
   min-width: 0;
+  overflow: hidden;
 }
 
 .agent-subagent__title {
@@ -652,7 +694,7 @@
   align-items: center;
   gap: 8px;
   min-width: 0;
-  font-size: 13px;
+  font-size: 12px;
   font-weight: 650;
   letter-spacing: -0.01em;
   color: var(--text);
@@ -718,43 +760,101 @@
   text-overflow: ellipsis;
 }
 
+/* Secondary info row (pills + preview) */
 .agent-subagent__sub {
   margin-top: 4px;
+  min-width: 0;
+  display: grid;
+  gap: 4px;
+}
+
+/* Inline pill row: model, lane, runtime, time — all flow together */
+.agent-subagent__subMeta {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  flex-wrap: wrap;
   min-width: 0;
 }
 
 .agent-subagent__preview {
   font-size: 11px;
-  color: var(--muted);
+  line-height: 1.35;
+  color: color-mix(in srgb, var(--text) 68%, var(--muted));
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
 }
 
 .agent-subagent__preview--empty {
-  opacity: 0.6;
+  color: var(--muted);
+  opacity: 0.64;
 }
 
+/* Meta column removed — time/runtime now inline in subMeta row */
 .agent-subagent__meta {
-  flex: 0 0 auto;
-  display: flex;
-  align-items: flex-end;
-  flex-direction: column;
-  gap: 4px;
-  min-width: 0;
+  display: none;
 }
 
+/* Shared pill style for time + runtime (inline in subMeta) */
+.agent-subagent__time,
+.agent-subagent__runtime {
+  display: inline-flex;
+  align-items: center;
+  min-height: 18px;
+  padding: 0 6px;
+  border-radius: var(--radius-full);
+  border: 1px solid color-mix(in srgb, var(--border-strong) 20%, var(--border));
+  background: color-mix(in srgb, var(--panel-strong) 78%, transparent);
+  white-space: nowrap;
+  font-size: 9px;
+}
+
+/* Time sits in the title row, pushed right */
 .agent-subagent__time {
-  font-size: 10px;
+  margin-left: auto;
   color: var(--muted);
 }
 
 .agent-subagent__runtime {
-  font-size: 10px;
+  color: color-mix(in srgb, var(--accent) 78%, var(--text));
+  border-color: color-mix(in srgb, var(--accent) 22%, var(--border));
+  background: color-mix(in srgb, var(--accent-subtle) 40%, var(--panel-strong));
+}
+
+/* Compact pills for model + lane */
+.agent-subagent__model,
+.agent-subagent__lane {
+  font-size: 9px;
+  border-radius: var(--radius-full);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 100%;
+}
+
+.agent-subagent__model {
+  width: fit-content;
+  padding: 1px 6px;
+  color: color-mix(in srgb, var(--text) 84%, var(--muted));
+  border: 1px solid color-mix(in srgb, var(--border-strong) 22%, var(--border));
+  background: color-mix(in srgb, var(--panel-strong) 80%, transparent);
+}
+
+.agent-subagent__lane {
+  padding: 1px 6px;
   color: var(--muted);
-  text-align: right;
-  max-width: 220px;
-  white-space: normal;
+  border: 1px solid color-mix(in srgb, var(--border-strong) 16%, var(--border));
+  background: color-mix(in srgb, var(--secondary) 82%, transparent);
+  text-transform: lowercase;
+}
+
+/* Compact stop button — sits in title row via flex */
+.agent-subagent__stop {
+  flex-shrink: 0;
+  margin-left: auto;
+  padding: 2px 6px;
+  font-size: 10px;
 }
 
 /* =============================================

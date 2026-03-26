@@ -58,6 +58,7 @@ export type ChatProps = {
   subagentMonitorResult?: SessionsListResult | null;
   subagentMonitorError?: string | null;
   onSubagentRefresh?: () => void;
+  onSubagentStop?: (sessionKey: string) => void;
   // Provider usage chips (Anthropic quota + suppression status)
   anthropicUsageNotes?: string[] | null;
   // Provider usage chips (Codex quota + suppression status)
@@ -1248,95 +1249,136 @@ function renderOrchestrationCard(props: ChatProps) {
                 ? nothing
                 : html`
                     <div class="agent-subagents__list">
-                      ${subagents.map((s) => {
-                        const label =
-                          s.label?.trim() ||
-                          s.derivedTitle?.trim() ||
-                          s.displayName?.trim() ||
-                          s.key;
-                        const updatedAt = typeof s.updatedAt === "number" ? s.updatedAt : null;
-                        const isOpenable = s.openable !== false;
-                        const st = s.runStatus || subagentStatusByKey.get(s.key);
-                        const status =
-                          st === "running"
-                            ? "running"
-                            : st === "error"
-                              ? "blocked"
-                              : st === "done"
-                                ? "done"
-                                : subagentStatusByKey.get(s.key);
-                        const dotStatus =
-                          status === "running"
-                            ? "running"
-                            : status === "blocked"
-                              ? "blocked"
-                              : status === "done" || status === "skipped"
-                                ? "done"
-                                : status === "todo"
-                                  ? "todo"
-                                  : "neutral";
-                        const taskStr = (s.task ?? s.derivedTitle ?? "").trim();
-                        const outcomeErr = s.outcome?.error?.trim();
-                        const preview =
-                          (s.lastMessagePreview ?? "").trim() ||
-                          (status === "blocked"
-                            ? `Failed: ${outcomeErr || taskStr || "subagent task"}`
-                            : taskStr);
-                        const hasPreview = Boolean(preview);
-                        const metaParts: string[] = [];
-                        if (typeof s.runtimeMs === "number" && s.runtimeMs > 0) {
-                          const runtimeLabel = formatDurationCompact(s.runtimeMs, { spaced: true });
-                          if (runtimeLabel) {
-                            metaParts.push(runtimeLabel);
-                          }
-                        }
-                        const age = formatRelativeTimestamp(updatedAt, { fallback: "" });
-                        if (age) {
-                          metaParts.push(age);
-                        }
-                        const title = isOpenable
-                          ? "Open subagent session"
-                          : "Background coding agent";
-                        return html`
-                          <button
-                            class="agent-subagent agent-subagent--${dotStatus} ${isOpenable ? "" : "agent-subagent--static"}"
-                            type="button"
-                            ?disabled=${!isOpenable}
-                            @click=${() => {
-                              if (!isOpenable) {
-                                return;
-                              }
-                              props.onSessionKeyChange(s.key);
-                            }}
-                            title=${title}
-                          >
-                            <div class="agent-subagent__main">
-                              <div class="agent-subagent__title">
-                                <span
-                                  class="agent-subagent__dot agent-subagent__dot--${dotStatus}"
-                                  aria-hidden="true"
-                                ></span>
-                                <span class="agent-subagent__titleText">${label}</span>
-                              </div>
-                              <div class="agent-subagent__sub">
-                                <div
-                                  class="agent-subagent__preview ${hasPreview ? "" : "agent-subagent__preview--empty"}"
-                                >
-                                  ${hasPreview ? preview : "No messages yet"}
+                      ${repeat(
+                        subagents,
+                        (s) => s.key,
+                        (s) => {
+                          const label =
+                            s.label?.trim() ||
+                            s.derivedTitle?.trim() ||
+                            s.displayName?.trim() ||
+                            s.key;
+                          const updatedAt = typeof s.updatedAt === "number" ? s.updatedAt : null;
+                          const isOpenable = s.openable !== false;
+                          const st = s.runStatus || subagentStatusByKey.get(s.key);
+                          const status =
+                            st === "running"
+                              ? "running"
+                              : st === "error"
+                                ? "blocked"
+                                : st === "done"
+                                  ? "done"
+                                  : subagentStatusByKey.get(s.key);
+                          const dotStatus =
+                            status === "running"
+                              ? "running"
+                              : status === "blocked"
+                                ? "blocked"
+                                : status === "done" || status === "skipped"
+                                  ? "done"
+                                  : status === "todo"
+                                    ? "todo"
+                                    : "neutral";
+                          const taskStr = (s.task ?? s.derivedTitle ?? "").trim();
+                          const outcomeErr = s.outcome?.error?.trim();
+                          const preview =
+                            (s.lastMessagePreview ?? "").trim() ||
+                            (status === "blocked"
+                              ? `Failed: ${outcomeErr || taskStr || "subagent task"}`
+                              : taskStr);
+                          const hasPreview = Boolean(preview);
+                          const laneLabel =
+                            s.source === "background-exec"
+                              ? "background"
+                              : s.spawnMode === "run"
+                                ? "one-shot"
+                                : s.spawnMode === "session"
+                                  ? "thread"
+                                  : "subagent";
+                          const runtimeDisplay = formatSubagentRuntime(s);
+                          // Clean model name for pill display (e.g. "smart", "anthropic/claude-sonnet-4")
+                          const modelProvider =
+                            typeof s.modelProvider === "string" ? s.modelProvider.trim() : "";
+                          const modelValue = typeof s.model === "string" ? s.model.trim() : "";
+                          const modelDisplay =
+                            modelProvider && modelValue && !modelValue.includes("/")
+                              ? `${modelProvider}/${modelValue}`
+                              : modelValue || "unknown";
+                          const isRunning = s.runStatus === "running";
+                          const canStop = isRunning && isOpenable && Boolean(props.onSubagentStop);
+                          const openTitle = isOpenable
+                            ? "Open subagent session"
+                            : "Background coding agent";
+                          // Compute elapsed/runtime for display
+                          const startedAt = typeof s.startedAt === "number" ? s.startedAt : null;
+                          const runtimeMs = typeof s.runtimeMs === "number" ? s.runtimeMs : null;
+                          const elapsedMs = isRunning && startedAt ? Date.now() - startedAt : null;
+                          const displayRuntimeMs = elapsedMs ?? runtimeMs;
+                          const runtimeLabel =
+                            displayRuntimeMs && displayRuntimeMs > 0
+                              ? formatDurationCompact(displayRuntimeMs, { spaced: true })
+                              : null;
+                          return html`
+                          <div class="agent-subagent agent-subagent--${dotStatus} ${isOpenable ? "" : "agent-subagent--static"}">
+                            <div
+                              class="agent-subagent__body"
+                              role=${isOpenable ? "button" : "presentation"}
+                              tabindex=${isOpenable ? "0" : "-1"}
+                              title=${openTitle}
+                              @click=${() => isOpenable && props.onSessionKeyChange(s.key)}
+                              @keydown=${(e: KeyboardEvent) => {
+                                if (isOpenable && (e.key === "Enter" || e.key === " ")) {
+                                  e.preventDefault();
+                                  props.onSessionKeyChange(s.key);
+                                }
+                              }}
+                            >
+                              <div class="agent-subagent__main">
+                                <div class="agent-subagent__title">
+                                  <span
+                                    class="agent-subagent__dot agent-subagent__dot--${dotStatus}"
+                                    aria-hidden="true"
+                                  ></span>
+                                  <span class="agent-subagent__titleText">${label}</span>
+                                  <span class="agent-subagent__time mono">${formatAge(updatedAt)}</span>
+                                </div>
+                                <div class="agent-subagent__sub">
+                                  <div class="agent-subagent__subMeta">
+                                    <div class="agent-subagent__model mono" title=${runtimeDisplay}>
+                                      ${modelDisplay}
+                                    </div>
+                                    <div class="agent-subagent__lane">${laneLabel}</div>
+                                    ${runtimeLabel ? html`<div class="agent-subagent__runtime mono">${isRunning ? "⏱" : ""}${runtimeLabel}</div>` : nothing}
+                                  </div>
+                                  <div
+                                    class="agent-subagent__preview ${hasPreview ? "" : "agent-subagent__preview--empty"}"
+                                  >
+                                    ${hasPreview ? preview : "No messages yet"}
+                                  </div>
                                 </div>
                               </div>
                             </div>
-                            <div class="agent-subagent__meta">
-                              <div class="agent-subagent__time mono">${formatAge(updatedAt)}</div>
-                              ${
-                                s.model || s.modelProvider || s.routing || s.modelApplied != null
-                                  ? html`<div class="agent-subagent__runtime mono">${formatSubagentRuntime(s)}</div>`
-                                  : nothing
-                              }
-                            </div>
-                          </button>
+                            ${
+                              canStop
+                                ? html`
+                                    <button
+                                      class="btn btn--sm agent-subagent__stop"
+                                      type="button"
+                                      title="Stop this subagent"
+                                      @click=${(e: MouseEvent) => {
+                                        e.stopPropagation();
+                                        props.onSubagentStop?.(s.key);
+                                      }}
+                                    >
+                                      Stop
+                                    </button>
+                                  `
+                                : nothing
+                            }
+                          </div>
                         `;
-                      })}
+                        },
+                      )}
                     </div>
                   `
         }
